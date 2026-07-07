@@ -29,10 +29,22 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_library_config,
+            commands::save_shortcuts,
+            commands::save_smart_stack_settings,
+            commands::set_raw_overrides,
             commands::test_connection,
             commands::get_timeline_buckets,
             commands::get_timeline_bucket_assets,
             commands::delete_assets,
+            commands::update_asset_metadata,
+            commands::get_trashed_assets,
+            commands::restore_assets,
+            commands::empty_trash,
+            commands::create_stack,
+            commands::get_stack,
+            commands::list_stacks,
+            commands::set_stack_pick,
+            commands::delete_stack,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

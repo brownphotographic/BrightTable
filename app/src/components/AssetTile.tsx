@@ -1,0 +1,261 @@
+import { memo, useEffect, useRef, useState } from 'react';
+import AssetThumbImage from './AssetThumb';
+import { Star } from './MetadataRows';
+import type { AssetSummary } from '../lib/api';
+import { isRawAsset } from '../lib/filters';
+
+export type ClickMods = { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean };
+
+const DOUBLE_CLICK_MS = 400;
+
+// Shared grid tile used by both the main Photos timeline and the Folders
+// (year/month) view - checkbox select, hover-to-open, rating stars, favorite
+// heart, and file type badge all render identically in both places.
+const AssetTile = memo(function AssetTile({
+  asset,
+  selected,
+  onToggleSelect,
+  onToggleOne,
+  onOpen,
+  onContextMenu,
+  onToggleStackExpand,
+  onRate,
+}: {
+  asset: AssetSummary;
+  selected: boolean;
+  onToggleSelect: (id: string, mods: ClickMods) => void;
+  onToggleOne: (id: string) => void;
+  onOpen: (id: string) => void;
+  onContextMenu?: (id: string, x: number, y: number) => void;
+  // Only relevant for a stack's pick (asset.stack.assetCount > 1) - clicking
+  // the stack badge expands/collapses the band in place of this tile.
+  onToggleStackExpand?: (stackId: string) => void;
+  // Lets rating be set directly on the tile instead of only via the Metadata
+  // panel or a keyboard shortcut on the open/selected asset.
+  onRate: (id: string, rating: number) => void;
+}) {
+  const isStackPrimary = !!asset.stack && asset.stack.primaryAssetId === asset.id && asset.stack.assetCount > 1;
+  const isRaw = isRawAsset(asset);
+  // Native dblclick is unreliable for this: some touchpad "double tap" drivers
+  // never synthesize a real dblclick event, only two plain clicks - tracking
+  // this ourselves works uniformly for mouse, touchpad, and touch. A plain
+  // click doesn't select immediately - it's held in a pending timer so a
+  // following second click can cancel it and open instead, without ever
+  // toggling selection first (no select-then-open flicker, and no need to
+  // already be selected before double-clicking/double-tapping to open).
+  const clickTimer = useRef<number | null>(null);
+  const [hovered, setHovered] = useState(false);
+
+  useEffect(
+    () => () => {
+      if (clickTimer.current !== null) window.clearTimeout(clickTimer.current);
+    },
+    [],
+  );
+
+  const handleClick = (e: React.MouseEvent) => {
+    const mods: ClickMods = { shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey };
+    const plain = !e.shiftKey && !e.ctrlKey && !e.metaKey;
+
+    if (clickTimer.current !== null) {
+      window.clearTimeout(clickTimer.current);
+      clickTimer.current = null;
+      if (plain) onOpen(asset.id);
+      else onToggleSelect(asset.id, mods);
+      return;
+    }
+
+    if (!plain) {
+      onToggleSelect(asset.id, mods);
+      return;
+    }
+
+    clickTimer.current = window.setTimeout(() => {
+      clickTimer.current = null;
+      onToggleSelect(asset.id, mods);
+    }, DOUBLE_CLICK_MS);
+  };
+
+  return (
+    <div
+      onClick={handleClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onMouseDown={(e) => {
+        if (e.shiftKey) e.preventDefault();
+      }}
+      onContextMenu={(e) => {
+        if (!onContextMenu) return;
+        e.preventDefault();
+        onContextMenu(asset.id, e.clientX, e.clientY);
+      }}
+      style={{
+        aspectRatio: '3 / 2',
+        borderRadius: 8,
+        overflow: 'hidden',
+        cursor: 'default',
+        background: '#222',
+        boxShadow: selected ? '0 0 0 2px #3584e4, 0 2px 10px rgba(0,0,0,.45)' : '0 0 0 1px rgba(255,255,255,0.07)',
+        position: 'relative',
+        // Without this, the browser's own double-tap-to-zoom gesture
+        // recognizer swallows both taps of a touchpad/touch double-tap
+        // entirely (waiting to see if a second tap follows, then treating
+        // the pair as a zoom gesture instead of two clicks) - a real mouse
+        // double-click isn't subject to that gesture recognition, so it kept
+        // working while double-tap silently did nothing. `manipulation`
+        // disables double-tap-to-zoom specifically while still allowing
+        // normal panning/pinch-zoom.
+        touchAction: 'manipulation',
+      }}
+    >
+      <AssetThumbImage asset={asset} />
+
+      {hovered && (
+        // A single, reliable click to open - doesn't depend on double-click/
+        // double-tap gesture detection working at all, for touchpads where
+        // that gesture doesn't reach the browser as two distinct clicks.
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpen(asset.id);
+          }}
+          title="Open"
+          style={{
+            position: 'absolute',
+            top: 7,
+            right: 7,
+            width: 20,
+            height: 20,
+            borderRadius: 6,
+            background: 'rgba(0,0,0,0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'default',
+            fontSize: 12,
+            color: '#fff',
+          }}
+        >
+          ⤢
+        </div>
+      )}
+
+      {isStackPrimary && (
+        // Sits just left of the open icon, which only appears on hover - so
+        // this shifts further from the corner while hovered instead of
+        // sitting underneath/overlapping it.
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleStackExpand?.(asset.stack!.id);
+          }}
+          title="Expand stack"
+          style={{
+            position: 'absolute',
+            top: 7,
+            right: hovered ? 33 : 7,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+            height: 20,
+            padding: '0 6px',
+            borderRadius: 11,
+            background: 'rgba(0,0,0,0.62)',
+            cursor: 'default',
+          }}
+        >
+          <div style={{ position: 'relative', width: 11, height: 11 }}>
+            <div style={{ position: 'absolute', left: 0, top: 0, width: 7, height: 7, border: '1.4px solid #fff', borderRadius: 1.5 }} />
+            <div style={{ position: 'absolute', left: 3, top: 3, width: 7, height: 7, border: '1.4px solid #fff', borderRadius: 1.5, background: 'rgba(0,0,0,0.62)' }} />
+          </div>
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{asset.stack!.assetCount}</span>
+          <div style={{ width: 5, height: 5, borderRight: '1.4px solid #fff', borderBottom: '1.4px solid #fff', transform: 'rotate(45deg)', marginTop: -2 }} />
+        </div>
+      )}
+
+      <div
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleOne(asset.id);
+        }}
+        style={{
+          position: 'absolute',
+          top: 7,
+          left: 7,
+          width: 10,
+          height: 10,
+          borderRadius: '50%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'default',
+          background: selected ? '#3584e4' : 'rgba(0,0,0,0.35)',
+          boxShadow: selected ? '0 1px 3px rgba(0,0,0,.4)' : 'inset 0 0 0 1px rgba(255,255,255,0.7)',
+        }}
+      >
+        {selected && (
+          <div
+            style={{
+              width: 4,
+              height: 2.5,
+              borderLeft: '1.2px solid #fff',
+              borderBottom: '1.2px solid #fff',
+              transform: 'rotate(-45deg) translateY(-0.5px)',
+            }}
+          />
+        )}
+      </div>
+
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ position: 'absolute', left: 6, bottom: 6, display: 'flex', gap: 4, padding: '3px 4px', borderRadius: 5, background: 'rgba(0,0,0,0.5)' }}
+      >
+        {[1, 2, 3, 4, 5].map((v) => (
+          // The clickable box is plain/unclipped, with the clip-path star as a
+          // purely decorative child - clip-path clips hit-testing along with
+          // painting in Chromium/WebKit, so a star's own corner-notches would
+          // otherwise be unclickable. Same shared Star as MetadataRows.tsx's
+          // rating control, for a consistent look across the grid, filmstrip,
+          // and info panel.
+          <div
+            key={v}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRate(asset.id, v === (asset.rating || 0) ? 0 : v);
+            }}
+            title={`Rate ${v}`}
+            style={{ width: 12, height: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default' }}
+          >
+            <Star filled={v <= (asset.rating || 0)} size={8} />
+          </div>
+        ))}
+      </div>
+
+      <div style={{ position: 'absolute', right: 6, bottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
+        {asset.isFavorite && (
+          <div style={{ position: 'relative', width: 13, height: 12 }}>
+            <div style={{ width: 7, height: 7, background: '#ff6b6b', transform: 'rotate(45deg)', position: 'absolute', left: 3, top: 3 }} />
+            <div style={{ width: 7, height: 7, background: '#ff6b6b', borderRadius: '50%', position: 'absolute', left: 0, top: 0 }} />
+            <div style={{ width: 7, height: 7, background: '#ff6b6b', borderRadius: '50%', position: 'absolute', left: 6, top: 0 }} />
+          </div>
+        )}
+        {asset.fileExtension && (
+          <div
+            style={{
+              font: '600 9.5px ui-monospace,monospace',
+              letterSpacing: '.04em',
+              padding: '2px 5px',
+              borderRadius: 4,
+              color: isRaw ? '#241c00' : '#fff',
+              background: isRaw ? '#e5a50a' : 'rgba(0,0,0,0.5)',
+            }}
+          >
+            {asset.fileExtension}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
+export default AssetTile;

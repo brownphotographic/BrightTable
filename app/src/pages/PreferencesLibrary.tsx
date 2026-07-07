@@ -5,6 +5,8 @@ import {
   testConnection,
   type LibraryConfig,
 } from '../lib/api';
+import { useLibraryStatus } from '../lib/libraryStatus';
+import Switch from '../components/Switch';
 
 const emptyLib: LibraryConfig = {
   connMode: 'lan',
@@ -15,7 +17,7 @@ const emptyLib: LibraryConfig = {
   localRoot: '',
   immichRoot: '',
   readOnly: true,
-  maxDeletePerSession: 25,
+  maxWritesPerBatch: 25,
 };
 
 type Status = { kind: 'idle' | 'ok' | 'error'; text: string };
@@ -30,9 +32,13 @@ function effUrl(lib: LibraryConfig): { url: string; via: string } {
 export default function PreferencesLibrary() {
   const [lib, setLibState] = useState<LibraryConfig>(emptyLib);
   const [status, setStatus] = useState<Status>({ kind: 'idle', text: 'Not connected' });
+  const [versionWarning, setVersionWarning] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [safetySaving, setSafetySaving] = useState(false);
+  const [safetyError, setSafetyError] = useState<string | null>(null);
+  const { refresh: refreshSharedStatus } = useLibraryStatus();
 
   useEffect(() => {
     getConfig()
@@ -54,8 +60,18 @@ export default function PreferencesLibrary() {
         kind: 'ok',
         text: `Connected · Immich ${res.serverVersion} · ${res.userEmail}`,
       });
+      // Below the lowest version this app's actually been verified against
+      // (see MIN_TESTED_SERVER_VERSION in the Rust client) - not a hard
+      // block, just a heads-up that something might behave oddly.
+      setVersionWarning(
+        res.serverVersionSupported
+          ? null
+          : `Immich ${res.serverVersion} is older than the lowest version ImmAture has been tested against (2.7.5) — some features may not work correctly.`,
+      );
+      refreshSharedStatus();
     } catch (e) {
       setStatus({ kind: 'error', text: String(e) });
+      setVersionWarning(null);
     } finally {
       setTesting(false);
     }
@@ -66,10 +82,30 @@ export default function PreferencesLibrary() {
     try {
       await saveLibraryConfig(lib);
       setStatus({ kind: 'ok', text: 'Saved' });
+      refreshSharedStatus();
     } catch (e) {
       setStatus({ kind: 'error', text: String(e) });
     } finally {
       setSaving(false);
+    }
+  }
+
+  // The Safety controls save themselves immediately rather than waiting for
+  // the "Connect" button up in the Server section - a safety toggle that
+  // silently does nothing until an unrelated button is clicked is exactly
+  // the kind of thing that gets missed.
+  async function persistSafety(overrides?: Partial<LibraryConfig>) {
+    const next = overrides ? { ...lib, ...overrides } : lib;
+    if (overrides) setLibState(next);
+    setSafetySaving(true);
+    setSafetyError(null);
+    try {
+      await saveLibraryConfig(next);
+      refreshSharedStatus();
+    } catch (e) {
+      setSafetyError(String(e));
+    } finally {
+      setSafetySaving(false);
     }
   }
 
@@ -144,6 +180,10 @@ export default function PreferencesLibrary() {
         </button>
       </div>
 
+      {versionWarning && (
+        <div style={{ ...helpText, color: 'var(--warn)', margin: '10px 4px 0' }}>{versionWarning}</div>
+      )}
+
       <div style={helpText}>
         Generate a key under Account Settings → API Keys in Immich. For a viewer/stacker
         client, the <code>asset.read</code> and <code>stack.*</code> scopes are sufficient.
@@ -188,28 +228,33 @@ export default function PreferencesLibrary() {
       <div style={{ fontSize: 14, fontWeight: 700, margin: '26px 4px 8px' }}>Safety</div>
       <div style={{ fontSize: 12.5, color: 'var(--text-dimmer)', margin: '0 4px 13px', lineHeight: 1.5 }}>
         While testing against a real server, keep read-only mode on. Turning it off enables
-        write operations (e.g. deletes), capped per app session.
+        write operations (delete, rating, favorite, description edits), capped per action.
       </div>
       <div style={panel}>
         <Row label="Read-only mode" wide>
-          <Switch checked={lib.readOnly} onChange={(v) => setLib('readOnly', v)} />
+          <Switch checked={lib.readOnly} onChange={(v) => persistSafety({ readOnly: v })} />
         </Row>
         <Divider />
-        <Row label="Max deletions / session" wide>
+        <Row label="Max assets / edit" wide>
           <input
             type="number"
             min={0}
-            value={lib.maxDeletePerSession}
+            value={lib.maxWritesPerBatch}
             disabled={lib.readOnly}
-            onChange={(e) => setLib('maxDeletePerSession', Math.max(0, Number(e.target.value) || 0))}
+            onChange={(e) => setLib('maxWritesPerBatch', Math.max(0, Number(e.target.value) || 0))}
+            onBlur={() => persistSafety()}
             style={{ ...inputRight, opacity: lib.readOnly ? 0.4 : 1, width: 90, flex: 'unset' }}
           />
         </Row>
       </div>
-      <div style={helpText}>
-        {lib.readOnly
-          ? 'Read-only mode is on — all write operations (delete, stack, rating, edit) are refused by the app.'
-          : `Deletes are enforced against a per-session cap of ${lib.maxDeletePerSession}, tracked in the app's Rust backend.`}
+      <div style={{ ...helpText, color: safetyError ? 'var(--danger)' : helpText.color }}>
+        {safetySaving
+          ? 'Saving…'
+          : safetyError
+            ? `Couldn't save: ${safetyError}`
+            : lib.readOnly
+              ? 'Read-only mode is on — all write operations (delete, rating, favorite, description edits) are refused by the app.'
+              : `A single delete or edit action can affect at most ${lib.maxWritesPerBatch} assets - e.g. selecting 30 photos and rating them all at once is refused if this is 25.`}
       </div>
     </div>
   );
@@ -255,36 +300,6 @@ function Segmented<T extends string>({
           {o.label}
         </div>
       ))}
-    </div>
-  );
-}
-
-function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <div
-      onClick={() => onChange(!checked)}
-      style={{
-        width: 40,
-        height: 22,
-        borderRadius: 11,
-        background: checked ? 'var(--accent)' : 'rgba(255,255,255,0.15)',
-        cursor: 'default',
-        position: 'relative',
-        transition: 'background 0.15s',
-      }}
-    >
-      <div
-        style={{
-          position: 'absolute',
-          top: 2,
-          left: checked ? 20 : 2,
-          width: 18,
-          height: 18,
-          borderRadius: '50%',
-          background: '#fff',
-          transition: 'left 0.15s',
-        }}
-      />
     </div>
   );
 }

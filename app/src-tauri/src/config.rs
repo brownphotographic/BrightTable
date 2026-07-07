@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
@@ -30,15 +31,23 @@ pub struct LibraryConfig {
     pub immich_root: String,
     #[serde(default = "default_true")]
     pub read_only: bool,
-    #[serde(default = "default_delete_cap")]
-    pub max_delete_per_session: u32,
+    /// Cap on how many assets a single delete or metadata-edit action can
+    /// touch at once (e.g. a 30-photo multi-select edit is refused if this is
+    /// 25) - not a running session total, so it doesn't need any state
+    /// tracked between calls.
+    #[serde(
+        default = "default_write_cap",
+        alias = "maxWritesPerSession",
+        alias = "maxDeletePerSession"
+    )]
+    pub max_writes_per_batch: u32,
 }
 
 fn default_true() -> bool {
     true
 }
 
-fn default_delete_cap() -> u32 {
+fn default_write_cap() -> u32 {
     25
 }
 
@@ -53,7 +62,7 @@ impl Default for LibraryConfig {
             local_root: String::new(),
             immich_root: String::new(),
             read_only: true,
-            max_delete_per_session: 25,
+            max_writes_per_batch: 25,
         }
     }
 }
@@ -84,6 +93,52 @@ impl LibraryConfig {
 pub struct AppConfig {
     pub library: LibraryConfig,
     pub settings_folder: Option<String>,
+    /// Rebindable keyboard shortcuts, keyed by action id (e.g. "selectAll").
+    /// Only overrides are stored here - the frontend fills in any action
+    /// missing from this map with its own built-in default, so adding a new
+    /// shortcutable action later doesn't require a config migration.
+    #[serde(default)]
+    pub shortcuts: HashMap<String, String>,
+    #[serde(default)]
+    pub smart_stack: SmartStackSettings,
+    /// Asset ids the user has manually flagged as "actually a RAW file"
+    /// despite their extension not being one of the recognized RAW
+    /// extensions - e.g. TIFF was the RAW-native format on some very old
+    /// digital cameras (the original Canon 1Ds), but `.tif`/`.tiff` is also
+    /// an ordinary export/rendition format with no reliable way to tell the
+    /// two apart from Immich's metadata alone (checked: neither camera EXIF
+    /// nor pixel dimensions distinguish them in practice). Rather than
+    /// guessing, `.tif`/`.tiff` defaults to "not RAW" and the user marks the
+    /// exceptions individually (Edit menu -> Toggle Canon RAW).
+    #[serde(default)]
+    pub raw_overrides: HashSet<String>,
+}
+
+/// Last-used Smart Stack dialog settings (grouping mode, version suffix, time
+/// tolerance) - persisted so the user's real ART/RawTherapee suffix (e.g.
+/// " - converted") doesn't need retyping every session, unlike the design
+/// prototype where this state is purely in-memory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SmartStackSettings {
+    pub mode: String,
+    pub suffix: String,
+    /// Index into the frontend's 19-step TOL scale, 0..=18.
+    pub tolerance: u32,
+}
+
+impl Default for SmartStackSettings {
+    fn default() -> Self {
+        Self {
+            mode: "name".into(),
+            // Wildcard-flanked so it matches "converted" appearing anywhere
+            // in the base name, regardless of the exact separator/spacing a
+            // RAW editor used when saving the rendition (e.g. "IMG_1 -
+            // converted.jpg" or "IMG_1_converted_2.jpg" both match).
+            suffix: "*converted*".into(),
+            tolerance: 10,
+        }
+    }
 }
 
 fn config_path(app: &AppHandle, cfg: &AppConfig) -> Result<PathBuf, String> {
