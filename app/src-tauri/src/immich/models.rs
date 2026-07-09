@@ -116,6 +116,7 @@ impl RawTimeBucketAssets {
                 file_size_in_byte: None,
                 description: None,
                 stack: None,
+                original_path: None,
             })
             .collect()
     }
@@ -186,6 +187,8 @@ pub struct RawSearchAsset {
     pub exif_info: Option<RawExifInfo>,
     #[serde(default)]
     pub stack: Option<AssetStackInfo>,
+    #[serde(rename = "originalPath", default)]
+    pub original_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -226,6 +229,13 @@ pub struct AssetSummary {
     pub file_size_in_byte: Option<i64>,
     pub description: Option<String>,
     pub stack: Option<AssetStackInfo>,
+    /// Server-side path (real filesystem path for an External Library asset,
+    /// or Immich's own internal upload-storage path otherwise) - used to
+    /// resolve a real local file for RAW-editor sidecar read/write (see
+    /// `paths::resolve_local_path`). Not populated for Trash view assets
+    /// (`RawTimeBucketAssets::to_assets`), which is fine since sidecar
+    /// sync/copy-paste don't apply there.
+    pub original_path: Option<String>,
 }
 
 impl From<RawSearchAsset> for AssetSummary {
@@ -259,6 +269,7 @@ impl From<RawSearchAsset> for AssetSummary {
             file_size_in_byte: e.as_ref().and_then(|e| e.file_size_in_byte),
             description: e.as_ref().and_then(|e| e.description.clone()),
             stack: r.stack,
+            original_path: r.original_path,
         }
     }
 }

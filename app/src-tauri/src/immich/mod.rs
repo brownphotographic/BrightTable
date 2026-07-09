@@ -2,7 +2,7 @@ pub mod models;
 
 use crate::config::LibraryConfig;
 use models::{
-    ConnectionStatus, RawSearchMetadataResponse, RawStackResponse, RawTimeBucket,
+    ConnectionStatus, RawSearchAsset, RawSearchMetadataResponse, RawStackResponse, RawTimeBucket,
     RawTimeBucketAssets, ServerVersion, StackInfo, UserInfo, MIN_TESTED_SERVER_VERSION,
 };
 
@@ -185,6 +185,29 @@ impl ImmichClient {
             }
         }
         Ok(all.into_iter().map(Into::into).collect())
+    }
+
+    /// GET /view/folder/unique-paths - one entry per real filesystem directory
+    /// that directly contains at least one (non-trashed, non-archived) asset,
+    /// e.g. "upload/library/admin/2024/09". This is the actual server-side
+    /// folder structure (Immich's own "Folders" view is built off the same
+    /// call) - nothing to do with capture date. Requires the API key to have
+    /// the `folder.read` permission.
+    pub async fn get_unique_folder_paths(&self) -> Result<Vec<String>, String> {
+        self.get_json("/view/folder/unique-paths", &[]).await
+    }
+
+    /// GET /view/folder?path=X - the assets whose originalPath's parent
+    /// directory is exactly `path` (direct children only, not recursive
+    /// descendants - matches how a real file browser navigates one folder at
+    /// a time). Deserializes the same per-asset shape as `/search/metadata`
+    /// (both are Immich's full `AssetResponseDto`; unknown fields are
+    /// ignored by serde either way).
+    pub async fn get_folder_assets(&self, path: &str) -> Result<Vec<models::AssetSummary>, String> {
+        let raw: Vec<RawSearchAsset> = self
+            .get_json("/view/folder", &[("path".into(), path.to_string())])
+            .await?;
+        Ok(raw.into_iter().map(Into::into).collect())
     }
 
     pub async fn get_thumbnail_bytes(

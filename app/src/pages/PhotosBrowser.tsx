@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
+  checkSidecarMetadata,
   createStack,
   deleteAssets,
   deleteStack,
@@ -14,9 +15,11 @@ import {
   type AssetStackInfo,
   type AssetSummary,
   type TimeBucketInfo,
+  type UnsyncedMetadata,
 } from '../lib/api';
 import Viewer from '../components/Viewer';
 import AssetTile, { type ClickMods } from '../components/AssetTile';
+import SelectionBar from '../components/SelectionBar';
 import StackBand from '../components/StackBand';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import SmartStackDialog from '../components/SmartStackDialog';
@@ -49,6 +52,7 @@ export interface PhotosBrowserHandle {
   stackSelected: () => void;
   openSmartStack: () => void;
   toggleRawOverrideForSelection: () => void;
+  syncAllUnsyncedMetadata: () => void;
 }
 
 const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
@@ -82,6 +86,13 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // asset records. Kept independent of assetCache/patchAssetLocal - see the
   // filteredAssetCache overlay below.
   const [stackByAssetId, setStackByAssetId] = useState<Map<string, AssetStackInfo>>(new Map());
+  // Asset id -> rating/description found in that asset's local sidecar or
+  // embedded file, only for whichever field(s) Immich's own value is unset -
+  // Immich already wins outright per-field whenever it has a value, so this
+  // only ever holds true gaps (see check_sidecar_metadata in commands.rs).
+  // Populated passively as buckets load; the actual write into Immich only
+  // happens when the user explicitly triggers a sync (never automatic).
+  const [unsyncedMetadata, setUnsyncedMetadata] = useState<Map<string, UnsyncedMetadata>>(new Map());
   const { shortcuts, capturing } = useShortcuts();
   const { overrideIds, setOverride } = useRawOverrides();
 
@@ -117,11 +128,16 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     const out: Record<string, AssetSummary[]> = {};
     for (const [key, assets] of Object.entries(assetCache)) {
       out[key] = assets
-        .map((a) => ({ ...a, stack: stackByAssetId.get(a.id) ?? null, isRawOverride: overrideIds.has(a.id) }))
+        .map((a) => ({
+          ...a,
+          stack: stackByAssetId.get(a.id) ?? null,
+          isRawOverride: overrideIds.has(a.id),
+          unsyncedMetadata: unsyncedMetadata.get(a.id),
+        }))
         .filter((a) => !isHiddenStackChild(a) && matchesFilters(a, deferredFilters));
     }
     return out;
-  }, [assetCache, deferredFilters, stackByAssetId, overrideIds]);
+  }, [assetCache, deferredFilters, stackByAssetId, overrideIds, unsyncedMetadata]);
 
   // Flat visual order (bucket order, then day order, then asset order) of every
   // currently-loaded, currently-visible asset - this is what shift-click range
@@ -155,10 +171,17 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   const assetByIdAll = useMemo(() => {
     const map = new Map<string, AssetSummary>();
     for (const assets of Object.values(assetCache)) {
-      for (const a of assets) map.set(a.id, { ...a, stack: stackByAssetId.get(a.id) ?? null, isRawOverride: overrideIds.has(a.id) });
+      for (const a of assets) {
+        map.set(a.id, {
+          ...a,
+          stack: stackByAssetId.get(a.id) ?? null,
+          isRawOverride: overrideIds.has(a.id),
+          unsyncedMetadata: unsyncedMetadata.get(a.id),
+        });
+      }
     }
     return map;
-  }, [assetCache, stackByAssetId, overrideIds]);
+  }, [assetCache, stackByAssetId, overrideIds, unsyncedMetadata]);
 
   // Patches the one asset's copy that lives in whichever bucket's cached
   // array it's in - assetById/openAsset/selectedAssets all derive from
@@ -365,6 +388,41 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     [selected, assetByIdAll],
   );
 
+  const allSelectedFavorited = selectedAssets.length > 0 && selectedAssets.every((a) => a.isFavorite);
+
+  // Shared by the favorite keyboard shortcut and the selection bar's
+  // Favorite button - "all vs not all" matches the metadata panel's toggle
+  // convention (any non-favorited member in the selection means the next
+  // click favorites everything, rather than only clearing).
+  const toggleFavoriteForSelection = useCallback(() => {
+    if (selected.size === 0) return;
+    commitEditMany([...selected], { isFavorite: !allSelectedFavorited }).catch(() => {});
+  }, [selected, allSelectedFavorited, commitEditMany]);
+
+  // Writes each id's sidecar/embedded-discovered rating and/or description
+  // into Immich - one commitEdit per asset (descriptions are per-asset-
+  // unique text, so unlike a plain rating there's no meaningful way to group
+  // several ids into a single call), reusing the existing bulk-edit path's
+  // read-only/max-writes-per-batch gate unchanged.
+  const syncMetadata = useCallback(
+    async (ids: string[]) => {
+      for (const id of ids) {
+        const gap = unsyncedMetadata.get(id);
+        if (!gap) continue;
+        const patch: AssetMetadataPatch = {};
+        if (gap.rating !== undefined) patch.rating = gap.rating;
+        if (gap.description !== undefined) patch.description = gap.description;
+        await commitEdit(id, patch);
+      }
+      setUnsyncedMetadata((m) => {
+        const next = new Map(m);
+        for (const id of ids) next.delete(id);
+        return next;
+      });
+    },
+    [unsyncedMetadata, commitEdit],
+  );
+
   const navigateOpen = (dir: 1 | -1) => {
     const ni = openIndex + dir;
     if (ni < 0 || ni >= flatIds.length) return;
@@ -395,8 +453,14 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
         onClick: () => unstackByStackId(asset.stack!.id).catch(() => {}),
       });
     }
+    if (asset && unsyncedMetadata.has(asset.id)) {
+      items.push({
+        label: 'Sync Metadata from Sidecar',
+        onClick: () => syncMetadata([asset.id]).catch(() => {}),
+      });
+    }
     return items;
-  }, [contextMenu, assetById, selected, createStackForSelection, unstackByStackId]);
+  }, [contextMenu, assetById, selected, createStackForSelection, unstackByStackId, unsyncedMetadata, syncMetadata]);
 
   useEffect(() => {
     getTimelineBuckets()
@@ -439,8 +503,14 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       },
       openSmartStack: () => setSmartStackOpen(true),
       toggleRawOverrideForSelection,
+      // Scoped to every currently-loaded unsynced asset, not just the
+      // selection - matches the Edit menu's other "act on everything
+      // relevant" items rather than requiring a selection first.
+      syncAllUnsyncedMetadata: () => {
+        syncMetadata([...unsyncedMetadata.keys()]).catch(() => {});
+      },
     }),
-    [selectAll, deselectAll, createStackForSelection, selected, toggleRawOverrideForSelection],
+    [selectAll, deselectAll, createStackForSelection, selected, toggleRawOverrideForSelection, syncMetadata, unsyncedMetadata],
   );
 
   // Open opens the last-clicked photo (a keyboard path to the viewer that
@@ -468,9 +538,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
         setConfirmDeleteSelection(true);
       } else if (matchesShortcut(e, shortcuts.favorite) && selected.size > 0) {
         e.preventDefault();
-        const ids = [...selected];
-        const allFav = selectedAssets.every((a) => a.isFavorite);
-        commitEditMany(ids, { isFavorite: !allFav }).catch(() => {});
+        toggleFavoriteForSelection();
       } else if (matchesShortcut(e, shortcuts.stack) && selected.size >= 2) {
         e.preventDefault();
         createStackForSelection([...selected]).catch(() => {});
@@ -494,7 +562,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openId, selectAll, deselectAll, selected, selectedAssets, shortcuts, capturing, commitEditMany, createStackForSelection]);
+  }, [openId, selectAll, deselectAll, selected, shortcuts, capturing, commitEditMany, createStackForSelection, toggleFavoriteForSelection]);
 
   // Plain click: select only this one, clearing everything else (standard
   // file-manager semantics). Also used as the checkbox's own click target,
@@ -569,7 +637,34 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       if (assetCache[bucket.timeBucket] || inFlight.current.has(bucket.timeBucket)) continue;
       inFlight.current.add(bucket.timeBucket);
       getTimelineBucketAssets(bucket.timeBucket)
-        .then((assets) => setAssetCache((c) => ({ ...c, [bucket.timeBucket]: assets })))
+        .then((assets) => {
+          setAssetCache((c) => ({ ...c, [bucket.timeBucket]: assets }));
+          // Passive, best-effort check - silently does nothing if no local
+          // path mapping is configured (Preferences → Library → Originals
+          // on Disk) or this bucket's assets don't resolve to one.
+          checkSidecarMetadata(
+            assets.map((a) => ({
+              assetId: a.id,
+              originalPath: a.originalPath,
+              currentRating: a.rating,
+              currentDescription: a.description,
+            })),
+          )
+            .then((results) => {
+              if (!results.length) return;
+              setUnsyncedMetadata((m) => {
+                const next = new Map(m);
+                for (const r of results) {
+                  next.set(r.assetId, {
+                    rating: r.rating ?? undefined,
+                    description: r.description ?? undefined,
+                  });
+                }
+                return next;
+              });
+            })
+            .catch(() => {});
+        })
         .catch(() => setAssetCache((c) => ({ ...c, [bucket.timeBucket]: [] })))
         .finally(() => inFlight.current.delete(bucket.timeBucket));
     }
@@ -593,6 +688,20 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      {selected.size > 0 && (
+        <SelectionBar
+          count={selected.size}
+          onCancel={deselectAll}
+          onStack={() => createStackForSelection([...selected]).catch(() => {})}
+          onSmartStack={() => setSmartStackOpen(true)}
+          onFavorite={toggleFavoriteForSelection}
+          allFavorited={allSelectedFavorited}
+          onRate={(rating) => commitEditMany([...selected], { rating }).catch(() => {})}
+          unsyncedCount={[...selected].filter((id) => unsyncedMetadata.has(id)).length}
+          onSyncMetadata={() => syncMetadata([...selected].filter((id) => unsyncedMetadata.has(id))).catch(() => {})}
+          onDelete={() => setConfirmDeleteSelection(true)}
+        />
+      )}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div ref={containerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: '0 24px', ...pendingStyle(isFiltering) }}>
           <div style={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
@@ -640,8 +749,6 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
         selectedCount={selected.size}
         thumbSize={thumbSize}
         onThumbSize={setThumbSize}
-        onDeleteSelected={() => setConfirmDeleteSelection(true)}
-        onStackSelected={() => createStackForSelection([...selected]).catch(() => {})}
       />
       {openAsset && (
         <Viewer
@@ -707,15 +814,11 @@ function StatusBar({
   selectedCount,
   thumbSize,
   onThumbSize,
-  onDeleteSelected,
-  onStackSelected,
 }: {
   totalCount: number;
   selectedCount: number;
   thumbSize: number;
   onThumbSize: (n: number) => void;
-  onDeleteSelected: () => void;
-  onStackSelected: () => void;
 }) {
   return (
     <div
@@ -734,16 +837,6 @@ function StatusBar({
     >
       <span>{totalCount} assets</span>
       {selectedCount > 0 && <span>· {selectedCount} selected</span>}
-      {selectedCount > 0 && (
-        <div onClick={onDeleteSelected} style={{ cursor: 'default', color: '#ff8080' }}>
-          Move to Trash
-        </div>
-      )}
-      {selectedCount >= 2 && (
-        <div onClick={onStackSelected} style={{ cursor: 'default' }}>
-          Stack {selectedCount} Photos
-        </div>
-      )}
       <div style={{ flex: 1 }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 20, padding: '0 8px', borderRadius: 6 }}>
         <div style={{ position: 'relative', width: 12, height: 12, flexShrink: 0 }}>

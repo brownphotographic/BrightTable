@@ -25,8 +25,8 @@
   "Stacks" sidebar tab is gone even there (removed per §5 feedback) and was never part of
   the real app.
 - ✅ **Photos** timeline grouped by day, with date / place / count headers, newest-first (§7.3).
-- ✅ **Folders** view: a Year → Month tree (not a real filesystem tree — Immich has no
-  filesystem-folder concept for camera-imported assets) with its own thumbnail grid (§7.10).
+- ✅ **Folders** view: the real server-side folder tree (Immich's `/view/folder*`
+  endpoints, same as Immich's own web UI) with its own thumbnail grid (§7.10).
 - ⬜ Albums and People are pure placeholders in the real app (no fake grid data like the
   prototype shows — just a "not built yet" message). Prototype only.
 - 🟡 Menu bar (File / Edit / View / Help) is real, but only some items are wired: Select
@@ -37,10 +37,15 @@
 - 🟡 Search field exists visually; not wired to Immich search in the real app either.
 
 ### 1.2 Selection, detail & viewing
-- 🟡 Single-click select and checkbox multi-select are real (grid + Folders view). There's
-  no floating **selection action bar** in the real app — no Stack / Favorite / Add to Album
-  buttons; bulk favorite/rating happens via keyboard shortcuts instead (§7.8), and Move to
-  Trash is a link in the bottom status bar. The action bar itself is prototype only.
+- ✅ Single-click select and checkbox multi-select are real (grid + Folders view), plus a
+  floating **selection action bar** (`SelectionBar.tsx`, §7.17) across the top of both the
+  Photos and Folders grids whenever the selection is non-empty — Cancel, Favorite (a real
+  click target now, not just a keyboard shortcut), Smart Stack, Stack N Photos, and Move to
+  Trash. The bottom status bar's redundant text links for the same two actions were removed
+  once the bar covered them (§7.17). A right-click **context menu** (**Stack N Photos**,
+  **Smart Stack N Photos**, **Unstack** — §7.13) remains for per-tile access. Paste Settings
+  and Add to Album from the prototype's bar are deliberately left out — no Copy/Paste
+  Settings or Albums feature exists in the real app yet (§1.5, §7.15).
 - ✅ Detail view (`Viewer.tsx`) with zoomable preview, EXIF info panel, and a filmstrip of
   the current set (§7.5).
 - 🟡 Adjustable thumbnail size and file-type badges are real and always-on. They are **not**
@@ -187,10 +192,23 @@
 - Define the sidecar schema for version lineage (which suffixes, ordering, pick).
 - Decide conflict handling when Immich DB metadata and sidecar metadata disagree.
 - **Scope the rest of Immich's metadata surface for the real app** (raised, not yet
-  prioritized): Tags (view + add/remove), People (view-only), Location (view + edit
-  GPS/place), Date/time (view + edit capture time). Rating/favorite/description are
-  already done (§7.6) — this would extend the same metadata panel to the remaining
-  fields Immich's API exposes.
+  prioritized): **Tags** — a hierarchical tag menu (view + add/remove), People
+  (view-only), Location (view + edit GPS/place), Date/time (view + edit capture time).
+  Rating/favorite/description are already done (§7.6) — this would extend the same
+  metadata panel to the remaining fields Immich's API exposes.
+- **Bulk metadata update** (raised, not yet prioritized) — two sub-features, both needing
+  write access to EXIF/IPTC fields beyond what's currently editable (rating/favorite/
+  description only, per §1.5), so they'd need scoping alongside the metadata-surface item
+  above:
+  1. **Time zone / DST conversion** — bulk-shift capture date/time across a selection to
+     correct for timezone or daylight-saving offset errors (e.g., camera clock set wrong,
+     or footage shot across a timezone change).
+  2. **Lens profiles for vintage/uncoded lenses** — user-curated, named lens profiles that
+     bulk-write multiple EXIF/IPTC fields at once (lens model, focal length, max aperture,
+     etc.) to a selection. Targeted at manual/vintage/uncoded lenses that don't report data
+     to the camera body, so Immich/EXIF has nothing to read. Will need research help
+     identifying correct field values per lens model when the user builds out the profile
+     set.
 
 ---
 
@@ -533,19 +551,33 @@
   those don't exist as real behavior in the app at all yet (no real Stacks feature).
 
 ### 7.10 Folders view (real)
-- ✅ **Folders tab** (`FoldersBrowser.tsx`) is now real. Immich has no filesystem-folder
-  concept for camera-imported assets, so — matching the design prototype's synthetic
-  `folder` grouping — this reinterprets "Folders" as a **Year → Month tree** over the
-  same timeline buckets the Photos view uses (`get_time_buckets`), rather than real
-  filesystem paths.
-- ✅ Left tree pane: **All Originals** (every bucket), expandable **year** nodes (chevron
-  toggles expand/collapse; only the most recent year is expanded by default), and
-  **month** leaf nodes — each row shows a live count. Selecting a node loads a flat grid
-  (no day/month headers, unlike Photos) of just that node's assets.
-- ✅ Bucket-level virtualization (`@tanstack/react-virtual`, same approach as Photos)
-  scoped to whichever buckets feed the selected node — selecting "All Originals" windows
-  across every bucket exactly like the Photos timeline does, so a large library doesn't
-  render everything at once.
+- ✅ **Folders tab** (`FoldersBrowser.tsx`) reflects Immich's **real server-side folder
+  structure** — the same one Immich's own web "Folders" view shows — not capture date.
+  Backed by two endpoints Immich's own frontend uses for exactly this
+  (`GET /view/folder/unique-paths` for the tree, `GET /view/folder?path=` for a folder's
+  direct-child assets), wrapped as `get_folder_paths`/`get_folder_assets` Tauri commands.
+  Requires the configured API key to have the `folder.read` permission. (Originally
+  shipped as a synthetic Year → Month tree over capture-date timeline buckets, matching
+  the design prototype's placeholder grouping — replaced once real folder browsing was
+  confirmed to look wrong against the user's actual library, e.g. inventing a "1970"
+  bucket and hiding real folders like "1979 Rob through the years"/"VSCO edits".)
+- ✅ `app/src/lib/folderTree.ts` builds the tree client-side from the flat list of
+  asset-holding directory paths, folding chains of asset-less single-child directories
+  into one display node (e.g. a whole library mount collapsing into one row) — the same
+  approach as Immich's own `tree-utils.ts`. Depth is whatever the real filesystem is (this
+  library is flat `YYYY/` for older years but `YYYY/MM/` from a later year onward), not a
+  fixed two-level shape.
+- ✅ Left tree pane: **All Originals** (every asset-holding folder in the tree) plus the
+  real recursive folder tree (chevron toggles expand/collapse). Selecting a container
+  folder recurses over its subfolders' assets; selecting a leaf folder shows just its own
+  direct children — matching real folder semantics (non-recursive per Immich's own
+  `originalPath LIKE 'path/%' AND NOT LIKE 'path/%/%'` query). No per-row counts (the
+  folder API doesn't expose them upfront, and Immich's own UI doesn't show them either).
+- ✅ Section-level virtualization (`@tanstack/react-virtual`, same approach as Photos)
+  scoped to whichever real folders feed the selected node — selecting "All Originals"
+  windows across every folder exactly like the Photos timeline windows across months, so
+  a large library doesn't render everything at once. Row-height estimates are a fixed
+  guess (folder sizes aren't known upfront) corrected after each section renders.
 - ✅ Full parity with the Photos grid: multi-select (click / Ctrl+click / Shift-range),
   Move to Trash, rating/favorite keyboard shortcuts applied in bulk over the selection
   (§7.8), the Metadata panel, and the Viewer (prev/next navigate within the selected
@@ -786,5 +818,104 @@
   stars (filled + unfilled) rather than only the filled count.
 - ⬜ All of the above verified via `tsc --noEmit` and `oxlint` only (both clean) — not yet
   manually exercised against a running `cargo tauri dev` session.
+
+### 7.17 Floating selection action bar (real)
+> Closes the gap flagged in §1.2: the real app previously had no equivalent of the
+> prototype's floating selection bar, just scattered status-bar links and a context menu.
+- ✅ **`SelectionBar.tsx`** — a 46px bar (`#26313f` background, blue-tinted bottom border,
+  matching the prototype's styling) rendered above the grid in both `PhotosBrowser.tsx` and
+  `FoldersBrowser.tsx` whenever `selected.size > 0`. Left side: a circular Cancel (×) button
+  (`deselectAll`) and an "N selected" label. Right side: **Favorite** (reuses `MetadataRows`'
+  now-exported `Heart` icon), **Smart Stack**, **Stack N Photos** (both disabled under 2
+  selected), a divider, then **Move to Trash** in the status bar's existing red (`#ff8080`).
+- ✅ **Bulk rating control** — a "0" clear button plus a plain 5-star row (reusing
+  `MetadataRows`' now-exported `Star`) sits to the left of Favorite. Chosen over a "Rate"
+  popover button or a text dropdown after presenting all three to the user: inline stars
+  read as one click for a novice, and reuse the same `Star` glyph already used on grid
+  tiles, the metadata panel, and the filmstrip. Since a selection can have mixed ratings,
+  the stars are a plain set-rating input (always unfilled at rest) rather than a
+  reflection of any one asset's current value, unlike the single-asset rating row in
+  `MetadataRows`.
+- ✅ **Scoped to real functionality only** — the prototype's bar also had **Paste Settings**
+  (needs a clipboard/copy-paste-settings feature, §1.5, prototype-only) and **Add to Album**
+  (needs Albums, still a placeholder, §7.15); both intentionally left out rather than wired
+  to dead ends, per an explicit decision with the user.
+- ✅ **Favorite is now a real click target**, not just a keyboard shortcut (§7.8's gap) — a
+  shared `toggleFavoriteForSelection` callback (same "any non-favorited member flips
+  everything on" convention the `f` shortcut already used) is now the single implementation
+  behind both the button and the shortcut, in both browser pages.
+- ✅ **Removed the now-redundant bottom-status-bar text links** ("Move to Trash", "Stack N
+  Photos") from both pages once the bar covered the same actions — an explicit decision with
+  the user rather than leaving two UI locations doing the same thing. The status bar's plain
+  "N selected" count label stays, alongside the total asset count.
+- ⬜ Verified via `tsc --noEmit` and `oxlint` (both clean) and confirmed the touched files
+  transform without error through the already-running `cargo tauri dev` / Vite dev server
+  (live against the user's real, connected Immich library) — not yet manually clicked
+  through in the actual window, since that session has real writes enabled
+  (`readOnly: false`) and Favorite/Stack/Delete are all real mutations against the live
+  library, not something to exercise unattended.
+
+### 7.18 RAW-editor metadata sync — Stage 0 + Stage A (real)
+> Larger, user-planned feature: digiKam/darktable/RawTherapee/ART all write sidecar files (or,
+> for JPEG/TIFF, straight into the image itself) that Immich never sees. Full plan (all stages)
+> recorded in this session's plan file. Stage B (mirroring ImmAture's own edits back out to a
+> `.xmp` sidecar) and darktable/ART Copy-Paste Settings + the local "pasted settings" badge are
+> queued next, not yet built.
+- ✅ **Stage 0 — local path resolution.** A second NFS/SMB mount mapping on `LibraryConfig`/
+  Preferences → Library → Originals on Disk: `uploadedLocalRoot`/`uploadedImmichRoot`,
+  alongside the existing External Library `localRoot`/`immichRoot` pair — External Library
+  assets keep their real folder path, while ones uploaded directly (phone/web) live under
+  Immich's own internal upload storage instead, so each needs its own local mount.
+  - `originalPath` is captured end-to-end (`immich/models.rs` → `AssetSummary` → the frontend's
+    `AssetSummary`), despite Immich's `/search/metadata` already returning it.
+  - `app/src-tauri/src/paths.rs`: `resolve_local_path()` substitutes whichever of the two
+    configured server-root prefixes matches (External Library first, then Immich Uploads),
+    returning `None` — never an error — if neither mapping is configured or the path matches
+    neither prefix, since most users will only ever set up one of the two.
+- ✅ **Stage A — passive metadata sync (rating + description).** New `check_sidecar_metadata`
+  command resolves each asset's rating and description independently, each via its own
+  precedence chain (`paths::read_asset_metadata`):
+  1. `.xmp` sidecar — `xmp:Rating` (digiKam/darktable/ART, and RT if configured to sync XMP)
+     and `dc:description`; a `digiKam:PickLabel` of "rejected" also counts as a rating of `-1`
+     when `xmp:Rating` itself isn't present.
+  2. metadata embedded directly in the file (`app/src-tauri/src/embedded.rs`) — JPEG APP1/XMP
+     and APP13/legacy-IPTC-caption, or a TIFF's IFD0 XMP tag. RAW files always go through a
+     sidecar instead, regardless of tool, so no embedded-RAW parsing exists.
+  3. RawTherapee's own `.pp3`: `Rank=` (`[General]`) for rating, `Caption=` (`[IPTC]`, a
+     semicolon-delimited glib key-file list even though RT only ever writes one value — key
+     name/format confirmed against RT's own `procparams.cc`, not just documentation) for
+     description.
+  - `-1` (RT/ART's/XMP's standard "rejected" marker, and digiKam's `PickLabel=1`) is a real,
+    syncable value — Immich's `rating` field explicitly supports it. Every reader/writer here
+    is a small hand-rolled scan, not a full XML/TIFF/EXIF parser — deliberate, since this is a
+    fixed, well-known set of fields across a small set of known tools.
+  - Returns a gap whenever the sidecar/embedded value differs from what Immich currently has for
+    that field, independently per field (an asset with a matching rating but a differing
+    description still surfaces a description-only gap, and vice versa) — not "gap-fill only": a
+    rating changed in digiKam/ART/RT after Immich last saw a value must still surface as
+    unsynced, since those tools (not Immich) are where ratings/captions are actually set day to
+    day. Immich is still never overwritten automatically — the user always explicitly triggers
+    the sync action.
+  - Wired into the existing per-bucket/per-folder asset-fetch effect in
+    `PhotosBrowser.tsx`/`FoldersBrowser.tsx` — passive/automatic detection, but the actual write
+    into Immich only happens on an explicit user action (never silent), per the user's own
+    framing: "read automatically from the sidecar, but Immich should take precedence if there
+    is already a rating in Immich. Then let the user sync them if they aren't synced."
+  - Sync action does one `commitEdit` per affected asset (not grouped/batched — descriptions
+    are per-asset-unique text, unlike a plain rating) — still gated by the same read-only +
+    max-writes-per-batch safety net as every other edit.
+  - Entry points: a small amber badge on the grid tile (`AssetTile.tsx`, tooltip naming which
+    field(s) have a gap), a context-menu "Sync Metadata from Sidecar" item (single asset), a
+    SelectionBar "Sync N Items" button (current selection), and an Edit-menu "Sync Metadata
+    from Sidecar" item (every currently-loaded gap, not just the selection).
+  - Tags/keywords have no Immich-side home (no Tags UI exists in ImmAture yet, §3) — never read
+    for sync purposes, and digiKam tag-sync remains an explicitly deferred stretch idea.
+- ✅ 7 unit tests in `paths.rs` (prefix substitution for both mappings, sibling-prefix
+  rejection, unconfigured/unmatched → `None`, both xmp:Rating forms, pp3 `Rank=` scoped to
+  `[General]` plus the `-1` rejected case, and the xmp-then-pp3 fallback order) — `cargo test`
+  passing, alongside `tsc --noEmit`/`oxlint`/`cargo check` all clean.
+- ⬜ Not yet manually verified against the user's real library/sidecars — paused here by
+  design before Stage 2 (which does real, overwriting local file writes) for the user to test
+  Stage 0/1 first.
 
 <!-- Paste further decisions, rationale, rejected ideas, or transcripts below; ask Claude to fold them in. -->

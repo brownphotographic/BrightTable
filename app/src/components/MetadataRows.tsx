@@ -93,7 +93,7 @@ export function Star({ filled, size = 14 }: { filled: boolean; size?: number }) 
   );
 }
 
-function Heart({ filled, size = 13 }: { filled: boolean; size?: number }) {
+export function Heart({ filled, size = 13 }: { filled: boolean; size?: number }) {
   const s = size * (7 / 13);
   const color = filled ? '#ff6b6b' : 'rgba(255,255,255,0.25)';
   return (

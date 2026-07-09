@@ -1,9 +1,12 @@
 mod commands;
 mod config;
+mod embedded;
 mod immich;
+mod paths;
 mod protocol;
 mod state;
 mod thumb_cache;
+mod xmp;
 
 use state::AppState;
 use tauri::Manager;
@@ -45,6 +48,9 @@ pub fn run() {
             commands::list_stacks,
             commands::set_stack_pick,
             commands::delete_stack,
+            commands::check_sidecar_metadata,
+            commands::get_folder_paths,
+            commands::get_folder_assets,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

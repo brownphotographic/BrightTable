@@ -32,7 +32,13 @@ function AppShell() {
   const [leftTab, setLeftTab] = useState<LeftTab>('photos');
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [photosCount, setPhotosCount] = useState(0);
-  const [photosKey, setPhotosKey] = useState(0);
+  // Shared by both PhotosBrowser and FoldersBrowser - bumping it forces
+  // whichever is currently mounted to fully remount (clearing its
+  // assetCache/unsyncedMetadata/etc.), since neither view otherwise has any
+  // way to know a local sidecar or the path-mapping config changed
+  // underneath it. Previously only applied to PhotosBrowser, so Refresh
+  // Timeline silently did nothing while looking at the Folders tab.
+  const [dataKey, setDataKey] = useState(0);
   const [metaOpen, setMetaOpen] = useState(false);
   const [trashCount, setTrashCount] = useState(0);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
@@ -40,7 +46,7 @@ function AppShell() {
   const foldersRef = useRef<FoldersBrowserHandle>(null);
   const { shortcuts, capturing } = useShortcuts();
 
-  const refreshTimeline = () => setPhotosKey((k) => k + 1);
+  const refreshTimeline = () => setDataKey((k) => k + 1);
 
   // Global-level shortcuts (not owned by any single view): Refresh Timeline
   // and Open Preferences. Skipped while typing, while Preferences is already
@@ -84,6 +90,7 @@ function AppShell() {
         onStackSelected={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.stackSelected()}
         onSmartStack={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.openSmartStack()}
         onToggleRawOverride={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.toggleRawOverrideForSelection()}
+        onSyncSidecarRatings={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.syncAllUnsyncedMetadata()}
         filters={filters}
         onFiltersChange={setFilters}
       />
@@ -94,7 +101,7 @@ function AppShell() {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: '#1c1c1c', position: 'relative' }}>
           {leftTab === 'photos' && (
             <PhotosBrowser
-              key={photosKey}
+              key={dataKey}
               ref={photosRef}
               onTotalCount={setPhotosCount}
               metaOpen={metaOpen}
@@ -106,6 +113,7 @@ function AppShell() {
           {leftTab === 'people' && <PlaceholderView label="People" />}
           {leftTab === 'folders' && (
             <FoldersBrowser
+              key={dataKey}
               ref={foldersRef}
               metaOpen={metaOpen}
               onCloseMetadata={() => setMetaOpen(false)}

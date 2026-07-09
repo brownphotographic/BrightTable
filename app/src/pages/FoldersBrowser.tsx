@@ -1,22 +1,25 @@
 import { forwardRef, useCallback, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
+  checkSidecarMetadata,
   createStack,
   deleteAssets,
   deleteStack,
+  getFolderAssets,
+  getFolderPaths,
   getStack,
-  getTimelineBuckets,
-  getTimelineBucketAssets,
   listStacks,
   setStackPick,
   updateAssetMetadata,
   type AssetMetadataPatch,
   type AssetStackInfo,
   type AssetSummary,
-  type TimeBucketInfo,
+  type UnsyncedMetadata,
 } from '../lib/api';
+import { buildFolderTree, collectAssetPaths, findFolderNode, type FolderNode } from '../lib/folderTree';
 import Viewer from '../components/Viewer';
 import AssetTile, { type ClickMods } from '../components/AssetTile';
+import SelectionBar from '../components/SelectionBar';
 import StackBand from '../components/StackBand';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import SmartStackDialog from '../components/SmartStackDialog';
@@ -29,16 +32,8 @@ import type { SmartStackGroup } from '../lib/smartStack';
 import { useRawOverrides } from '../lib/rawOverrides';
 import { pendingStyle } from '../lib/pending';
 
-const COLUMNS_GUESS = 6;
 const THUMB_SIZE = 168;
 const ROW_HEIGHT_GUESS = Math.round((THUMB_SIZE * 2) / 3) + 12;
-
-// "2024-06-01" -> "06 — June"
-function monthNodeLabel(timeBucket: string): string {
-  const mm = timeBucket.slice(5, 7);
-  const date = new Date(2000, parseInt(mm, 10) - 1, 1);
-  return `${mm} — ${date.toLocaleDateString(undefined, { month: 'long' })}`;
-}
 
 export interface FoldersBrowserHandle {
   selectAll: () => void;
@@ -46,21 +41,23 @@ export interface FoldersBrowserHandle {
   stackSelected: () => void;
   openSmartStack: () => void;
   toggleRawOverrideForSelection: () => void;
+  syncAllUnsyncedMetadata: () => void;
 }
 
-// Immich doesn't expose real filesystem folders for camera-imported assets -
-// like the design prototype, this reinterprets "Folders" as a Year > Month
-// tree over the same timeline buckets the Photos view uses, letting you jump
-// straight to a month (or a whole year, or everything) as a flat grid instead
-// of the Photos view's continuously-scrolling day-grouped timeline.
+// Backed by Immich's real server-side folder structure (GET
+// /view/folder/unique-paths + /view/folder?path=), not capture date - the
+// tree mirrors the actual filesystem layout Immich itself shows in its own
+// Folders view, letting you drill into a real folder (or a whole subtree, or
+// everything) as a flat grid instead of the Photos view's continuously-
+// scrolling day-grouped timeline.
 const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   metaOpen: boolean;
   onCloseMetadata: () => void;
   filters: Filters;
 }>(function FoldersBrowser({ metaOpen, onCloseMetadata, filters }, ref) {
-  const [buckets, setBuckets] = useState<TimeBucketInfo[] | null>(null);
+  const [folderPaths, setFolderPaths] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [expandedYears, setExpandedYears] = useState<Record<string, boolean>>({});
+  const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
   const [selectedNode, setSelectedNode] = useState<string>('all');
   // Keyed by time_bucket, same cache shape as PhotosBrowser - shared nowhere
   // (each tab keeps its own copy), but cheap enough (ids/dates, not images)
@@ -82,6 +79,10 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // asset records. Kept independent of assetCache/patchAssetLocal - see the
   // filteredAssetCache overlay below.
   const [stackByAssetId, setStackByAssetId] = useState<Map<string, AssetStackInfo>>(new Map());
+  // See PhotosBrowser.tsx's identical state for the full explanation - only
+  // ever holds true gaps (Immich has no rating/description, a local
+  // sidecar/embedded file does).
+  const [unsyncedMetadata, setUnsyncedMetadata] = useState<Map<string, UnsyncedMetadata>>(new Map());
   const { shortcuts, capturing } = useShortcuts();
   const { overrideIds, setOverride } = useRawOverrides();
 
@@ -99,43 +100,26 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   }, []);
 
   useEffect(() => {
-    getTimelineBuckets()
-      .then((b) => {
-        setBuckets(b);
-        if (b.length) setExpandedYears({ [b[0].timeBucket.slice(0, 4)]: true });
+    getFolderPaths()
+      .then((paths) => {
+        setFolderPaths(paths);
+        const tree = buildFolderTree(paths);
+        if (tree.children.length === 1) setExpandedPaths({ [tree.children[0].path]: true });
       })
       .catch((e) => setError(String(e)));
   }, []);
 
-  const yearGroups = useMemo(() => {
-    const map = new Map<string, TimeBucketInfo[]>();
-    for (const b of buckets ?? []) {
-      const year = b.timeBucket.slice(0, 4);
-      if (!map.has(year)) map.set(year, []);
-      map.get(year)!.push(b);
-    }
-    return [...map.entries()];
-  }, [buckets]);
+  const tree = useMemo(() => buildFolderTree(folderPaths ?? []), [folderPaths]);
 
-  const totalCount = useMemo(() => (buckets ?? []).reduce((sum, b) => sum + b.count, 0), [buckets]);
-
-  // Which buckets feed the currently selected tree node - "all" is every
-  // bucket, a year id is that year's month buckets, anything else is a single
-  // leaf month bucket (its own time_bucket key).
+  // Which real folder paths feed the currently selected tree node - "all" is
+  // every asset-holding folder in the whole tree, otherwise every
+  // asset-holding folder at or under the selected node (a container folder
+  // recurses over its subfolders; a leaf folder is just itself).
   const activeBucketKeys = useMemo(() => {
-    if (!buckets) return [];
-    if (selectedNode === 'all') return buckets.map((b) => b.timeBucket);
-    if (/^\d{4}$/.test(selectedNode)) {
-      return buckets.filter((b) => b.timeBucket.slice(0, 4) === selectedNode).map((b) => b.timeBucket);
-    }
-    return [selectedNode];
-  }, [buckets, selectedNode]);
-
-  const bucketCountByKey = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const b of buckets ?? []) map.set(b.timeBucket, b.count);
-    return map;
-  }, [buckets]);
+    if (selectedNode === 'all') return collectAssetPaths(tree);
+    const node = findFolderNode(tree, selectedNode);
+    return node ? collectAssetPaths(node) : [];
+  }, [tree, selectedNode]);
 
   // Filters only ever hide assets from view/selection/navigation - the raw
   // assetCache (keyed the same way) stays the source of truth for edits and
@@ -153,11 +137,16 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     const out: Record<string, AssetSummary[]> = {};
     for (const [key, assets] of Object.entries(assetCache)) {
       out[key] = assets
-        .map((a) => ({ ...a, stack: stackByAssetId.get(a.id) ?? null, isRawOverride: overrideIds.has(a.id) }))
+        .map((a) => ({
+          ...a,
+          stack: stackByAssetId.get(a.id) ?? null,
+          isRawOverride: overrideIds.has(a.id),
+          unsyncedMetadata: unsyncedMetadata.get(a.id),
+        }))
         .filter((a) => !isHiddenStackChild(a) && matchesFilters(a, deferredFilters));
     }
     return out;
-  }, [assetCache, deferredFilters, stackByAssetId, overrideIds]);
+  }, [assetCache, deferredFilters, stackByAssetId, overrideIds, unsyncedMetadata]);
 
   // Flat visual order of every currently-loaded, currently-visible asset
   // under the selected node - drives shift-click range selection and the
@@ -187,10 +176,17 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   const assetByIdAll = useMemo(() => {
     const map = new Map<string, AssetSummary>();
     for (const assets of Object.values(assetCache)) {
-      for (const a of assets) map.set(a.id, { ...a, stack: stackByAssetId.get(a.id) ?? null, isRawOverride: overrideIds.has(a.id) });
+      for (const a of assets) {
+        map.set(a.id, {
+          ...a,
+          stack: stackByAssetId.get(a.id) ?? null,
+          isRawOverride: overrideIds.has(a.id),
+          unsyncedMetadata: unsyncedMetadata.get(a.id),
+        });
+      }
     }
     return map;
-  }, [assetCache, stackByAssetId, overrideIds]);
+  }, [assetCache, stackByAssetId, overrideIds, unsyncedMetadata]);
 
   const patchAssetLocal = useCallback((id: string, patch: Partial<AssetSummary>) => {
     setAssetCache((cache) => {
@@ -370,6 +366,40 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     [selected, assetByIdAll],
   );
 
+  const allSelectedFavorited = selectedAssets.length > 0 && selectedAssets.every((a) => a.isFavorite);
+
+  // Shared by the favorite keyboard shortcut and the selection bar's
+  // Favorite button - "all vs not all" matches the metadata panel's toggle
+  // convention (any non-favorited member in the selection means the next
+  // click favorites everything, rather than only clearing).
+  const toggleFavoriteForSelection = useCallback(() => {
+    if (selected.size === 0) return;
+    commitEditMany([...selected], { isFavorite: !allSelectedFavorited }).catch(() => {});
+  }, [selected, allSelectedFavorited, commitEditMany]);
+
+  // See PhotosBrowser.tsx's identical callback for the full explanation -
+  // one commitEdit per asset (descriptions are per-asset-unique, so unlike a
+  // plain rating there's no meaningful grouping), reusing the existing
+  // bulk-edit path's read-only/max-writes-per-batch gate unchanged.
+  const syncMetadata = useCallback(
+    async (ids: string[]) => {
+      for (const id of ids) {
+        const gap = unsyncedMetadata.get(id);
+        if (!gap) continue;
+        const patch: AssetMetadataPatch = {};
+        if (gap.rating !== undefined) patch.rating = gap.rating;
+        if (gap.description !== undefined) patch.description = gap.description;
+        await commitEdit(id, patch);
+      }
+      setUnsyncedMetadata((m) => {
+        const next = new Map(m);
+        for (const id of ids) next.delete(id);
+        return next;
+      });
+    },
+    [unsyncedMetadata, commitEdit],
+  );
+
   // Right-click menu is deliberately minimal: only primaries/unstacked
   // assets are ever visible in the main grid to right-click on (band
   // members already have their own Unstack button and pick-star), so
@@ -394,8 +424,14 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         onClick: () => unstackByStackId(asset.stack!.id).catch(() => {}),
       });
     }
+    if (asset && unsyncedMetadata.has(asset.id)) {
+      items.push({
+        label: 'Sync Metadata from Sidecar',
+        onClick: () => syncMetadata([asset.id]).catch(() => {}),
+      });
+    }
     return items;
-  }, [contextMenu, assetById, selected, createStackForSelection, unstackByStackId]);
+  }, [contextMenu, assetById, selected, createStackForSelection, unstackByStackId, unsyncedMetadata, syncMetadata]);
 
   const navigateOpen = (dir: 1 | -1) => {
     const ni = openIndex + dir;
@@ -431,8 +467,11 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       },
       openSmartStack: () => setSmartStackOpen(true),
       toggleRawOverrideForSelection,
+      syncAllUnsyncedMetadata: () => {
+        syncMetadata([...unsyncedMetadata.keys()]).catch(() => {});
+      },
     }),
-    [selectAll, deselectAll, createStackForSelection, selected, toggleRawOverrideForSelection],
+    [selectAll, deselectAll, createStackForSelection, selected, toggleRawOverrideForSelection, syncMetadata, unsyncedMetadata],
   );
 
   // Switching tree nodes starts from a fresh scroll position and selection -
@@ -460,9 +499,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         setConfirmDeleteSelection(true);
       } else if (matchesShortcut(e, shortcuts.favorite) && selected.size > 0) {
         e.preventDefault();
-        const ids = [...selected];
-        const allFav = selectedAssets.every((a) => a.isFavorite);
-        commitEditMany(ids, { isFavorite: !allFav }).catch(() => {});
+        toggleFavoriteForSelection();
       } else if (matchesShortcut(e, shortcuts.stack) && selected.size >= 2) {
         e.preventDefault();
         createStackForSelection([...selected]).catch(() => {});
@@ -486,7 +523,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openId, selectAll, deselectAll, selected, selectedAssets, shortcuts, capturing, commitEditMany, createStackForSelection]);
+  }, [openId, selectAll, deselectAll, selected, shortcuts, capturing, commitEditMany, createStackForSelection, toggleFavoriteForSelection]);
 
   const selectExclusive = useCallback((id: string) => {
     setSelected(new Set([id]));
@@ -527,14 +564,13 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     [selectRange, toggleOne, selectExclusive],
   );
 
+  // Unlike the timeline's month buckets, real folders' sizes aren't known
+  // upfront (Immich's folder API has no per-folder count) - a fixed guess is
+  // corrected once each section actually renders via virtualizer.measure().
   const virtualizer = useVirtualizer({
     count: activeBucketKeys.length,
     getScrollElement: () => containerRef.current,
-    estimateSize: (index) => {
-      const count = bucketCountByKey.get(activeBucketKeys[index]) ?? 0;
-      const rows = Math.ceil(count / COLUMNS_GUESS);
-      return rows * ROW_HEIGHT_GUESS;
-    },
+    estimateSize: () => ROW_HEIGHT_GUESS * 4,
     overscan: 3,
   });
 
@@ -551,8 +587,32 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       const key = activeBucketKeys[item.index];
       if (!key || assetCache[key] || inFlight.current.has(key)) continue;
       inFlight.current.add(key);
-      getTimelineBucketAssets(key)
-        .then((assets) => setAssetCache((c) => ({ ...c, [key]: assets })))
+      getFolderAssets(key)
+        .then((assets) => {
+          setAssetCache((c) => ({ ...c, [key]: assets }));
+          checkSidecarMetadata(
+            assets.map((a) => ({
+              assetId: a.id,
+              originalPath: a.originalPath,
+              currentRating: a.rating,
+              currentDescription: a.description,
+            })),
+          )
+            .then((results) => {
+              if (!results.length) return;
+              setUnsyncedMetadata((m) => {
+                const next = new Map(m);
+                for (const r of results) {
+                  next.set(r.assetId, {
+                    rating: r.rating ?? undefined,
+                    description: r.description ?? undefined,
+                  });
+                }
+                return next;
+              });
+            })
+            .catch(() => {});
+        })
         .catch(() => setAssetCache((c) => ({ ...c, [key]: [] })))
         .finally(() => inFlight.current.delete(key));
     }
@@ -566,47 +626,45 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     );
   }
 
-  if (!buckets) {
+  if (!folderPaths) {
     return <div style={{ padding: 24, color: 'var(--text-dim)' }}>Loading folders…</div>;
   }
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      {selected.size > 0 && (
+        <SelectionBar
+          count={selected.size}
+          onCancel={deselectAll}
+          onStack={() => createStackForSelection([...selected]).catch(() => {})}
+          onSmartStack={() => setSmartStackOpen(true)}
+          onFavorite={toggleFavoriteForSelection}
+          allFavorited={allSelectedFavorited}
+          onRate={(rating) => commitEditMany([...selected], { rating }).catch(() => {})}
+          unsyncedCount={[...selected].filter((id) => unsyncedMetadata.has(id)).length}
+          onSyncMetadata={() => syncMetadata([...selected].filter((id) => unsyncedMetadata.has(id))).catch(() => {})}
+          onDelete={() => setConfirmDeleteSelection(true)}
+        />
+      )}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div style={{ width: 208, flexShrink: 0, borderRight: '1px solid rgba(0,0,0,0.35)', padding: '10px 8px', overflow: 'auto' }}>
           <TreeRow
             label="All Originals"
-            count={totalCount}
             depth={0}
             selected={selectedNode === 'all'}
             hasChildren={false}
             onSelect={() => setSelectedNode('all')}
           />
-          {yearGroups.map(([year, monthBuckets]) => (
-            <div key={year}>
-              <TreeRow
-                label={year}
-                count={monthBuckets.reduce((sum, b) => sum + b.count, 0)}
-                depth={0}
-                selected={selectedNode === year}
-                hasChildren
-                expanded={!!expandedYears[year]}
-                onSelect={() => setSelectedNode(year)}
-                onToggle={() => setExpandedYears((e) => ({ ...e, [year]: !e[year] }))}
-              />
-              {expandedYears[year] &&
-                monthBuckets.map((b) => (
-                  <TreeRow
-                    key={b.timeBucket}
-                    label={monthNodeLabel(b.timeBucket)}
-                    count={b.count}
-                    depth={1}
-                    selected={selectedNode === b.timeBucket}
-                    hasChildren={false}
-                    onSelect={() => setSelectedNode(b.timeBucket)}
-                  />
-                ))}
-            </div>
+          {tree.children.map((node) => (
+            <FolderTreeRows
+              key={node.path}
+              node={node}
+              depth={0}
+              selectedNode={selectedNode}
+              expandedPaths={expandedPaths}
+              onSelect={setSelectedNode}
+              onToggle={(path) => setExpandedPaths((e) => ({ ...e, [path]: !e[path] }))}
+            />
           ))}
         </div>
 
@@ -695,16 +753,6 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       >
         <span>{flatIds.length} assets</span>
         {selected.size > 0 && <span>· {selected.size} selected</span>}
-        {selected.size > 0 && (
-          <div onClick={() => setConfirmDeleteSelection(true)} style={{ cursor: 'default', color: '#ff8080' }}>
-            Move to Trash
-          </div>
-        )}
-        {selected.size >= 2 && (
-          <div onClick={() => createStackForSelection([...selected]).catch(() => {})} style={{ cursor: 'default' }}>
-            Stack {selected.size} Photos
-          </div>
-        )}
       </div>
 
       {openAsset && (
@@ -764,7 +812,6 @@ export default FoldersBrowser;
 
 function TreeRow({
   label,
-  count,
   depth,
   selected,
   hasChildren,
@@ -773,7 +820,6 @@ function TreeRow({
   onToggle,
 }: {
   label: string;
-  count: number;
   depth: number;
   selected: boolean;
   hasChildren: boolean;
@@ -817,7 +863,53 @@ function TreeRow({
       </div>
       <div style={{ width: 15, height: 12, borderRadius: 2.5, background: 'rgba(255,255,255,0.18)', flexShrink: 0 }} />
       <span style={{ flex: 1, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
-      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{count}</span>
+    </div>
+  );
+}
+
+// Real folder trees are arbitrary depth (e.g. this library has plain
+// YYYY folders for older years but YYYY/MM subfolders from a certain year
+// onward) - recurses rather than assuming a fixed Year > Month shape.
+function FolderTreeRows({
+  node,
+  depth,
+  selectedNode,
+  expandedPaths,
+  onSelect,
+  onToggle,
+}: {
+  node: FolderNode;
+  depth: number;
+  selectedNode: string;
+  expandedPaths: Record<string, boolean>;
+  onSelect: (path: string) => void;
+  onToggle: (path: string) => void;
+}) {
+  const hasChildren = node.children.length > 0;
+  const expanded = !!expandedPaths[node.path];
+  return (
+    <div>
+      <TreeRow
+        label={node.name}
+        depth={depth}
+        selected={selectedNode === node.path}
+        hasChildren={hasChildren}
+        expanded={expanded}
+        onSelect={() => onSelect(node.path)}
+        onToggle={hasChildren ? () => onToggle(node.path) : undefined}
+      />
+      {expanded &&
+        node.children.map((child) => (
+          <FolderTreeRows
+            key={child.path}
+            node={child}
+            depth={depth + 1}
+            selectedNode={selectedNode}
+            expandedPaths={expandedPaths}
+            onSelect={onSelect}
+            onToggle={onToggle}
+          />
+        ))}
     </div>
   );
 }

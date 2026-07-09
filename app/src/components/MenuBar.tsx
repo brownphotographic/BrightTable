@@ -17,6 +17,7 @@ export default function MenuBar({
   onStackSelected,
   onSmartStack,
   onToggleRawOverride,
+  onSyncSidecarRatings,
   filters,
   onFiltersChange,
 }: {
@@ -30,6 +31,7 @@ export default function MenuBar({
   onStackSelected: () => void;
   onSmartStack: () => void;
   onToggleRawOverride: () => void;
+  onSyncSidecarRatings: () => void;
   filters: Filters;
   onFiltersChange: (next: Filters) => void;
 }) {
@@ -122,6 +124,13 @@ export default function MenuBar({
           onClick={() => {
             close();
             onToggleRawOverride();
+          }}
+        />
+        <MenuItem
+          label="Sync Metadata from Sidecar"
+          onClick={() => {
+            close();
+            onSyncSidecarRatings();
           }}
         />
         <Divider />

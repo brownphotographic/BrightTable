@@ -16,6 +16,8 @@ const emptyLib: LibraryConfig = {
   shareType: 'nfs',
   localRoot: '',
   immichRoot: '',
+  uploadedLocalRoot: '',
+  uploadedImmichRoot: '',
   readOnly: true,
   maxWritesPerBatch: 25,
 };
@@ -36,6 +38,8 @@ export default function PreferencesLibrary() {
   const [loading, setLoading] = useState(true);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [diskSaving, setDiskSaving] = useState(false);
+  const [diskStatus, setDiskStatus] = useState<Status>({ kind: 'idle', text: '' });
   const [safetySaving, setSafetySaving] = useState(false);
   const [safetyError, setSafetyError] = useState<string | null>(null);
   const { refresh: refreshSharedStatus } = useLibraryStatus();
@@ -87,6 +91,26 @@ export default function PreferencesLibrary() {
       setStatus({ kind: 'error', text: String(e) });
     } finally {
       setSaving(false);
+    }
+  }
+
+  // The "Originals on Disk" panels (Share type / External Library / Immich
+  // Uploads) have no save path of their own otherwise - without this,
+  // editing them only ever updates local React state via setLib(), and the
+  // only way to actually persist it was the unrelated-looking "Connect"
+  // button up in the Server section, which is exactly what caused settings
+  // typed here to silently never reach config.json in practice.
+  async function onSaveDiskPaths() {
+    setDiskSaving(true);
+    setDiskStatus({ kind: 'idle', text: '' });
+    try {
+      await saveLibraryConfig(lib);
+      setDiskStatus({ kind: 'ok', text: 'Saved' });
+      refreshSharedStatus();
+    } catch (e) {
+      setDiskStatus({ kind: 'error', text: String(e) });
+    } finally {
+      setDiskSaving(false);
     }
   }
 
@@ -192,7 +216,10 @@ export default function PreferencesLibrary() {
       <div style={{ fontSize: 14, fontWeight: 700, margin: '26px 4px 8px' }}>Originals on Disk</div>
       <div style={{ fontSize: 12.5, color: 'var(--text-dimmer)', margin: '0 4px 13px', lineHeight: 1.5 }}>
         RAW editors open files from the filesystem, not from Immich. Point ImmAture at the
-        same NFS/SMB share Immich indexes so it can hand the editor a real path.
+        same shares Immich indexes so it can hand the editor a real path. Immich reports a
+        different path prefix depending on how an asset got in — an External Library asset
+        keeps its real folder path, while one uploaded directly (phone app or browser) lives
+        under Immich's own internal storage instead — so each needs its own mapping below.
       </div>
       <div style={panel}>
         <Row label="Share type" wide>
@@ -205,7 +232,12 @@ export default function PreferencesLibrary() {
             onChange={(v) => setLib('shareType', v as LibraryConfig['shareType'])}
           />
         </Row>
-        <Divider />
+      </div>
+
+      <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-dim)', margin: '16px 4px 8px' }}>
+        External Library
+      </div>
+      <div style={panel}>
         <Row label="Local mount" wide>
           <input
             value={lib.localRoot}
@@ -223,6 +255,41 @@ export default function PreferencesLibrary() {
             style={inputRight}
           />
         </Row>
+      </div>
+
+      <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-dim)', margin: '16px 4px 8px' }}>
+        Immich Uploads
+      </div>
+      <div style={panel}>
+        <Row label="Local mount" wide>
+          <input
+            value={lib.uploadedLocalRoot}
+            onChange={(e) => setLib('uploadedLocalRoot', e.target.value)}
+            placeholder="/mnt/nfs/Rob/Immich_Uploaded/library/admin"
+            style={inputRight}
+          />
+        </Row>
+        <Divider />
+        <Row label="Immich upload path" wide>
+          <input
+            value={lib.uploadedImmichRoot}
+            onChange={(e) => setLib('uploadedImmichRoot', e.target.value)}
+            placeholder="/photos/library/admin"
+            style={inputRight}
+          />
+        </Row>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 11, margin: '10px 4px 0' }}>
+        {diskStatus.text && (
+          <span style={{ fontSize: 12.5, color: diskStatus.kind === 'error' ? 'var(--danger)' : 'var(--ok)' }}>
+            {diskStatus.text}
+          </span>
+        )}
+        <div style={{ flex: 1 }} />
+        <button onClick={onSaveDiskPaths} disabled={diskSaving} style={btnPrimary}>
+          {diskSaving ? 'Saving…' : 'Save'}
+        </button>
       </div>
 
       <div style={{ fontSize: 14, fontWeight: 700, margin: '26px 4px 8px' }}>Safety</div>

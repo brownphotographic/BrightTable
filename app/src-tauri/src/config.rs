@@ -27,8 +27,19 @@ pub struct LibraryConfig {
     pub tailscale_url: String,
     pub api_key: String,
     pub share_type: ShareType,
+    // Path mapping for the External Library Immich reads in place (RAW
+    // editors' own working folder) - server-side prefix + its local mount.
     pub local_root: String,
     pub immich_root: String,
+    // Second, separate path mapping for assets uploaded directly into
+    // Immich (mobile app / web upload), which live under Immich's own
+    // internal storage root rather than the external library's folder
+    // tree. `#[serde(default)]` so existing config.json files (saved before
+    // this field existed) still deserialize cleanly.
+    #[serde(default)]
+    pub uploaded_local_root: String,
+    #[serde(default)]
+    pub uploaded_immich_root: String,
     #[serde(default = "default_true")]
     pub read_only: bool,
     /// Cap on how many assets a single delete or metadata-edit action can
@@ -61,6 +72,8 @@ impl Default for LibraryConfig {
             share_type: ShareType::Nfs,
             local_root: String::new(),
             immich_root: String::new(),
+            uploaded_local_root: String::new(),
+            uploaded_immich_root: String::new(),
             read_only: true,
             max_writes_per_batch: 25,
         }

@@ -1,12 +1,23 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import AssetThumbImage from './AssetThumb';
 import { Star } from './MetadataRows';
-import type { AssetSummary } from '../lib/api';
+import type { AssetSummary, UnsyncedMetadata } from '../lib/api';
 import { isRawAsset } from '../lib/filters';
 
 export type ClickMods = { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean };
 
 const DOUBLE_CLICK_MS = 400;
+
+function unsyncedMetadataTooltip(gap: UnsyncedMetadata): string {
+  const parts: string[] = [];
+  if (gap.rating !== undefined) {
+    parts.push(gap.rating === -1 ? 'a rejected flag' : `a ${gap.rating}★ rating`);
+  }
+  if (gap.description !== undefined) {
+    parts.push('a description');
+  }
+  return `Local file has ${parts.join(' and ')} not yet in Immich`;
+}
 
 // Shared grid tile used by both the main Photos timeline and the Folders
 // (year/month) view - checkbox select, hover-to-open, rating stars, favorite
@@ -229,6 +240,28 @@ const AssetTile = memo(function AssetTile({
             <Star filled={v <= (asset.rating || 0)} size={8} />
           </div>
         ))}
+        {asset.unsyncedMetadata && (
+          // A local sidecar/embedded file has a rating and/or description
+          // Immich doesn't have yet (see checkSidecarMetadata) - purely
+          // informational here, synced via the context menu / SelectionBar /
+          // Edit menu, never by clicking this badge, to keep it consistent
+          // with the read-only stack badge.
+          <div
+            title={unsyncedMetadataTooltip(asset.unsyncedMetadata)}
+            style={{ position: 'relative', width: 8, height: 8, marginLeft: 1, flexShrink: 0 }}
+          >
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                border: '1.3px solid #e5a50a',
+                borderLeftColor: 'transparent',
+                borderRadius: '50%',
+                transform: 'rotate(45deg)',
+              }}
+            />
+          </div>
+        )}
       </div>
 
       <div style={{ position: 'absolute', right: 6, bottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
