@@ -9,7 +9,9 @@ type MenuKey = 'file' | 'edit' | 'view' | 'help' | 'filter' | null;
 export default function MenuBar({
   onOpenPreferences,
   onRefreshTimeline,
+  onOpenImport,
   onQuit,
+  onOpenActivity,
   metaOpen,
   onToggleMetadata,
   onSelectAll,
@@ -23,7 +25,9 @@ export default function MenuBar({
 }: {
   onOpenPreferences: () => void;
   onRefreshTimeline: () => void;
+  onOpenImport: () => void;
   onQuit: () => void;
+  onOpenActivity: () => void;
   metaOpen: boolean;
   onToggleMetadata: () => void;
   onSelectAll: () => void;
@@ -72,9 +76,22 @@ export default function MenuBar({
             onRefreshTimeline();
           }}
         />
+        <MenuItem
+          label="Import from SD Card/Disk…"
+          onClick={() => {
+            close();
+            onOpenImport();
+          }}
+        />
         <Divider />
         <MenuItem label="Print…" shortcut="Ctrl+P" onClick={close} />
-        <MenuItem label="Recent Activity…" onClick={close} />
+        <MenuItem
+          label="Recent Activity…"
+          onClick={() => {
+            close();
+            onOpenActivity();
+          }}
+        />
         <Divider />
         <MenuItem
           label="Quit"

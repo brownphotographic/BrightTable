@@ -24,5 +24,21 @@ log = "0.4"
 tauri = { version = "2.11.3", features = [] }
 tauri-plugin-log = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-tokio = { version = "1", features = ["sync", "rt"] }
+tokio = { version = "1", features = ["sync", "rt", "macros"] }
 url = "2"
+sysinfo = { version = "0.39", default-features = false, features = ["system", "disk"] }
+tauri-plugin-dialog = "2.7.1"
+walkdir = "2.5.0"
+blake3 = "1.8.5"
+kamadak-exif = "0.6.1"
+time = { version = "0.3.41", features = ["std"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5.12", default-features = false, features = ["tokio", "blocking-api"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+# test-util (paused/virtual clock) only - lets import::queue's idle-timeout
+# tests exercise real multi-minute waits without actually waiting minutes of
+# wall-clock time in the suite. Dev-only so it never reaches the release build.
+tokio = { version = "1", features = ["test-util"] }

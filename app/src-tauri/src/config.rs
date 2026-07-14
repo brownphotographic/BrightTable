@@ -4,6 +4,9 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
+use crate::apps::AppChoice;
+use crate::import::FolderDepth;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ConnMode {
@@ -114,6 +117,10 @@ pub struct AppConfig {
     pub shortcuts: HashMap<String, String>,
     #[serde(default)]
     pub smart_stack: SmartStackSettings,
+    #[serde(default)]
+    pub applications: ApplicationsConfig,
+    #[serde(default)]
+    pub import: ImportSettings,
     /// Asset ids the user has manually flagged as "actually a RAW file"
     /// despite their extension not being one of the recognized RAW
     /// extensions - e.g. TIFF was the RAW-native format on some very old
@@ -150,6 +157,54 @@ impl Default for SmartStackSettings {
             // converted.jpg" or "IMG_1_converted_2.jpg" both match).
             suffix: "*converted*".into(),
             tolerance: 10,
+        }
+    }
+}
+
+/// The user's chosen RAW/external editor, one per role - Preferences →
+/// Applications persists this. `None` until the user picks something in the
+/// app picker; `Viewer.tsx`'s editor buttons redirect there instead of
+/// launching when a role is unset.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationsConfig {
+    pub raw_editor: Option<AppChoice>,
+    pub external_editor: Option<AppChoice>,
+}
+
+/// Last-used SD-card/disk import settings - the chosen folder hierarchy and
+/// the last source path browsed to, so re-importing from the same card
+/// doesn't need re-picking the folder every session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportSettings {
+    pub folder_depth: FolderDepth,
+    pub last_source_path: Option<String>,
+    /// How many copies run at once - read once at app startup to size the
+    /// import queue's semaphore (`import::queue::run`), not adjustable mid-
+    /// session. `#[serde(default = ...)]` specifically (not just relying on
+    /// the outer `AppConfig.import` field's own `#[serde(default)]`, which
+    /// only covers the whole `import` key being absent): this field was
+    /// added after `folder_depth`/`last_source_path` already shipped, so an
+    /// existing `config.json` from a session before this field existed has
+    /// an `import` key present but missing just this one - without a
+    /// per-field default, that would fail to parse and silently reset the
+    /// *entire* config (library connection, shortcuts, everything) back to
+    /// defaults, per `config::load`'s `unwrap_or_default` fallback.
+    #[serde(default = "default_max_concurrent_import_jobs")]
+    pub max_concurrent_jobs: usize,
+}
+
+fn default_max_concurrent_import_jobs() -> usize {
+    crate::import::queue::DEFAULT_MAX_CONCURRENT_IMPORT_JOBS
+}
+
+impl Default for ImportSettings {
+    fn default() -> Self {
+        Self {
+            folder_depth: FolderDepth::YearMonth,
+            last_source_path: None,
+            max_concurrent_jobs: default_max_concurrent_import_jobs(),
         }
     }
 }

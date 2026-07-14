@@ -28,11 +28,40 @@ export interface SmartStackSettings {
   tolerance: number;
 }
 
+// Mirrors apps.rs's AppKind - Native/Flatpak/Snap are detected from real
+// `.desktop` entries; AppImage/Custom only ever come from the picker's own
+// "Other application…" file-browse fallback (see AppPickerDialog.tsx).
+export type AppKind = 'native' | 'flatpak' | 'snap' | 'appimage' | 'custom';
+
+export interface AppChoice {
+  name: string;
+  exec: string;
+  kind: AppKind;
+}
+
+export interface ApplicationsConfig {
+  rawEditor: AppChoice | null;
+  externalEditor: AppChoice | null;
+}
+
+export type FolderDepth = 'flat' | 'yearMonth';
+
+export interface ImportSettings {
+  folderDepth: FolderDepth;
+  lastSourcePath: string | null;
+  // How many copies run at once - read once at app startup to size the
+  // backend queue's semaphore (see queue.rs's `run`), so changing this
+  // takes effect next launch, not live mid-session.
+  maxConcurrentJobs: number;
+}
+
 export interface AppConfig {
   library: LibraryConfig;
   settingsFolder: string | null;
   shortcuts: Record<string, string>;
   smartStack: SmartStackSettings;
+  applications: ApplicationsConfig;
+  import: ImportSettings;
   rawOverrides: string[];
 }
 
@@ -108,6 +137,44 @@ export interface AssetMetadataPatch {
   description?: string;
 }
 
+// What updateAssetMetadata needs per asset to mirror a rating/description
+// edit into that asset's own `.xmp` sidecar, in addition to the Immich PUT -
+// see the Rust command's doc comment for why the sidecar write matters (it's
+// the mechanism that actually persists a rating edit for External Library
+// assets, not a best-effort mirror of an already-durable Immich write).
+export interface MetadataEditTarget {
+  id: string;
+  originalPath: string | null;
+}
+
+export type EditJobStatus = 'pending' | 'writing' | 'done' | 'failed';
+
+// Mirrors edit_queue.rs's EditJob - one row of the background edit queue's
+// advisory activity panel. The frontend's correctness never depends on this;
+// only what the ActivityPanel/EditQueueIndicator display, and rollback
+// decisions made by useEditJobReconciliation.
+export interface EditJob {
+  jobId: number;
+  assetId: string;
+  rating: number | null;
+  isFavorite: boolean | null;
+  description: string | null;
+  status: EditJobStatus;
+  createdAtMs: number;
+  finishedAtMs: number | null;
+  // Fatal - the XMP sidecar write failed, so the optimistic patch must be
+  // rolled back.
+  error: string | null;
+  // Non-fatal - the sidecar write (the authoritative mechanism) succeeded,
+  // but Immich's own PUT failed. Visible-only, never a rollback trigger.
+  immichWarning: string | null;
+}
+
+export interface EditQueueStatus {
+  jobs: EditJob[];
+  pendingCount: number;
+}
+
 export function getConfig(): Promise<AppConfig> {
   return invoke('get_config');
 }
@@ -126,6 +193,23 @@ export function saveSmartStackSettings(settings: SmartStackSettings): Promise<Ap
 
 export function setRawOverrides(assetIds: string[], isRaw: boolean): Promise<AppConfig> {
   return invoke('set_raw_overrides', { assetIds, isRaw });
+}
+
+export function saveApplicationsConfig(cfg: ApplicationsConfig): Promise<AppConfig> {
+  return invoke('save_applications_config', { cfg });
+}
+
+// Best-effort scan of installed native/Flatpak/Snap apps for the app picker -
+// never rejects; an empty list just means nothing was found on this system.
+export function listInstalledApps(): Promise<AppChoice[]> {
+  return invoke('list_installed_apps');
+}
+
+// Resolves the asset's local path and spawns the chosen editor on it. Unlike
+// every other mutating call in this file, this isn't gated by read-only mode
+// - it launches a third-party process and touches no Immich data itself.
+export function launchEditor(originalPath: string | null, appChoice: AppChoice): Promise<void> {
+  return invoke('launch_editor', { originalPath, appChoice });
 }
 
 export function testConnection(cfg: LibraryConfig): Promise<ConnectionStatus> {
@@ -170,13 +254,34 @@ export function emptyTrash(): Promise<void> {
   return invoke('empty_trash');
 }
 
-export function updateAssetMetadata(ids: string[], patch: AssetMetadataPatch): Promise<void> {
+// Enqueues the edit onto the backend's background EditQueue and returns
+// immediately with the assigned job ids (one per target, same order) - it
+// does not wait for the XMP/Immich writes themselves. Rejects synchronously
+// only for a structural reason (read-only mode, over the batch cap), before
+// anything was enqueued; a per-job failure discovered later surfaces via
+// getEditQueueStatus polling instead.
+export function updateAssetMetadata(
+  targets: MetadataEditTarget[],
+  patch: AssetMetadataPatch,
+): Promise<number[]> {
   return invoke('update_asset_metadata', {
-    ids,
+    targets,
     rating: patch.rating ?? null,
     isFavorite: patch.isFavorite ?? null,
     description: patch.description ?? null,
   });
+}
+
+export function getEditQueueStatus(): Promise<EditQueueStatus> {
+  return invoke('get_edit_queue_status');
+}
+
+export function clearCompletedEditJobs(): Promise<void> {
+  return invoke('clear_completed_edit_jobs');
+}
+
+export function forceQuit(): Promise<void> {
+  return invoke('force_quit');
 }
 
 export function createStack(ids: string[]): Promise<StackInfo> {
@@ -234,4 +339,122 @@ export function checkSidecarMetadata(queries: MetadataSyncQuery[]): Promise<Meta
 // "preview" (~1MB, full viewer resolution) is reserved for a future detail view.
 export function thumbnailSrc(assetId: string, size: 'thumbnail' | 'preview' = 'thumbnail'): string {
   return `immich-thumb://thumbnail/${assetId}?size=${size}`;
+}
+
+export interface MemoryUsage {
+  rssBytes: number;
+}
+
+export function getMemoryUsage(): Promise<MemoryUsage> {
+  return invoke('get_memory_usage');
+}
+
+export function saveImportSettings(settings: ImportSettings): Promise<AppConfig> {
+  return invoke('save_import_settings', { settings });
+}
+
+export interface RemovableVolume {
+  name: string;
+  mountPoint: string;
+}
+
+// Quick-pick list above the plain folder-browse fallback in the Import
+// dialog - best-effort, an empty list just falls back to manual browsing.
+export function listRemovableVolumes(): Promise<RemovableVolume[]> {
+  return invoke('list_removable_volumes');
+}
+
+// Mirrors capture_time.rs's CaptureTime - the date/time used to name an
+// imported file (yyyymmdd_hh-mm-ss) and place it under a yyyy/yyyy_mm
+// folder.
+export interface CaptureTime {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+}
+
+// Mirrors scan.rs's ScannedFile - one file found on the import source.
+export interface ScannedFile {
+  sourcePath: string;
+  extension: string;
+  sizeBytes: number;
+  partialHash: string;
+  captureTime: CaptureTime;
+  captureTimeIsExif: boolean;
+}
+
+// Mirrors scan.rs's ScannedGroup - one basename group (e.g. a RAW+JPEG
+// pair), grouped scoped to its own source directory (see scan.rs's own
+// doc comment for why that scoping matters).
+export interface ScannedGroup {
+  basename: string;
+  files: ScannedFile[];
+  captureTime: CaptureTime;
+  alreadyImported: boolean;
+}
+
+export interface ImportScanSummary {
+  groups: ScannedGroup[];
+  newCount: number;
+  alreadyImportedCount: number;
+  pairedCount: number;
+  totalFiles: number;
+}
+
+// Scans the chosen source folder and returns both aggregate counts and the
+// full group plan, so startImport doesn't need a second scan/hash pass over
+// what could be a slow card reader.
+export function scanImportSource(sourcePath: string): Promise<ImportScanSummary> {
+  return invoke('scan_import_source', { sourcePath });
+}
+
+// Enqueues the copy jobs for every not-already-imported group and returns
+// immediately with the assigned job ids - poll getImportQueueStatus for
+// progress, same shape as updateAssetMetadata/getEditQueueStatus.
+export function startImport(groups: ScannedGroup[], folderDepth: FolderDepth): Promise<number[]> {
+  return invoke('start_import', { groups, folderDepth });
+}
+
+export type ImportJobStatus = 'pending' | 'copying' | 'done' | 'failed';
+
+// Mirrors queue.rs's ImportJob.
+export interface ImportJob {
+  jobId: number;
+  sourcePath: string;
+  destPath: string;
+  status: ImportJobStatus;
+  sizeBytes: number;
+  // Live while `copying` (updated roughly every 10s from the actual copy),
+  // left at its last value on `failed` rather than reset - shows how far a
+  // failed copy got.
+  bytesCopied: number;
+  createdAtMs: number;
+  finishedAtMs: number | null;
+  error: string | null;
+}
+
+export interface ImportQueueStatus {
+  jobs: ImportJob[];
+  pendingCount: number;
+}
+
+export function getImportQueueStatus(): Promise<ImportQueueStatus> {
+  return invoke('get_import_queue_status');
+}
+
+export function clearCompletedImportJobs(): Promise<void> {
+  return invoke('clear_completed_import_jobs');
+}
+
+// Auto-matches the configured External Library path against Immich's own
+// libraries and triggers a Library Scan so it discovers the files an
+// import batch just copied onto disk, without waiting on Immich's own
+// periodic scan schedule. Call once per import batch, once every job in
+// that batch has settled (not per-file) - the copy already succeeded
+// either way, so a rejection here is just advisory.
+export function scanImmichLibrary(): Promise<void> {
+  return invoke('scan_immich_library');
 }

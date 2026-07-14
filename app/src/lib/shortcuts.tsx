@@ -18,6 +18,7 @@ export type ShortcutId =
   | 'rate3'
   | 'rate4'
   | 'rate5'
+  | 'reject'
   | 'stack'
   | 'refreshTimeline'
   | 'openPreferences';
@@ -39,6 +40,7 @@ export const SHORTCUT_DEFS: { id: ShortcutId; label: string }[] = [
   { id: 'rate3', label: 'Rate 3 stars' },
   { id: 'rate4', label: 'Rate 4 stars' },
   { id: 'rate5', label: 'Rate 5 stars' },
+  { id: 'reject', label: 'Reject' },
   { id: 'stack', label: 'Stack selected' },
   { id: 'refreshTimeline', label: 'Refresh timeline' },
   { id: 'openPreferences', label: 'Open preferences' },
@@ -64,6 +66,7 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutId, string> = {
   rate3: '3',
   rate4: '4',
   rate5: '5',
+  reject: '9',
   stack: 'S',
   refreshTimeline: 'F5',
   openPreferences: 'Ctrl+,',

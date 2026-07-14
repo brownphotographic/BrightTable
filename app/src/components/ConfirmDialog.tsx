@@ -8,6 +8,7 @@ export default function ConfirmDialog({
   title,
   message,
   confirmLabel = 'Confirm',
+  cancelLabel = 'Cancel',
   danger = true,
   onConfirm,
   onClose,
@@ -15,6 +16,7 @@ export default function ConfirmDialog({
   title: string;
   message: string;
   confirmLabel?: string;
+  cancelLabel?: string;
   danger?: boolean;
   onConfirm: () => Promise<void>;
   onClose: () => void;
@@ -66,7 +68,7 @@ export default function ConfirmDialog({
         {error && <div style={{ marginTop: 12, fontSize: 12, color: 'var(--danger)', lineHeight: 1.4 }}>{error}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
           <button onClick={onClose} disabled={busy} style={btnSecondary}>
-            Cancel
+            {cancelLabel}
           </button>
           <button onClick={handleConfirm} disabled={busy} style={danger ? btnDanger : btnPrimary}>
             {busy ? 'Working…' : confirmLabel}

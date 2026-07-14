@@ -1,4 +1,6 @@
 import { useLibraryStatus } from '../lib/libraryStatus';
+import { useMemoryUsage, formatMemoryRate } from '../lib/useMemoryUsage';
+import { formatSize } from '../lib/exifFormat';
 
 export type LeftTab = 'photos' | 'albums' | 'people' | 'folders' | 'trash';
 
@@ -21,6 +23,7 @@ export default function Sidebar({
   trashCount: number;
 }) {
   const { status, checking, error } = useLibraryStatus();
+  const { rssBytes, ratePerHour } = useMemoryUsage();
 
   const counts: Record<LeftTab, string> = {
     photos: photosCount ? String(photosCount) : '',
@@ -144,6 +147,24 @@ export default function Sidebar({
       >
         <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: dotColor }} />
         {statusText}
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          fontSize: 11.5,
+          color: 'rgba(255,255,255,0.5)',
+          padding: '2px 6px 6px',
+        }}
+      >
+        <div style={{ width: 8, height: 8, flexShrink: 0 }} />
+        {rssBytes != null ? formatSize(rssBytes) : '—'}
+        {ratePerHour != null && (
+          <span style={{ color: ratePerHour > 0.05 ? 'var(--warn)' : 'inherit' }}>
+            {formatMemoryRate(ratePerHour)}
+          </span>
+        )}
       </div>
     </div>
   );

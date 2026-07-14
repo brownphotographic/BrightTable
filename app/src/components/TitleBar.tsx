@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import ActivityIndicator from './ActivityIndicator';
 
 const appWindow = getCurrentWindow();
 
@@ -11,7 +12,7 @@ const tabLabels: Record<string, string> = {
   trash: 'Trash',
 };
 
-export default function TitleBar({ activeTab }: { activeTab: string }) {
+export default function TitleBar({ activeTab, onOpenActivity }: { activeTab: string; onOpenActivity: () => void }) {
   return (
     <div
       data-tauri-drag-region
@@ -50,6 +51,9 @@ export default function TitleBar({ activeTab }: { activeTab: string }) {
         </span>
       </div>
       <div style={{ flex: 1 }} />
+      <div style={{ marginRight: 8 }}>
+        <ActivityIndicator onClick={onOpenActivity} />
+      </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
         <WinButton onClick={() => appWindow.minimize()} hoverBg="rgba(255,255,255,0.18)">
           <div style={{ width: 9, height: 1.6, background: '#fff', borderRadius: 1, marginTop: 6 }} />

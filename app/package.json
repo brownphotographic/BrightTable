@@ -12,6 +12,7 @@
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.5",
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "thumbhash": "^0.1.1"

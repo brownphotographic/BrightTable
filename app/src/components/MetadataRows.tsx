@@ -49,12 +49,21 @@ export default function MetadataRows({
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '9px 0', marginTop: 2 }}>
         <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.5)' }}>Rating</span>
-        <div style={{ display: 'flex', gap: 4, opacity: busy ? 0.5 : 1 }}>
-          {[1, 2, 3, 4, 5].map((v) => (
-            <div key={v} onClick={() => apply({ rating: v === (asset.rating || 0) ? 0 : v })} style={{ cursor: 'default' }}>
-              <Star filled={v <= (asset.rating || 0)} size={18} />
-            </div>
-          ))}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, opacity: busy ? 0.5 : 1 }}>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {[1, 2, 3, 4, 5].map((v) => (
+              <div key={v} onClick={() => apply({ rating: v === (asset.rating || 0) ? 0 : v })} style={{ cursor: 'default' }}>
+                <Star filled={v <= (asset.rating || 0)} size={18} />
+              </div>
+            ))}
+          </div>
+          <div
+            onClick={() => apply({ rating: asset.rating === -1 ? 0 : -1 })}
+            title="Reject"
+            style={{ cursor: 'default' }}
+          >
+            <RejectIcon active={asset.rating === -1} size={16} />
+          </div>
         </div>
       </div>
       {error && <div style={{ marginTop: 8, fontSize: 11.5, color: '#ff6b6b', lineHeight: 1.4 }}>{error}</div>}
@@ -90,6 +99,17 @@ export function Star({ filled, size = 14 }: { filled: boolean; size?: number }) 
         background: filled ? '#fff' : 'rgba(255,255,255,0.25)',
       }}
     />
+  );
+}
+
+// Digikam/RT/ART's "rejected" culling flag, maps to Immich rating -1.
+export function RejectIcon({ active, size = 14 }: { active: boolean; size?: number }) {
+  const color = active ? '#ff6b6b' : 'rgba(255,255,255,0.25)';
+  return (
+    <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
+      <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: `1.6px solid ${color}`, boxSizing: 'border-box' }} />
+      <div style={{ position: 'absolute', left: '12%', top: '50%', width: '76%', height: 1.6, background: color, transform: 'rotate(-45deg)' }} />
+    </div>
   );
 }
 

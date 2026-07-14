@@ -68,6 +68,23 @@ pub fn pp3_sidecar_path(original: &Path) -> PathBuf {
     append_ext(original, "pp3")
 }
 
+/// Which `.xmp` path a write should target: whichever naming convention
+/// already has a file on disk (append-form checked first, same precedence
+/// `read_asset_metadata` uses), or the append-form default if neither exists
+/// yet - matching digiKam/darktable's own convention for a file ImmAture is
+/// authoring itself.
+pub fn xmp_write_path(original: &Path) -> PathBuf {
+    let append_form = xmp_sidecar_path(original);
+    if append_form.exists() {
+        return append_form;
+    }
+    let replaced_form = xmp_sidecar_path_replaced(original);
+    if replaced_form.exists() {
+        return replaced_form;
+    }
+    append_form
+}
+
 /// RawTherapee stores its own star rating as `Rank=N` inside the `.pp3`
 /// sidecar's `[General]` section, separately from any `.xmp` - whether a
 /// given RT install *also* writes/syncs an `.xmp` copy depends on its own
@@ -308,6 +325,26 @@ mod tests {
     // to the full filename like digiKam/darktable do - `read_asset_metadata`
     // silently found nothing at all for such an asset until both naming
     // conventions were checked.
+    #[test]
+    fn xmp_write_path_prefers_whichever_form_exists() {
+        let dir = std::env::temp_dir().join(format!("immature-test-write-path-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let original = dir.join("neither-exists.DNG");
+        assert_eq!(xmp_write_path(&original), xmp_sidecar_path(&original));
+
+        let replaced_only = dir.join("replaced-only.DNG");
+        fs::write(xmp_sidecar_path_replaced(&replaced_only), "").unwrap();
+        assert_eq!(xmp_write_path(&replaced_only), xmp_sidecar_path_replaced(&replaced_only));
+
+        let both = dir.join("both.DNG");
+        fs::write(xmp_sidecar_path_replaced(&both), "").unwrap();
+        fs::write(xmp_sidecar_path(&both), "").unwrap();
+        assert_eq!(xmp_write_path(&both), xmp_sidecar_path(&both));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn asset_metadata_finds_extension_replaced_xmp() {
         let dir = std::env::temp_dir().join(format!("immature-test-meta-art-{}", std::process::id()));

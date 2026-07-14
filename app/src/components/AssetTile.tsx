@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import AssetThumbImage from './AssetThumb';
-import { Star } from './MetadataRows';
+import { RejectIcon, Star } from './MetadataRows';
 import type { AssetSummary, UnsyncedMetadata } from '../lib/api';
 import { isRawAsset } from '../lib/filters';
 
@@ -69,6 +69,10 @@ const AssetTile = memo(function AssetTile({
     const plain = !e.shiftKey && !e.ctrlKey && !e.metaKey;
 
     if (clickTimer.current !== null) {
+      // Second click within the window - the first click below already
+      // applied the selection, so a plain second click means "open" instead
+      // of toggling again; a modified one (shift/ctrl) toggles a second time,
+      // same as any other modified click.
       window.clearTimeout(clickTimer.current);
       clickTimer.current = null;
       if (plain) onOpen(asset.id);
@@ -76,14 +80,13 @@ const AssetTile = memo(function AssetTile({
       return;
     }
 
-    if (!plain) {
-      onToggleSelect(asset.id, mods);
-      return;
-    }
-
+    // Applied immediately - selection must never wait on double-click
+    // detection to feel responsive. The timer below only exists to let a
+    // following second click within the window be read as "open" instead of
+    // a second toggle; it doesn't delay this one.
+    onToggleSelect(asset.id, mods);
     clickTimer.current = window.setTimeout(() => {
       clickTimer.current = null;
-      onToggleSelect(asset.id, mods);
     }, DOUBLE_CLICK_MS);
   };
 
@@ -240,6 +243,16 @@ const AssetTile = memo(function AssetTile({
             <Star filled={v <= (asset.rating || 0)} size={8} />
           </div>
         ))}
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            onRate(asset.id, asset.rating === -1 ? 0 : -1);
+          }}
+          title="Reject"
+          style={{ width: 12, height: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default' }}
+        >
+          <RejectIcon active={asset.rating === -1} size={9} />
+        </div>
         {asset.unsyncedMetadata && (
           // A local sidecar/embedded file has a rating and/or description
           // Immich doesn't have yet (see checkSidecarMetadata) - purely

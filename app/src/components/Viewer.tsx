@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getStack, thumbnailSrc, type AssetMetadataPatch, type AssetSummary } from '../lib/api';
+import { getStack, launchEditor, thumbnailSrc, type AssetMetadataPatch, type AssetSummary } from '../lib/api';
 import { decodeThumbHash } from '../lib/thumbhash';
 import { formatDims, formatSize } from '../lib/exifFormat';
 import MetadataRows, { Star } from './MetadataRows';
@@ -7,6 +7,7 @@ import ConfirmDialog from './ConfirmDialog';
 import { isTypingTarget, matchesShortcut, useShortcuts } from '../lib/shortcuts';
 import { overlayRawOverrides, useRawOverrides } from '../lib/rawOverrides';
 import { isRawAsset } from '../lib/filters';
+import { useApplications } from '../lib/applications';
 
 const MIN_ZOOM = 25;
 const MAX_ZOOM = 400;
@@ -58,6 +59,7 @@ export default function Viewer({
   onDelete,
   onUnstack,
   onSetStackPick,
+  onOpenApplicationsPreferences,
 }: {
   asset: AssetSummary;
   hasPrev: boolean;
@@ -73,6 +75,9 @@ export default function Viewer({
   // omitted (no button shown) otherwise.
   onUnstack?: () => Promise<void>;
   onSetStackPick?: (assetId: string, memberIds: string[]) => Promise<void>;
+  // Opens Preferences straight to the Applications tab - used when the user
+  // clicks an editor button with no app chosen for that role yet.
+  onOpenApplicationsPreferences?: () => void;
 }) {
   const [zoom, setZoom] = useState(100);
   const [infoOpen, setInfoOpen] = useState(true);
@@ -91,6 +96,8 @@ export default function Viewer({
   const [thumbLoadedId, setThumbLoadedId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [stackMembers, setStackMembers] = useState<AssetSummary[] | null>(null);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+  const { applications } = useApplications();
   // Clicking a non-pick stack member in the info panel "peeks" at it in the
   // main stage without actually navigating there (that member is hidden from
   // the app's flat asset list - see isHiddenStackChild - so openId/assetById
@@ -154,6 +161,28 @@ export default function Viewer({
     [onEdit],
   );
 
+  // Launch-only round-trip (no file-watching/auto-refresh/auto-stacking - the
+  // user comes back and hits Refresh Timeline themselves once the editor
+  // saves). Redirects to Preferences → Applications instead of launching
+  // when that role has no app chosen yet, rather than just disabling the
+  // button with no way to fix it from here.
+  const handleLaunch = useCallback(
+    async (role: 'rawEditor' | 'externalEditor') => {
+      const choice = applications[role];
+      if (!choice) {
+        onOpenApplicationsPreferences?.();
+        return;
+      }
+      setLaunchError(null);
+      try {
+        await launchEditor(shown.originalPath, choice);
+      } catch (e) {
+        setLaunchError(String(e));
+      }
+    },
+    [applications, shown.originalPath, onOpenApplicationsPreferences],
+  );
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Let the confirm dialog own Escape (cancel) while it's open, rather
@@ -176,6 +205,7 @@ export default function Viewer({
       else if (matchesShortcut(e, shortcuts.rate3)) handleEdit(shown.id, { rating: 3 }).catch(() => {});
       else if (matchesShortcut(e, shortcuts.rate4)) handleEdit(shown.id, { rating: 4 }).catch(() => {});
       else if (matchesShortcut(e, shortcuts.rate5)) handleEdit(shown.id, { rating: 5 }).catch(() => {});
+      else if (matchesShortcut(e, shortcuts.reject)) handleEdit(shown.id, { rating: shown.rating === -1 ? 0 : -1 }).catch(() => {});
       else if (matchesShortcut(e, shortcuts.delete)) setConfirmDelete(true);
     };
     window.addEventListener('keydown', onKey);
@@ -294,6 +324,19 @@ export default function Viewer({
             }}
           >
             Unstack
+          </div>
+        )}
+        {isRawAsset(shown) && (
+          <div onClick={() => handleLaunch('rawEditor')} style={headerButtonStyle(false)}>
+            Open in RAW Editor
+          </div>
+        )}
+        <div onClick={() => handleLaunch('externalEditor')} style={headerButtonStyle(false)}>
+          Open in Ext. Editor
+        </div>
+        {launchError && (
+          <div style={{ fontSize: 11.5, color: 'var(--danger)', maxWidth: 220, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={launchError}>
+            {launchError}
           </div>
         )}
         <div

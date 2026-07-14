@@ -86,9 +86,11 @@
   (§7.16).
 
 ### 1.5 Editing & metadata
-- ⬜ Open in RAW Editor / External Editor, app picker, local-path resolution — **prototype
-  only**. Preferences → Applications (editor role config) is still a placeholder in the
-  real app (§7.15); there's no app picker and nothing launches an external editor.
+- ✅ Open in RAW Editor / External Editor, app picker, local-path resolution — real (§7.21).
+  Preferences → Applications now detects installed native/Flatpak/Snap apps and lets the
+  user pick a RAW Editor and an External Editor, each launched on the asset's resolved local
+  path from the Viewer toolbar. Launch-only, by design (§7.21) — no file-watching/auto-
+  refresh/auto-stacking; see §1.6 for why.
 - 🟡 **Metadata panel** is real (`MetadataPanel.tsx` / `MetadataRows.tsx`, §7.6) but with a
   much smaller field set than the prototype:
   - ⬜ IPTC (title, caption, keywords, creator, copyright) — not implemented; Immich's
@@ -103,9 +105,14 @@
   - ⬜ Copy Settings / Paste Settings (adjustments, EXIF/IPTC fields, ratings) — prototype only.
 
 ### 1.6 Versioning & round-trip
-> **Prototype only — none of this exists in the real app**, and the prototype itself later
-> simplified this away too (§6: "let's simplify and comment this out for now").
-- ⬜ Create Version, RAW-editor round-trip, auto-stacked renditions, version lineage.
+> The prototype's "Create Version" concept (version lineage, auto-stacked renditions, a
+> whole dialog) remains **deliberately out of scope** — the prototype itself simplified this
+> away (§6: "let's simplify and comment this out for now... we aren't going to be doing any
+> edits directly in this tool"). §7.21 built only the much smaller thing that survived that
+> decision: launch the configured editor, then the user manually refreshes once it saves.
+- ⬜ Create Version, auto-stacked renditions, version lineage — confirmed dead scope, not
+  revisited.
+- ✅ RAW-editor round-trip, in the launch-only sense that decision left behind (§7.21).
 
 ### 1.7 Sharing & export
 > **Prototype only — none of this exists in the real app.** No Sharing preferences content,
@@ -118,12 +125,17 @@
 - ⬜ Print dialog — prototype only; no printing anywhere in the real app.
 
 ### 1.9 Preferences
-- 🟡 Tabs: **Library** and **Shortcuts** are real and fully functional (§7.2, §7.8).
-  **Applications**, **Sharing**, and **Configuration** exist as tabs in the UI shell but
-  each renders the same literal placeholder message (§7.15).
-- ✅ Library and Shortcuts config now persist to a real `config.json` in the app's config
-  directory via `serde_json` (§7.2) — not `localStorage`. A user-**chosen** settings folder
-  (rather than the fixed app config dir) is still ⬜ (§2.6).
+- 🟡 Tabs: **Library**, **Shortcuts**, and now **Applications** are real and fully
+  functional (§7.2, §7.8, §7.21). **Sharing** and **Configuration** still exist as tabs in
+  the UI shell but each renders the same literal placeholder message (§7.15).
+- ✅ Library, Shortcuts, and Applications config now persist to a real `config.json` in the
+  app's config directory via `serde_json` (§7.2, §7.21) — not `localStorage`. A user-
+  **chosen** settings folder (rather than the fixed app config dir) is still ⬜ (§2.6).
+- ⬜ **New this round, not yet exposed in Preferences at all**: the SD-card/disk import
+  feature's own settings (folder-layout choice, last-used source path, §7.22) persist to
+  `config.json` the same way, but there's no dedicated Preferences pane for them — the
+  choice lives entirely inside the Import dialog itself (§7.22). Revisit if a standalone
+  Import settings section turns out to be wanted.
 
 ---
 
@@ -132,8 +144,10 @@
 ### 2.1 Platform
 - ✅ Desktop app, **Tauri + Rust** core with a web (React/TypeScript) front end — this is
   the real app's actual architecture (§7.1).
-- ⬜ Flatpak/Snap/AppImage app detection is prototype only — the real app has no app-picker
-  at all (§2.5).
+- ✅ Flatpak/Snap/AppImage app detection is real (§7.21/§2.5) — Native/Flatpak/Snap apps are
+  detected by scanning `.desktop` entries (including Flatpak's and Snap's own desktop-export
+  directories); AppImage has no such registry to scan, so it's only reachable via the app
+  picker's own custom-executable file-browse fallback, matching the prototype's own design.
 
 ### 2.2 Immich integration
 - ✅ Connect to an Immich server via endpoint URL + API key (§7.2).
@@ -143,11 +157,16 @@
 - ⬜ Wire Search field to Immich search.
 
 ### 2.3 Filesystem & round-trip
-> Everything below is prototype only — the real app has no filesystem round-trip at all.
-- ⬜ Preferences → Library → "Originals on Disk" (share type, local mount, path mapping,
-  Verify Access).
-- ⬜ Editor launch using a resolved local path.
-- ⬜ Export/round-trip destination from a local originals path.
+> "Originals on Disk" path mapping (§7.18 Stage 0) and editor launch (§7.21) are both real
+> now; the rest below is still prototype-only or was never part of the plan to begin with.
+- ✅ Preferences → Library → "Originals on Disk" (share type, local mount, path mapping) —
+  real since §7.18 Stage 0; there's no separate "Verify Access" button, the mapping is just
+  used directly wherever a local path needs resolving.
+- ✅ Editor launch using a resolved local path (§7.21) — reuses the same
+  `paths::resolve_local_path()` §7.18 Stage 0 built.
+- ⬜ Export/round-trip destination from a local originals path — still prototype-only in the
+  "Create Version" sense (§1.6); SD-card **import**'s destination (§7.22) is a related but
+  distinct feature (files coming *in* from a card, not a rendition going back *out*).
 - ⬜ Auto-load timeline refresh tied to a version/export write landing (the real app *does*
   have a manual Refresh Timeline, §7.8 — just not an automatic one, since there's no write
   of that kind to trigger it).
@@ -157,15 +176,20 @@
   still planned, matching the prototype's own status here.
 
 ### 2.5 External applications
-- ⬜ Detect/launch native, Flatpak, Snap, AppImage apps; custom executable — prototype only.
-- ⬜ Separate RAW editor / external editor roles — prototype only (Preferences →
-  Applications is a placeholder, §7.15).
+- ✅ Detect/launch native, Flatpak, Snap apps; custom executable (also covers AppImage,
+  via the same fallback) — real (§7.21).
+- ✅ Separate RAW editor / external editor roles — real, Preferences → Applications
+  (§7.21; §7.15's placeholder-list mention of Applications is now stale).
 
 ### 2.6 Persistence
-- 🟡 Library and Shortcuts settings are real, persisted to `config.json` in the app's
-  config directory (§7.2, §7.8) — not `localStorage`. Editor choices and other prefs
-  aren't real yet (nothing to persist — those panes are placeholders). A user-**chosen**
-  settings folder (vs. the fixed OS config dir) is still ⬜.
+- 🟡 Library, Shortcuts, and Applications settings are real, persisted to `config.json` in
+  the app's config directory (§7.2, §7.8, §7.21) — not `localStorage`. Sharing/Configuration
+  prefs aren't real yet (nothing to persist — those panes are still placeholders). A user-
+  **chosen** settings folder (vs. the fixed OS config dir) is still ⬜.
+- ✅ SD-card import's own dedupe cache (`import_history.json`, §7.22) is a separate file
+  from `config.json`, always in the OS app-config dir regardless of a chosen settings
+  folder — it's a content-hash cache, not a setting, and churns far more (potentially tens
+  of thousands of entries) than anything else persisted so far.
 
 ### 2.7 Immich server compatibility
 - ✅ **`MIN_TESTED_SERVER_VERSION`** constant (`immich/models.rs`) — not a hard technical
@@ -727,19 +751,21 @@
 - **Albums, People** tabs are pure placeholders (`PlaceholderView.tsx`: "Not built in the
   real app yet — placeholder data only in the design prototype"). **Folders** is now real
   (§7.10).
-- **Preferences** — **Library** and **Shortcuts** are real; Applications / Sharing /
-  Configuration each render the same literal placeholder as before.
-- **Sharing, printing, versions/round-trip** — all still only exist in the `.dc.html`
-  prototype (manual Stacks and Smart Stack are now both real, §7.13/§7.14).
-- **Menu bar stubs** (`MenuBar.tsx`): Upload…, Print…, Recent Activity, Copy/Paste
-  Settings, View → Zoom In/Out, View → Sort Photos By (Newest/Oldest/Name/Rating) are
-  present in the menu but not wired to anything real yet. **Refresh Timeline** (`F5`),
-  **Select All / Deselect All** (`Ctrl+A` / Edit menu), **Stack Selected** (`S`, §7.13),
-  **Smart Stack…** (§7.14), **Quit**, **Preferences** (`Ctrl+,`), and the **Filters**
-  dropdown (§7.11) are real.
-- Next real-app milestone: pick one of the above (Albums/People, sharing/printing, or
-  versions/round-trip) to wire up the same way Library + Photos + Folders + Viewer +
-  Delete/Trash + Filters + Stacks were done so far.
+- **Preferences** — **Library**, **Shortcuts**, and now **Applications** (§7.21) are real;
+  Sharing / Configuration each still render the same literal placeholder as before.
+- **Sharing, printing, "Create Version" round-trip/versions lineage** — all still only exist
+  in the `.dc.html` prototype (manual Stacks and Smart Stack are now both real, §7.13/§7.14;
+  the much smaller launch-only editor round-trip that survived §1.6's scope cut is real too,
+  §7.21).
+- **Menu bar stubs** (`MenuBar.tsx`): Upload…, Print…, Copy/Paste Settings, View → Zoom
+  In/Out, View → Sort Photos By (Newest/Oldest/Name/Rating) are present in the menu but not
+  wired to anything real yet. **Refresh Timeline** (`F5`), **Select All / Deselect All**
+  (`Ctrl+A` / Edit menu), **Stack Selected** (`S`, §7.13), **Smart Stack…** (§7.14), **Import
+  from SD Card/Disk…** (§7.22), **Recent Activity…**, **Quit**, **Preferences** (`Ctrl+,`),
+  and the **Filters** dropdown (§7.11) are real.
+- Next real-app milestone: pick one of the above (Albums/People, sharing/printing) to wire
+  up the same way Library + Photos + Folders + Viewer + Delete/Trash + Filters + Stacks +
+  Applications + Import were done so far.
 
 ### 7.16 Stacks in the lightbox, and rating-UX consistency (real)
 > Stage 1 (§7.13) only surfaced stacks in the grid — the lightbox (`Viewer.tsx`) had
@@ -855,12 +881,12 @@
   (`readOnly: false`) and Favorite/Stack/Delete are all real mutations against the live
   library, not something to exercise unattended.
 
-### 7.18 RAW-editor metadata sync — Stage 0 + Stage A (real)
+### 7.18 RAW-editor metadata sync — Stage 0 through Stage B + reject control (real)
 > Larger, user-planned feature: digiKam/darktable/RawTherapee/ART all write sidecar files (or,
 > for JPEG/TIFF, straight into the image itself) that Immich never sees. Full plan (all stages)
-> recorded in this session's plan file. Stage B (mirroring ImmAture's own edits back out to a
-> `.xmp` sidecar) and darktable/ART Copy-Paste Settings + the local "pasted settings" badge are
-> queued next, not yet built.
+> recorded in this session's plan file. darktable/ART Copy-Paste Settings + the local "pasted
+> settings" badge remain queued next, not yet built (separate feature, separate risk profile —
+> wholesale sidecar copy vs. this feature's targeted field patch).
 - ✅ **Stage 0 — local path resolution.** A second NFS/SMB mount mapping on `LibraryConfig`/
   Preferences → Library → Originals on Disk: `uploadedLocalRoot`/`uploadedImmichRoot`,
   alongside the existing External Library `localRoot`/`immichRoot` pair — External Library
@@ -914,8 +940,498 @@
   rejection, unconfigured/unmatched → `None`, both xmp:Rating forms, pp3 `Rank=` scoped to
   `[General]` plus the `-1` rejected case, and the xmp-then-pp3 fallback order) — `cargo test`
   passing, alongside `tsc --noEmit`/`oxlint`/`cargo check` all clean.
-- ⬜ Not yet manually verified against the user's real library/sidecars — paused here by
-  design before Stage 2 (which does real, overwriting local file writes) for the user to test
-  Stage 0/1 first.
+- ✅ **Stage B — write-mirror: `.xmp` patch/create on every rating/description edit.**
+  Root-caused live against the user's real Immich server: `PUT /assets/{id}` with a `rating`
+  returns `200 OK` for External Library assets (ImmAture's core use case) without the value
+  ever actually persisting (confirmed via direct write-then-reread against a disposable test
+  asset; `isFavorite` and non-external-library `rating` both persist correctly with the same
+  call). So a rating/description edit made inside ImmAture is no longer trusted to have
+  "stuck" just because Immich's PUT returned success — it's also written directly into the
+  asset's own `.xmp` sidecar, which is the mechanism actually relied on to persist it.
+  - New `xmp::patch_or_create(path, rating, description)` — patches an existing attribute or
+    element form in place, or inserts a new one onto/into `rdf:Description` (converting a
+    self-closing tag to open/close first if a new child element is needed), or synthesizes a
+    minimal well-formed packet if no sidecar exists yet. Every sibling attribute/child element
+    is left byte-for-byte untouched — verified against a real, unmodified Exiv2/digiKam-written
+    sidecar captured from the user's own test library, not just synthetic fixtures. Atomic
+    write (unique tmp file + rename), same pattern as `thumb_cache.rs`.
+  - `update_asset_metadata` now takes `targets: {id, originalPath}[]` instead of bare ids.
+    Immich's PUT is still attempted first for every target (unchanged), then whichever of
+    rating/description were part of the edit are mirrored into the sidecar via
+    `paths::xmp_write_path` (prefers whichever of the two sidecar-naming conventions already
+    exists on disk, defaulting to the append-form for a brand-new file). A real sidecar-write
+    failure is collected into a `SidecarWriteWarning[]` response and surfaced to the user via a
+    small inline banner in `PhotosBrowser.tsx`/`FoldersBrowser.tsx` (not silently swallowed —
+    this is the one failure mode in the whole feature a user actually needs to notice).
+  - After a successful sidecar write, best-effort `POST /assets/jobs {name: "refresh-metadata"}`
+    nudges Immich to re-read the file promptly instead of waiting on its own periodic
+    sidecar-scan queue (fire-and-forget — doesn't affect whether the edit itself succeeded).
+- ✅ **Reject (-1) rating control.** Previously ImmAture could only *detect* a `-1`/rejected
+  rating from a sidecar, with no way to set one itself. Added `reject` shortcut (default `9`,
+  matching digiKam's own binding) plus a small reject icon (`RejectIcon` in `MetadataRows.tsx`)
+  next to the star row in `AssetTile.tsx`, `MetadataRows.tsx`, and `SelectionBar.tsx` — clicking
+  it sets rating `-1`; clicking again clears back to `0`, mirroring the existing
+  reclick-a-star-to-clear pattern.
+- ✅ 11 new unit tests in `xmp.rs` (attribute/element rating patch, self-closing-tag handling,
+  description-block patch/insert, brand-new-file creation, XML-escaping, and two regression
+  tests against a real, unmodified digiKam-written sidecar confirming every sibling
+  attribute/child element survives byte-for-byte) plus 1 in `paths.rs`
+  (`xmp_write_path` naming-convention precedence) — `cargo test` (29/29), `cargo check`,
+  `tsc --noEmit`, `oxlint` all clean.
+- ⬜ Not yet manually verified against the user's real library end-to-end (set a rating from
+  the Folders view, a Photos-view thumbnail, the SelectionBar, and the new reject control;
+  confirm the `.xmp` sidecar's `xmp:Rating` actually changes on disk and survives a
+  refresh) — automated tests cover the write logic itself, but this hasn't been exercised
+  through the real running app yet.
+- ⚠️ **Superseded by §7.20**: `update_asset_metadata`'s synchronous, sequential per-target loop
+  and its `SidecarWriteWarning[]` response (both described above) were replaced by a decoupled,
+  optimistic-UI background edit queue once this session's real-world testing showed the
+  synchronous round trip itself — not just a failure within it — could freeze the UI for minutes
+  under an NFS/Tailscale slowdown. The write mechanism (Immich PUT + `.xmp` patch, sidecar
+  authoritative) is unchanged; only when/how it runs, and how the UI learns about it, changed.
+
+### 7.19 NFS `hard`-mount reads blocking system suspend (real, Linux)
+> The Stage 0 local-path mapping (§7.18) means `check_sidecar_metadata` and the Stage B `.xmp`
+> write can read/write through a `hard`-mounted NFS path. Root-caused against the user's real
+> laptop: when the NFS server becomes unreachable (e.g. during a suspend transition) while a
+> `hard`-mount read is in flight, the calling thread blocks in the kernel in uninterruptible `D`
+> state (`nfs_file_read`/`folio_wait_bit_common`) for as long as the outage lasts — confirmed via
+> `journalctl -k` showing `tokio-rt-worker` threads stuck there, causing Linux's s2idle
+> `freeze_processes()` step to time out and suspend to fail/retry in a loop. This is unrelated to
+> which Tokio thread pool a blocking call runs on — Tokio 1.52.3 (this app's pinned version) gives
+> `spawn_blocking` pool threads the same default name as core reactor threads
+> (`tokio-1.52.3/src/runtime/blocking/pool.rs:227`), and all 4 blocking-fs call sites in this
+> codebase were already correctly wrapped in `spawn_blocking` before this work — that was never
+> the bug. The user chose to keep the NFS mount's `hard` option (data integrity on writes matters
+> more than suspend convenience), so the fix is two complementary pieces:
+- ✅ **Part A — the actual guarantee: a systemd-sleep force-unmount hook**, external to this repo,
+  at `/etc/systemd/system-sleep/immature-nfs-unmount`. Force-unmounts (`umount -f`, not lazy `-l`)
+  the NFS mount on the `pre` sleep hook, which actively aborts any in-flight NFS RPC and returns
+  an error to the blocked thread — the only thing that can un-stick a thread already parked in
+  `D` state; nothing in userspace short of this can. The mount's existing `x-systemd.automount`
+  fstab option transparently reconnects on next access after resume, so no explicit remount step
+  is needed. Logs via `logger -t immature-nfs-unmount` for diagnosability.
+- ✅ **Part B — a complementary reduction, not sufficient alone: Linux-only delay-inhibitor
+  subsystem** (`app/src-tauri/src/io_guard.rs` portable + `suspend_guard.rs` Linux-only, gated
+  `#[cfg(target_os = "linux")]` and kept out of the non-Linux dependency graph via a
+  `[target.'cfg(target_os = "linux")'.dependencies]` table for `zbus`/`futures-util`). Uses
+  systemd-logind's `Inhibit("sleep", ..., "delay")` + `PrepareForSleep` D-Bus signal (the same
+  idiom NetworkManager/gnome-keyring use) to get advance warning before suspend: on
+  `PrepareForSleep(true)`, `IoGuard` stops new blocking fs calls from starting (all 4 existing
+  `spawn_blocking` call sites now go through `io_guard::guarded_spawn_blocking`, each degrading to
+  its existing tolerant fallback when paused — thumbnail read/write treat it as a cache miss/no-op,
+  `update_asset_metadata` surfaces it as an ordinary `SidecarWriteWarning`,
+  `check_sidecar_metadata` returns an empty result for that round) and waits up to 3s (comfortably
+  under logind's default 5s `InhibitDelayMaxSec`) for in-flight calls to drain before releasing the
+  inhibitor. **This cannot rescue a thread already blocked in `D` state** — nothing in userspace
+  can once the syscall is inside the kernel's NFS client — so Part A remains the actual guarantee
+  and Part B only narrows how often Part A's rescue is even needed. All D-Bus failure paths
+  (`log::warn!` + early return, never `.unwrap()`) degrade to "inhibitor never held, behaves as
+  before" rather than crashing, so this is safe on non-systemd/sandboxed Linux environments too.
+  - ⚠️ Caution for any future `zbus` upgrade: `zbus`/`zbus_macros` must be version-pinned together
+    (currently exact `5.12.0`) — letting them resolve independently produces a
+    `cannot find type DispatchResult2` compile error from macro/crate version skew. Confirmed by
+    reproducing it directly. Also respects this crate's declared `rust-version = 1.77.2`; plain
+    `cargo update` floats zbus to 5.17+, which itself requires rustc ≥1.87.
+  - ✅ 4 new unit tests in `suspend_guard.rs` (pause sets the flag, resume clears it, paused guard
+    refuses new work, pause waits for in-flight work to drain) exercising the pause/drain logic
+    directly against `IoGuard` — deliberately independent of a live D-Bus connection, since
+    `PrepareForSleep` is a sender-filtered signal, not a callable method, and can't be simulated
+    via `busctl call`/`busctl emit` from an unprivileged process (confirmed both fail/are ignored
+    while designing this).
+- ✅ Sleep hook installed at `/etc/systemd/system-sleep/immature-nfs-unmount` (`root:root`,
+  `0755`), confirmed by the user.
+- ✅ Inhibitor acquisition/release verified end-to-end against the real running app and the
+  user's live `systemd-logind` (`ImmAture`/`sleep`/`delay` appeared in `systemd-inhibit --list`
+  and `ListInhibitors`, matching the running PID; killing the process released it immediately —
+  RAII drop behavior confirmed).
+- ⬜ Not yet verified against one real suspend/resume cycle (both `PrepareForSleep(true)` and
+  `(false)` firing in practice), nor against an actual NFS outage during suspend.
+
+### 7.20 Decoupled optimistic-UI edit queue (real)
+> This session diagnosed that the NFS mount backing `.xmp` sidecar writes (§7.18) runs over a
+> real ~100ms WAN link (Tailscale) with `hard`+`sync` options, and that a burst of writes (e.g.
+> Unraid's recursive permission-fix walk) can saturate that single shared connection for minutes
+> at a time. Because every rating/favorite/description edit was fully synchronous end-to-end
+> (§7.18's sequential per-target loop, awaiting an Immich PUT then a blocking `.xmp` write before
+> the frontend ever touched local UI state), any such slowdown made the whole UI feel frozen —
+> keyboard shortcuts and rating clicks didn't visibly do anything until the round trip completed.
+> The fix: stop gating the UI on any per-edit round trip at all.
+- ✅ **New `app/src-tauri/src/edit_queue.rs`** — a bounded-concurrency (`MAX_CONCURRENT_JOBS = 4`,
+  deliberately small given the single shared NFS connection above) background queue. `EditQueue`
+  holds an in-memory `VecDeque<EditJob>` board (`Pending → Writing → Done|Failed`, capped
+  `Done`/`Failed` history at 200 via `trim_completed`, never evicting active jobs) plus an
+  `mpsc` channel to its own drain worker (`edit_queue::run`, spawned once from `lib.rs`'s
+  `.setup()`). Per job, the worker runs the XMP sidecar write (still via the existing
+  `io_guard::guarded_spawn_blocking`, unchanged mechanism) **concurrently** with the Immich PUT
+  via `tokio::join!` — independent systems, no real dependency between them. The sidecar remains
+  authoritative (§7.18's root-cause finding): an XMP write failure is fatal (`Failed`, and the
+  frontend rolls its optimistic patch back); an Immich-only failure is non-fatal (`Done` with an
+  advisory `immichWarning`, no rollback) since the edit already stuck via the sidecar.
+- ✅ `update_asset_metadata` is now a plain **sync** `fn` — after its unchanged
+  `read_only`/`max_writes_per_batch` checks, it just resolves each target's local path (cheap, no
+  I/O) and pushes jobs onto the queue, returning their ids immediately. New poll-target command
+  `get_edit_queue_status` (`{ jobs, pendingCount }`) and `clear_completed_edit_jobs` back the
+  frontend's advisory activity panel.
+- ✅ **Frontend applies its own optimistic patch before any of the above runs** —
+  `PhotosBrowser.tsx`/`FoldersBrowser.tsx`'s `commitEdit`/`commitEditMany` patch local state
+  immediately, then enqueue; `useEditJobReconciliation` (`app/src/lib/useEditJobReconciliation.ts`)
+  gives them a one-shot callback the moment each tracked job settles, to roll back on `failed` or
+  just drop bookkeeping on `done`. `enqueueError` (renamed from `editWarning`) now only fires on a
+  *synchronous* rejection (read-only/over-cap) — an async job failure surfaces via the new shared
+  UI instead. Known, deliberate trade-off: `MetadataPanel`'s description-textarea inline error
+  also now only reflects a sync rejection, not an async job failure.
+- ✅ **Advisory, polled activity UI** — `EditQueueProvider` (`app/src/lib/editQueue.tsx`) polls
+  `get_edit_queue_status` every 1s (same shape as `useMemoryUsage.ts`), shared via context so the
+  new `EditQueueIndicator` pill (mounted in `TitleBar.tsx`, "N syncing…"/"N failed") and the new
+  `ActivityPanel` modal (per-job thumbnail + status pill + inline error/warning text, "Clear
+  Completed" footer action, visual language loosely modeled on Immich Desktop's own "Recent
+  Activity" modal) both read from one shared poll. Polling was chosen deliberately over a
+  per-edit Tauri event stream: the queue is already fully decoupled from the optimistic UI, so a
+  transition missed between polls only affects how granularly "in progress" briefly renders,
+  never correctness.
+- ✅ **The one deliberate exception: app close.** `lib.rs`'s `.on_window_event` intercepts
+  `WindowEvent::CloseRequested`, and if `edit_queue.pending_count() > 0`, calls
+  `api.prevent_close()` and emits a one-shot `queue-close-blocked` event (the only per-edit-queue
+  Tauri event in this design). `App.tsx` shows a `ConfirmDialog` ("Wait" / "Quit anyway" — a warn,
+  not a hard block; force-quit accepts data loss) whose confirm action calls the new `force_quit`
+  command (`app.exit(0)`, bypassing the interception).
+- ✅ 7 new unit tests in `edit_queue.rs` (id assignment + `Pending` on enqueue, ids increasing
+  across calls, XMP failure classified `Failed` even when Immich also fails, Immich-only failure
+  classified `Done`+warning, both-success plain `Done`, `trim_completed` never evicts
+  `Pending`/`Writing` and caps `Done`/`Failed` history at the cap) — pure, no runtime/network/
+  filesystem needed, same testable-reaction-vs-I/O-loop split as `suspend_guard.rs`. `cargo test`
+  (43/43), `cargo build`, `cargo clippy` (no new warnings), `tsc -b`/project-references typecheck
+  all clean.
+- ⬜ Not yet manually verified against the user's real library/server — this sandbox has no
+  display server (no Xvfb/webkit2gtk GUI harness set up) and no live Immich server or NFS mount
+  configured, so the native window itself, and the actual behavior of rapid multi-select edits,
+  a forced XMP permission failure, an Immich-only outage, and the close-blocking dialog against a
+  stalled job, are all still outstanding — only static verification (types, unit tests, clippy,
+  full build) was possible here.
+- ⚠️ **Superseded by §7.23**: the `EditQueueIndicator` pill mentioned above (mounted directly in
+  `TitleBar.tsx`) was replaced by a combined `ActivityIndicator` once the import feature added a
+  second background queue — same file still exists, just no longer mounted on its own.
+
+### 7.21 RAW/External editor launch (real)
+> Closes the gap flagged in §1.5/§1.6/§2.5: Preferences → Applications was a placeholder and
+> nothing launched an external editor at all. Scoped deliberately narrow per an explicit
+> decision this session: **launch only** — no file-watching, no auto-refresh, no auto-stacking.
+> The user manually hits the existing Refresh Timeline once the editor saves, matching the
+> user's own framing from §6 ("There's already an Open In Raw Editor button... when the image
+> gets saved back to the same folder it should appear") and the prior, separate decision to cut
+> the prototype's much bigger "Create Version" round-trip entirely (§1.6) — that machinery
+> (version lineage, auto-stacked renditions) was **not** revisited or resurrected here.
+- ✅ **App detection** (`app/src-tauri/src/apps.rs`) — best-effort, never errors. Native apps:
+  a hand-rolled `.desktop` reader (same "narrow parser for a known format" style as `paths.rs`'s
+  `.pp3` reader) over the standard XDG applications directories. Flatpak and Snap apps are
+  picked up "for free" by also scanning their own desktop-export directories
+  (`/var/lib/flatpak/exports/...`, `~/.local/share/flatpak/exports/...`,
+  `/var/lib/snapd/desktop/applications`) rather than shelling out to `flatpak list`/`snap list`
+  and parsing column output — avoids depending on either CLI being resolvable from this app's
+  `PATH` (not guaranteed for a GUI app launched outside a shell), and reuses one `.desktop`-
+  reader for every kind. `AppKind` (Native/Flatpak/Snap/AppImage/Custom) is classified from the
+  `Exec=` line's own shape (`flatpak run` prefix, `/snap/` substring, else native). **AppImage is
+  deliberately never auto-detected** — there's no standard registry of installed AppImages to
+  scan, so it's only reachable via the picker's own custom-executable file-browse fallback,
+  matching the design prototype's own split.
+- ✅ **Launch** (`apps::launch_app`) — Native/Flatpak/Snap entries carry a real `Exec=` command
+  line (for Flatpak/Snap this already includes `flatpak run <id>`/the `/snap/bin/<name>` wrapper
+  itself); only the file-argument field code (`%f`/`%F`/`%u`/`%U`) needs substituting with the
+  resolved local path, via a pragmatic (not fully XDG-spec-general) tokenizer — the picker always
+  shows the raw `exec` string, so a launch that goes wrong is at least diagnosable. AppImage/
+  Custom entries are a bare executable path with no `Exec=` grammar, so the path is simply
+  appended. Plain `std::process::Command` — no `tauri-plugin-shell` needed or added; this keeps
+  the same tight trust boundary as every other hand-written command in this codebase (one narrow
+  Rust function ever spawns a process, not a generically-scoped shell-exec surface reachable
+  from JS).
+- ✅ **New commands** (`commands.rs`): `list_installed_apps`, `save_applications_config`,
+  `launch_editor` (resolves the local path via the *existing, unchanged*
+  `paths::resolve_local_path()` from §7.18 Stage 0, then calls `apps::launch_app`).
+  **Deliberately skips the read-only/max-writes-per-batch safety net** that gates every other
+  mutating command — launching a third-party process writes nothing to Immich and doesn't touch
+  the file itself; whatever that external app later does to the file is outside ImmAture's own
+  write path. A judgment call, not a silent assumption.
+- ✅ **Config** (`config.rs`): `ApplicationsConfig { raw_editor: Option<AppChoice>,
+  external_editor: Option<AppChoice> }` on `AppConfig`, following the existing
+  `SmartStackSettings` pattern exactly (struct + `Default` + `#[serde(default)]` field +
+  paired save command).
+- ✅ **Preferences → Applications** (`PreferencesApplications.tsx`) — real now, replacing the
+  placeholder branch in `PreferencesOverlay.tsx`. Two rows, **RAW Editor** / **External
+  Editor**, each showing the chosen app (name + monospace `exec`) or "No application chosen",
+  with a **Change…** button opening the picker.
+- ✅ **App picker** (`AppPickerDialog.tsx`) — filterable list, each row a letter-avatar + name +
+  monospace `exec` + a colored kind badge using the design prototype's own hex values (Flatpak
+  `#3584e4`, Snap `#e95420`, AppImage `#2ec27e`, Native `#9141ac`, Custom `#5e5c64`), plus an
+  **"Other application…"** row at the bottom that opens `tauri-plugin-dialog`'s native file-open
+  dialog (new dependency — no dialog/shell/fs plugin existed in this app before this round) to
+  produce a `Custom` (or, if the picked path ends in `.AppImage`, `AppImage`-badged) entry. No OS
+  icon-theme lookup — letter-avatar only, matching the prototype.
+- ✅ **Viewer buttons** — two new header buttons next to Unstack/Move to Trash: **"Open in RAW
+  Editor"** (shown only when `isRawAsset(shown)`, reusing the existing `lib/filters.ts`
+  predicate) and **"Open in Ext. Editor"** (always shown). Neither button existed in the real
+  app before this round — confirmed via a full grep of `Viewer.tsx`, this wasn't "wire up a
+  disabled button," the buttons themselves were net-new. Clicking with no app chosen for that
+  role redirects straight into Preferences → Applications (`onOpenApplicationsPreferences`,
+  threaded through `PhotosBrowser.tsx`/`FoldersBrowser.tsx` from `App.tsx`) instead of just
+  disabling the button with no way to fix it from there.
+- ✅ `ApplicationsProvider`/`useApplications()` (`lib/applications.tsx`) — structurally identical
+  to `SmartStackSettingsProvider`, shared so Viewer doesn't need its own `getConfig()` round trip
+  on every open.
+- ✅ 7 new unit tests in `apps.rs` (`.desktop` `Name=`/`Exec=`/`NoDisplay=`/section-scoping
+  parsing, Flatpak/Snap/Native classification from `Exec=` shape, field-code substitution
+  including the no-field-code-present append case and `%%` unescaping) — `cargo test`, `cargo
+  check`, `cargo clippy` (no new warnings), `tsc -b`, `oxlint` all clean.
+- ⬜ Not yet manually verified against the user's real library/server or a real desktop
+  environment — same sandbox limitation as §7.20 (no display server, no installed
+  darktable/RawTherapee/GIMP/etc. to actually detect and launch here). Static verification only.
+
+### 7.22 SD card / disk import (real)
+> Genuinely new territory — confirmed via search that no prior prototype design, requirements
+> discussion, or real-app code touched import/download/SD-card/memory-card anywhere before this
+> round. Modeled loosely on Rapid Photo Downloader (local download-history/dedupe cache,
+> configurable rename-on-import, RAW+JPEG paired under one shared basename), explicitly scoped
+> down from RPD's full feature depth per the user's own answers this session: launch-only import
+> (no per-file thumbnail/checkbox staging grid), one fixed curated naming scheme rather than a
+> token-builder UI, and copy-to-disk-plus-nudge-Immich rather than a parallel upload-API path.
+- ✅ **Scan + pairing** (`app/src-tauri/src/import/scan.rs`) — recursively walks a source folder
+  (`walkdir`, new dependency) for RAW/JPEG/HEIC/PNG/TIFF/common-video extensions, grouping files
+  by `(parent_dir, basename_without_extension)` — **deliberately scoped per source directory**,
+  not a global flat basename match across the whole scan the way `smartStack.ts`'s Name mode
+  groups already-imported Immich assets (which have globally unique ids/paths). A raw filesystem
+  scan has no such guarantee: a reused SD card can have `100CANON/IMG_0001.CR3` and
+  `101CANON/IMG_0001.CR3` as two unrelated files that happen to share a basename — a naive port
+  of the TS grouping logic would have been a real correctness bug, caught during design rather
+  than after the fact. Video is included by default (a judgment call, flagged rather than
+  assumed — real camera SD cards always mix video in, and Immich already treats it as
+  first-class); easy to exclude later if unwanted.
+- ✅ **Capture-date derivation** (`import/capture_time.rs`) — EXIF `DateTimeOriginal`/`DateTime`
+  via `kamadak-exif` (new dependency) preferred, falling back to file mtime (via the `time`
+  crate, new dependency, for the epoch→calendar conversion) when EXIF is missing/unreadable.
+  Per-group selection prefers an EXIF-derived time from a RAW member, then any EXIF-derived time,
+  then the earliest mtime among the group. **Known, accepted gap**: Canon CR3 (ISO-BMFF/MOV-style
+  container, not TIFF) and Fujifilm RAF (proprietary wrapper around an embedded TIFF section) are
+  weaker fits for `kamadak-exif` than the TIFF-based RAW formats (NEF/ARW/DNG/ORF/RW2/PEF/SRW) —
+  degrades gracefully to mtime either way; not yet empirically confirmed against one of the
+  user's own CR3/RAF files. `exiftool` was considered and rejected as the primary mechanism,
+  consistent with this codebase's existing "hand-roll a narrow parser for a known format"
+  philosophy (`xmp.rs`, `paths.rs`'s `.pp3` reader) and §1.5's own prior, explicit decision to
+  scope ExifTool out entirely.
+- ✅ **Dedupe cache** (`import/history.rs`) — content-hash based (partial BLAKE3 hash, first
+  ~4MB + file size, new `blake3` dependency chosen over the already-transitively-present `sha2`
+  specifically because BLAKE3's throughput matters where a full read is unavoidable anyway, see
+  below), persisted to its own `import_history.json` file rather than folded into `config.json`
+  — it can grow into the tens of thousands of entries and churns far more than settings, so
+  keeping it separate avoids rewriting the whole settings blob on every import. A group is
+  treated as fully imported only when **every** member matches an existing record; if only some
+  members match (e.g. a RAW+JPEG pair where just the JPEG half was imported previously, possibly
+  under a different destination name), the whole group is copied together again — the simplest
+  option, accepted as a known v1 trade-off over a full pair-aware history lookup, rather than a
+  silent gap.
+- ✅ **Naming** (`import/naming.rs`) — the one fixed scheme asked for: `yyyymmdd_hh-mm-ss.ext`
+  filenames, with a **Flat** vs **Year/Month** (`yyyy/yyyy_mm/`) folder-hierarchy choice (not a
+  full token-builder). A collision is resolved **once per group**, not per file — a RAW+JPEG
+  pair must keep sharing one destination basename even when that basename collides with
+  something else (same-second burst, or a reset camera clock); suffixing each member
+  independently (`-1`/`-2`/…) would silently break the pairing this whole feature exists to
+  preserve. Checked against both the rest of the current batch and whatever's already on disk
+  (any extension, not just a matching one).
+- ✅ **`ImportQueue`** (`import/queue.rs`) — the same bounded-concurrency background-job
+  architecture as `edit_queue.rs` (`Pending → Copying → Done|Failed` board, `mpsc`-fed drain
+  worker spawned once from `lib.rs`'s `.setup()`, capped completed-history), deliberately capped
+  lower (`MAX_CONCURRENT_IMPORT_JOBS = 2` vs. the edit queue's 4) since this moves large RAW
+  files over the same constrained NFS/Tailscale mount that already caused §7.19/§7.20's real
+  suspend-blocking and UI-freeze bugs, and a multi-hundred-file SD card import is a much bigger
+  burst than any metadata edit ever was. Copies through a unique temp name then renames into
+  place (same atomic idiom as `thumb_cache.rs`/`xmp.rs`), always via
+  `io_guard::guarded_spawn_blocking` — not optional, for the same NFS-mount-burst reason. Every
+  copy is byte-count-verified against the size captured at scan time before the rename (a real,
+  cheap integrity check using the BLAKE3 hash `copy_with_hash` already computes as a byproduct of
+  the copy, not a separate re-read pass) — a size mismatch fails the job and cleans up the temp
+  file rather than silently landing a truncated/corrupt copy.
+- ✅ **Immich "nudge"** (`immich/mod.rs`) — `get_libraries()` (`GET /libraries`) +
+  `scan_library()` (`POST /libraries/{id}/scan`), verified against Immich's live `main`-branch
+  OpenAPI-generated SDK. Distinct from the existing `refresh_metadata`/`refresh-metadata` job
+  (§7.18 Stage B): that one only re-reads a file for an asset Immich **already knows about** — it
+  does nothing for a genuinely new file, which is exactly what an import just created; a real
+  Library Scan is the actual mechanism for Immich to discover brand-new files under an External
+  Library. **Library-id auto-match** (`import/library_match.rs`, pure/testable) compares the
+  configured `immich_root` against each library's `importPaths` by exact equality (trailing-slash
+  tolerant) — re-resolved fresh each time rather than cached in config, so a later Immich-side
+  library reconfiguration can't leave a stale id behind. Ambiguous (>1 match) or no-match results
+  in a clear error surfaced to the user; the copy has already succeeded either way, this only
+  affects how promptly the files show up in Immich. **Not yet smoke-tested against the user's
+  actual server** — needs the same live-server verification discipline as §2.7's compatibility
+  log before fully trusting it.
+- ✅ **Commands** (`commands.rs`): `list_removable_volumes` (via `sysinfo`'s `disk` feature,
+  newly enabled — already a direct dependency for `get_memory_usage`), `scan_import_source`
+  (returns both aggregate counts *and* the full group plan, checked against the queue's own
+  in-memory history rather than a fresh disk read, so `start_import` never needs a second
+  scan/hash pass over what could be a slow card reader), `start_import`, `get_import_queue_status`,
+  `clear_completed_import_jobs`, `save_import_settings`, `scan_immich_library`. `start_import` is
+  gated by `read_only` like every other write, but **deliberately not** by
+  `max_writes_per_batch` — that cap exists to catch a fat-fingered bulk edit/delete of *existing*
+  assets (default 25), and applying it unmodified here would make importing an ordinary
+  few-hundred-photo SD card impossible without raising the same cap that protects everything
+  else. A real usability/safety trade-off, flagged rather than silently decided either way.
+- 🐛 **Real bug found and fixed, reported live by the user**: loading a real source folder made
+  the whole app appear to hang, with the OS surfacing a "not responding" notification —
+  `scan_import_source` (the recursive walk + per-file partial-hash read, §7.22's scan/pairing
+  step above) and `start_import` (whose `enqueue` does its own disk reads for collision
+  resolution, §7.22's naming step) were both plain sync `fn`s running straight on the async
+  runtime's worker thread instead of via `io_guard::guarded_spawn_blocking` — the one pattern
+  every other I/O-heavy command in this codebase already uses (`check_sidecar_metadata`, every
+  copy job in `queue.rs`). For a real SD card (hundreds of files, each read up to 4MB for its
+  hash) that starved the IPC channel long enough for the OS to conclude the app had died. Fixed
+  by making both commands `async fn` and routing their bodies through
+  `io_guard::guarded_spawn_blocking`, same idiom as `check_sidecar_metadata`.
+- ✅ **`ImportDialog.tsx`** — the "curated subset" v1 flow: pick a source (removable-volume
+  quick-picks via `sysinfo`, or **Browse…** via `tauri-plugin-dialog`'s native folder picker) →
+  scan summary (new/already-imported/paired/total counts, plus the Flat vs. Year/Month choice) →
+  one **Import** button → closes immediately into the shared Activity UI for progress. No
+  per-file thumbnail/checkbox grid — a clear, explicitly-scoped future add-on, not an oversight.
+  Shows a "set up External Library local mount first" state (with a shortcut straight into
+  Preferences → Library) if that mapping is empty, rather than letting the user scan with nowhere
+  valid to copy to.
+  - 🐛 **Real UX bugs found and fixed, reported live by the user**: (1) the "Flat"/"Year / Month"
+    labels alone didn't make the actual naming convention legible — the summary step now also
+    shows a live, monospace **destination example path** (e.g.
+    `/mnt/nfs/Rob/Images/2026/2026_06/20260621_08-23-13.CR3`), computed from a real scanned
+    group and updating as the folder-layout toggle changes, plus a plain-language caption
+    explaining the `yyyymmdd_hh-mm-ss.ext` + `yyyy/yyyy_mm/` scheme — shown *before* the user
+    confirms Import, not just implied by the button labels. (2) the source step's "Scanning…"
+    state was just a disabled button label, easy to mistake for a frozen app (compounded by the
+    hang bug above, but a real UX gap on its own even once that's fixed) — replaced with a
+    full-width waiting panel (spinner + "this can take a while for a large card... please keep
+    this window open, it hasn't frozen") that takes over the whole step while a scan is in
+    flight, from either a quick-pick volume click or Browse.
+- 🐛 **Real bug found and fixed, reported live by the user**: importing while the destination
+  NFS mount was disconnected didn't just fail the import — the *whole app* went unresponsive
+  (OS-level "not responding" dialog), and it stayed wedged on a second attempt even after the
+  mount reconnected, leaving orphaned `.part-N` temp files behind. Root cause was worse than the
+  §7.20-style "blocks the async runtime" bug above: `ImportQueue::enqueue()` was holding the job
+  board's `Mutex` (`board: Mutex<VecDeque<ImportJob>>`) **while** doing the disk reads
+  `naming::resolve_stem` needs for collision checking. `get_import_queue_status`/`snapshot`/
+  `pending_count` (polled every second by the frontend) and the drain worker's own
+  `set_status`/`finish` calls all briefly lock that same mutex — none of them do I/O themselves,
+  but if `enqueue` hung inside a `fs::read_dir` against an unreachable hard NFS mount (an
+  accepted, unrescuable-from-userspace kernel D-state wait, per §7.19's own prior finding), the
+  lock never released, so every one of those once-a-second pollers piled up behind it forever
+  too — enough accumulated blocked tasks starved the async runtime badly enough to stall the
+  whole app, not just the Import dialog. Separately, a copy job stuck the same way in
+  `copy_one` (during the actual file write) permanently occupied one of only
+  `MAX_CONCURRENT_IMPORT_JOBS = 2` semaphore permits for the rest of the process's life, since
+  nothing released it — explaining why a second import attempt in the same running session
+  found the queue already wedged, independent of the mutex bug. Fixed three ways: (1)
+  `enqueue()` now does all of `naming::resolve_stem`'s disk-touching work *before* acquiring
+  `board`'s lock at all, so a stuck destination can only ever block that one call, never anyone
+  else's; (2) each copy job in the drain worker is now bounded by `COPY_TIMEOUT` (10 minutes)
+  via `tokio::time::timeout` around its `JoinHandle` — on timeout the job is marked `Failed`
+  with a clear message and its semaphore permit releases immediately, even though the
+  underlying blocking-pool thread itself is abandoned (leaked, not killed — a stuck kernel
+  thread can't be cancelled from userspace, but a leaked blocking-pool thread is a cheap,
+  elastic cost next to the tightly-capped semaphore); (3) `scan_import_source` and
+  `start_import` got their own bounded waits (`IMPORT_SCAN_TIMEOUT` = 10 minutes, matching the
+  copy timeout's reasoning since scanning also does substantial per-file reads;
+  `IMPORT_ENQUEUE_TIMEOUT` = 2 minutes, since enqueueing is metadata-only and should be fast
+  even over a *working* NFS mount) so the dialog surfaces a clear timeout error instead of
+  "Starting…"/"Scanning…" hanging forever. `cargo test` (90/90), `cargo clippy` (no new
+  warnings) both clean after the fix — not yet re-verified live against an actual NFS
+  disconnect/reconnect cycle, since this sandbox has no NFS mount to reproduce it against.
+- 🐛 **Second real bug found and fixed, reported live by the user right after the first**: with
+  the mutex bug above fixed, a real 382-file import (all one month, Year/Month depth) still sat
+  on "Starting…" for a long stretch with zero jobs appearing in Activity - not actually
+  infinite-hung this time, just badly slow, and indistinguishable from a hang because nothing
+  is pushed onto the queue until `enqueue()` returns as a whole. Root cause:
+  `naming::resolve_stem` did a **fresh, full `fs::read_dir` of the destination folder on every
+  single call**, and `enqueue()` calls it once per group - since Year/Month depth buckets by
+  month, all 382 of that month's files shared one destination folder, so this was 382 separate
+  full directory listings of the same folder in a row, each a real network round trip over
+  NFS/Tailscale. Fixed with a new `naming::StemCache` - one real `fs::read_dir` per unique
+  destination directory for the whole `enqueue()` call, cached in a `HashMap<PathBuf,
+  HashSet<String>>`, instead of one per group. `resolve_stem`'s signature gained a `&mut
+  StemCache` first parameter; behavior (which stems get chosen, collision suffixing) is
+  unchanged, only the I/O cost. 1 new unit test confirming a cached listing doesn't see a file
+  written to disk after the cache was populated (proof the second call reused the cache rather
+  than re-reading) — `cargo test` (91/91), `cargo clippy` (no new warnings) both clean.
+- ✅ **Robustness pass against a confirmed slow/flaky real link (real, not hypothetical)**: live
+  diagnosis this session found the user's actual NFS destination sustains only **~432 kB/s**
+  for synchronous writes (measured directly with `dd oflag=direct,sync`, bypassing ImmAture
+  entirely - a `sync`-mounted NFS4 share over a ~100ms-latency Tailscale link with no fast write
+  log on the far end's ZFS pool). Confirmed not an ImmAture bug (same speed via plain `dd`), but
+  it exposed three real robustness gaps in the import queue, all fixed:
+  1. **Flat total-time copy timeout → idle-based timeout.** The original `COPY_TIMEOUT` (10
+     minutes flat) would have wrongly killed a large, genuinely-still-advancing file at this
+     confirmed speed (a 500MB video alone needs ~19 minutes at 432 kB/s). Replaced with
+     `COPY_IDLE_TIMEOUT` (3 minutes of **zero** byte-level progress, not total elapsed time) plus
+     a generous `COPY_ABSOLUTE_CAP` backstop (4 hours) - `await_copy` in `queue.rs` polls a
+     per-job `AtomicU64` progress counter (new `hash::copy_with_hash` parameter, updated every
+     256KB chunk) every 10s via `tokio::select!`, resetting the idle clock on any movement at
+     all. 2 new `#[tokio::test(start_paused = true)]` tests (dev-only `tokio` `test-util` feature
+     added) prove both directions on a virtual clock, no real waiting: a stalled copy times out;
+     a copy advancing once a minute for 50 simulated minutes - well past the old flat timeout -
+     never does.
+  2. **Temp-file cleanup gap on the most common failure mode.** Re-reading `copy_one` found it
+     only cleaned up the `.part-N` temp file on a size-mismatch or rename failure - a raw
+     read/write error (by far the most likely outcome of a link dropping mid-copy, and the exact
+     thing the user hit earlier when they manually found and deleted leftover `.part-N` files)
+     fell straight through with no cleanup at all. Restructured into `copy_one`/`copy_one_inner`
+     so **any** failure path cleans up the temp file. New regression test uses a directory as the
+     copy source (opens fine, fails on the first `read()` with EISDIR) specifically to reproduce
+     "temp file already created, then a raw copy error" - a missing-source-file test wouldn't
+     have caught this, since that fails before any temp file exists.
+  3. **User-configurable concurrency.** `MAX_CONCURRENT_IMPORT_JOBS` was a hardcoded constant;
+     promoted to `ImportSettings.max_concurrent_jobs` (1-4, default 2, `#[serde(default = ...)]`
+     for backward compatibility with this session's already-saved `config.json`), read once at
+     app startup to size `queue::run`'s semaphore (not live-adjustable mid-session - deliberately
+     out of scope, since safely resizing a `Semaphore` with jobs already in flight is real added
+     complexity with no clear payoff here). New "Concurrent copies" control in `ImportDialog.tsx`
+     (next to Folder Layout), explicitly labeled as applying next launch.
+  4. **Live per-job progress in the Activity panel**, as a direct consequence of (1)'s progress
+     counter - `ImportJob` gained a `bytes_copied` field (polled the same way as status), and
+     `ActivityPanel.tsx`'s Imports section now shows real numbers ("12.4 / 45.0 MB") for a
+     `Copying` row instead of a static label that looks identical whether the transfer is
+     genuinely advancing or fully stuck - which was itself part of what made this session's whole
+     debugging thread so confusing in the first place. A `Failed` row also keeps its last-seen
+     progress, showing how far a failed copy actually got.
+  - Sleep/suspend mid-copy was checked, not just assumed fine: `guarded_spawn_blocking` only
+    blocks *new* work from starting during an imminent suspend (§7.19); a copy already in flight
+    when suspend hits keeps running, and if the NFS mount gets force-unmounted by the existing
+    systemd-sleep hook (§7.19 Part A) while a write is in flight, that write fails with a real
+    I/O error - which now correctly flows through `copy_one`'s cleanup path above instead of
+    leaking a temp file, so no separate suspend-specific handling was needed beyond fixing (2).
+  - `cargo test` (95/95 across the whole backend), `cargo clippy` (no new warnings), `tsc -b`,
+    `oxlint` (no new warning categories) all clean. Not yet manually re-verified against the
+    user's actual link under load (this sandbox can't reproduce a real multi-hundred-file import
+    at ~432 kB/s) - the two idle-timeout tests exercise the logic on a virtual clock, which
+    proves the mechanism but isn't a substitute for watching a real slow import run to
+    completion.
+- ✅ **Entry point**: a new **"Import from SD Card/Disk…"** File-menu item (`MenuBar.tsx`) —
+  kept visually and semantically distinct from the existing, still-inert **"Upload…"** stub
+  (which is scoped to uploading files *into* Immich, a different, still-unbuilt feature; not
+  conflated with this one).
+- ✅ **Activity UI merge** — `EditQueueProvider`/`editQueue.tsx` (§7.20) left completely
+  untouched; a new, structurally identical `ImportQueueProvider`/`importQueue.tsx` is an
+  independent second poll/context, additionally tracking a `pendingCount` transition from >0 to
+  0 (a batch just fully drained) to fire the Immich nudge exactly once per batch, decoupled from
+  the dialog's own lifecycle (which has usually already closed by then). A new
+  `ActivityIndicator.tsx` reads both contexts for one combined TitleBar pill (superseding
+  `EditQueueIndicator.tsx`, which stays as a file but is no longer mounted — see §7.20's note);
+  `ActivityPanel.tsx` grew an **Edits** and an **Imports** section in one shared modal rather
+  than two competing pills. The `lib.rs` close-block check (§7.20) now sums both queues'
+  `pending_count()` into one warning, since an in-flight import copy is no less worth warning
+  about on quit than an in-flight metadata edit.
+- ✅ 21 new unit tests across `import/{scan,hash,capture_time,history,naming,queue,
+  library_match}.rs` (RAW+JPEG pairing scoped per source directory, cross-card basename reuse
+  not merging, EXIF-vs-mtime preference order, dedupe hit/miss and the whole-group-vs-partial-
+  match rule, Flat/Year-Month path assembly, in-batch and on-disk collision suffixing, size-
+  mismatch copy verification and cleanup, library-id exact/ambiguous/no-match resolution) —
+  `cargo test` (90/90 across the whole backend), `cargo check`, `cargo clippy` (no new warnings),
+  `tsc -b`, `oxlint` (no new warning categories) all clean.
+- ⬜ Not yet manually verified against a real SD card/library/server — same sandbox limitation
+  as §7.20/§7.21 (no display server, no live Immich server, no NFS mount, no real camera SD
+  card). In particular still outstanding: the Immich Library Scan API against the user's actual
+  server version, `kamadak-exif`'s real coverage on the user's own RAW formats (especially any
+  CR3/RAF), and the full dialog → scan → import → Activity-panel → Immich-nudge flow end to end.
 
 <!-- Paste further decisions, rationale, rejected ideas, or transcripts below; ask Claude to fold them in. -->

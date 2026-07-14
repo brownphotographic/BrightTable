@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Heart, Star } from './MetadataRows';
+import { Heart, RejectIcon, Star } from './MetadataRows';
 
 // Floating action bar shown above the grid whenever the selection is
 // non-empty - ported from the design prototype's selection bar (§1.2/§6 in
@@ -177,6 +177,14 @@ function RatingGroup({ onRate }: { onRate: (rating: number) => void }) {
           </button>
         ))}
       </div>
+      <div style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.15)' }} />
+      <button
+        onClick={() => onRate(-1)}
+        title="Reject"
+        style={{ border: 'none', background: 'none', padding: 0, cursor: 'default' }}
+      >
+        <RejectIcon active={false} size={14} />
+      </button>
     </div>
   );
 }

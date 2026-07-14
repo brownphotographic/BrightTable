@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import PreferencesLibrary from '../pages/PreferencesLibrary';
 import PreferencesShortcuts from '../pages/PreferencesShortcuts';
+import PreferencesApplications from '../pages/PreferencesApplications';
 
 type PrefsTab = 'library' | 'applications' | 'sharing' | 'configuration' | 'shortcuts';
 
@@ -12,8 +13,14 @@ const tabs: { id: PrefsTab; label: string }[] = [
   { id: 'shortcuts', label: 'Shortcuts' },
 ];
 
-export default function PreferencesOverlay({ onClose }: { onClose: () => void }) {
-  const [tab, setTab] = useState<PrefsTab>('library');
+export default function PreferencesOverlay({
+  onClose,
+  initialTab = 'library',
+}: {
+  onClose: () => void;
+  initialTab?: PrefsTab;
+}) {
+  const [tab, setTab] = useState<PrefsTab>(initialTab);
 
   return (
     <div
@@ -118,6 +125,8 @@ export default function PreferencesOverlay({ onClose }: { onClose: () => void })
             <PreferencesLibrary />
           ) : tab === 'shortcuts' ? (
             <PreferencesShortcuts />
+          ) : tab === 'applications' ? (
+            <PreferencesApplications />
           ) : (
             <div style={{ maxWidth: 480, margin: '60px auto 0', textAlign: 'center', color: 'var(--text-dimmer)' }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-dim)', marginBottom: 8 }}>

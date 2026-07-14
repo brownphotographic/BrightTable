@@ -47,3 +47,9 @@ input {
   background: var(--accent);
   color: #fff;
 }
+
+@keyframes immature-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -1,14 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { listen } from '@tauri-apps/api/event';
 import { LibraryStatusProvider } from './lib/libraryStatus';
 import { isTypingTarget, matchesShortcut, ShortcutsProvider, useShortcuts } from './lib/shortcuts';
 import { SmartStackSettingsProvider } from './lib/smartStackSettings';
+import { ApplicationsProvider } from './lib/applications';
 import { RawOverridesProvider } from './lib/rawOverrides';
+import { EditQueueProvider } from './lib/editQueue';
+import { ImportQueueProvider } from './lib/importQueue';
+import { forceQuit } from './lib/api';
 import TitleBar from './components/TitleBar';
 import MenuBar from './components/MenuBar';
 import Sidebar, { type LeftTab } from './components/Sidebar';
 import PreferencesOverlay from './components/PreferencesOverlay';
 import PlaceholderView from './components/PlaceholderView';
+import ActivityPanel from './components/ActivityPanel';
+import ImportDialog from './components/ImportDialog';
+import ConfirmDialog from './components/ConfirmDialog';
 import PhotosBrowser, { type PhotosBrowserHandle } from './pages/PhotosBrowser';
 import FoldersBrowser, { type FoldersBrowserHandle } from './pages/FoldersBrowser';
 import TrashBrowser from './pages/TrashBrowser';
@@ -18,11 +26,17 @@ export default function App() {
   return (
     <ShortcutsProvider>
       <SmartStackSettingsProvider>
-        <RawOverridesProvider>
-          <LibraryStatusProvider>
-            <AppShell />
-          </LibraryStatusProvider>
-        </RawOverridesProvider>
+        <ApplicationsProvider>
+          <RawOverridesProvider>
+            <EditQueueProvider>
+              <ImportQueueProvider>
+                <LibraryStatusProvider>
+                  <AppShell />
+                </LibraryStatusProvider>
+              </ImportQueueProvider>
+            </EditQueueProvider>
+          </RawOverridesProvider>
+        </ApplicationsProvider>
       </SmartStackSettingsProvider>
     </ShortcutsProvider>
   );
@@ -31,6 +45,25 @@ export default function App() {
 function AppShell() {
   const [leftTab, setLeftTab] = useState<LeftTab>('photos');
   const [prefsOpen, setPrefsOpen] = useState(false);
+  // Which tab Preferences opens on next - reset to 'library' once closed so
+  // a later plain "Preferences…" open doesn't strand the user on whichever
+  // tab a redirect (e.g. an editor button with no app chosen yet) last used.
+  const [prefsInitialTab, setPrefsInitialTab] = useState<'library' | 'applications'>('library');
+  const openPreferencesTab = (tab: 'library' | 'applications') => {
+    setPrefsInitialTab(tab);
+    setPrefsOpen(true);
+  };
+  const [importOpen, setImportOpen] = useState(false);
+  // Folders is mounted lazily on its first visit (unlike Photos, the default
+  // tab, which is always mounted from the start) rather than eagerly at
+  // startup - avoids firing its getFolderPaths/listStacks fetches before the
+  // user has ever asked to see that tab. Once true it stays true, so the
+  // component then stays mounted (just hidden) rather than being torn down
+  // again on every subsequent switch away - see the render below.
+  const [foldersVisited, setFoldersVisited] = useState(false);
+  useEffect(() => {
+    if (leftTab === 'folders') setFoldersVisited(true);
+  }, [leftTab]);
   const [photosCount, setPhotosCount] = useState(0);
   // Shared by both PhotosBrowser and FoldersBrowser - bumping it forces
   // whichever is currently mounted to fully remount (clearing its
@@ -42,11 +75,25 @@ function AppShell() {
   const [metaOpen, setMetaOpen] = useState(false);
   const [trashCount, setTrashCount] = useState(0);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [activityOpen, setActivityOpen] = useState(false);
+  // Set from the one deliberate Tauri event in this design (see lib.rs's
+  // `on_window_event` - it fires only when the user actually tries to close
+  // with edits still in flight). Holds the pending count at the moment of
+  // that attempt so the warning dialog can report it; null means no close
+  // attempt is currently being blocked.
+  const [closeBlockedCount, setCloseBlockedCount] = useState<number | null>(null);
   const photosRef = useRef<PhotosBrowserHandle>(null);
   const foldersRef = useRef<FoldersBrowserHandle>(null);
   const { shortcuts, capturing } = useShortcuts();
 
   const refreshTimeline = () => setDataKey((k) => k + 1);
+
+  useEffect(() => {
+    const unlisten = listen<number>('queue-close-blocked', (e) => setCloseBlockedCount(e.payload));
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
 
   // Global-level shortcuts (not owned by any single view): Refresh Timeline
   // and Open Preferences. Skipped while typing, while Preferences is already
@@ -78,10 +125,12 @@ function AppShell() {
         position: 'relative',
       }}
     >
-      <TitleBar activeTab={leftTab} />
+      <TitleBar activeTab={leftTab} onOpenActivity={() => setActivityOpen(true)} />
       <MenuBar
         onOpenPreferences={() => setPrefsOpen(true)}
         onRefreshTimeline={refreshTimeline}
+        onOpenImport={() => setImportOpen(true)}
+        onOpenActivity={() => setActivityOpen(true)}
         onQuit={() => getCurrentWindow().close()}
         metaOpen={metaOpen}
         onToggleMetadata={() => setMetaOpen((v) => !v)}
@@ -99,32 +148,70 @@ function AppShell() {
         <Sidebar active={leftTab} onSelect={setLeftTab} photosCount={photosCount} trashCount={trashCount} />
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: '#1c1c1c', position: 'relative' }}>
-          {leftTab === 'photos' && (
+          {/* Photos and Folders stay mounted (just hidden) once visited, rather
+              than being unmounted on every tab switch - each keeps its own
+              assetCache of everything already fetched from Immich this
+              session, so switching back doesn't re-fetch the whole timeline/
+              folder tree from scratch. `key={dataKey}` still forces a full
+              remount (and so a full refetch) on an explicit Refresh Timeline.
+              `active` gates each one's global keydown shortcuts so a
+              backgrounded tab doesn't react to keys meant for the visible
+              one. */}
+          <div style={{ display: leftTab === 'photos' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
             <PhotosBrowser
               key={dataKey}
               ref={photosRef}
+              active={leftTab === 'photos'}
               onTotalCount={setPhotosCount}
               metaOpen={metaOpen}
               onCloseMetadata={() => setMetaOpen(false)}
               filters={filters}
+              onOpenApplicationsPreferences={() => openPreferencesTab('applications')}
             />
-          )}
+          </div>
           {leftTab === 'albums' && <PlaceholderView label="Albums" />}
           {leftTab === 'people' && <PlaceholderView label="People" />}
-          {leftTab === 'folders' && (
-            <FoldersBrowser
-              key={dataKey}
-              ref={foldersRef}
-              metaOpen={metaOpen}
-              onCloseMetadata={() => setMetaOpen(false)}
-              filters={filters}
-            />
+          {foldersVisited && (
+            <div style={{ display: leftTab === 'folders' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
+              <FoldersBrowser
+                key={dataKey}
+                ref={foldersRef}
+                active={leftTab === 'folders'}
+                metaOpen={metaOpen}
+                onCloseMetadata={() => setMetaOpen(false)}
+                filters={filters}
+                onOpenApplicationsPreferences={() => openPreferencesTab('applications')}
+              />
+            </div>
           )}
           {leftTab === 'trash' && <TrashBrowser onCount={setTrashCount} />}
         </div>
       </div>
 
-      {prefsOpen && <PreferencesOverlay onClose={() => setPrefsOpen(false)} />}
+      {prefsOpen && (
+        <PreferencesOverlay
+          initialTab={prefsInitialTab}
+          onClose={() => {
+            setPrefsOpen(false);
+            setPrefsInitialTab('library');
+          }}
+        />
+      )}
+      {activityOpen && <ActivityPanel onClose={() => setActivityOpen(false)} />}
+      {importOpen && (
+        <ImportDialog onClose={() => setImportOpen(false)} onOpenLibraryPreferences={() => openPreferencesTab('library')} />
+      )}
+      {closeBlockedCount != null && (
+        <ConfirmDialog
+          title="Still syncing"
+          message={`${closeBlockedCount} edit/import job${closeBlockedCount === 1 ? '' : 's'} still in progress. Quitting now may leave a change unsaved or an import incomplete.`}
+          confirmLabel="Quit anyway"
+          cancelLabel="Wait"
+          danger
+          onConfirm={forceQuit}
+          onClose={() => setCloseBlockedCount(null)}
+        />
+      )}
     </div>
   );
 }

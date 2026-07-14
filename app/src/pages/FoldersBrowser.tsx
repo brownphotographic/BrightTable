@@ -14,6 +14,7 @@ import {
   type AssetMetadataPatch,
   type AssetStackInfo,
   type AssetSummary,
+  type EditJob,
   type UnsyncedMetadata,
 } from '../lib/api';
 import { buildFolderTree, collectAssetPaths, findFolderNode, type FolderNode } from '../lib/folderTree';
@@ -25,12 +26,27 @@ import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import SmartStackDialog from '../components/SmartStackDialog';
 import MetadataPanel from '../components/MetadataPanel';
 import ConfirmDialog from '../components/ConfirmDialog';
+import InlineWarningBanner from '../components/InlineWarningBanner';
 import { isTypingTarget, matchesShortcut, useShortcuts, type ShortcutId } from '../lib/shortcuts';
 import { matchesFilters, type Filters } from '../lib/filters';
 import { isHiddenStackChild } from '../lib/stacks';
 import type { SmartStackGroup } from '../lib/smartStack';
 import { useRawOverrides } from '../lib/rawOverrides';
 import { pendingStyle } from '../lib/pending';
+import { useEditQueue } from '../lib/editQueue';
+import { useEditJobReconciliation } from '../lib/useEditJobReconciliation';
+import { useBucketMemo } from '../lib/bucketMemo';
+
+// See PhotosBrowser.tsx's identical helper for the full explanation -
+// snapshots whichever AssetSummary fields a patch is about to touch, so a
+// job that later fails can be rolled back to exactly what it was before.
+function prevValuesFor(asset: AssetSummary | undefined, patch: AssetMetadataPatch): Partial<AssetSummary> {
+  const prev: Partial<AssetSummary> = {};
+  if (patch.rating !== undefined) prev.rating = asset?.rating ?? null;
+  if (patch.isFavorite !== undefined) prev.isFavorite = asset?.isFavorite ?? false;
+  if (patch.description !== undefined) prev.description = asset?.description ?? null;
+  return prev;
+}
 
 const THUMB_SIZE = 168;
 const ROW_HEIGHT_GUESS = Math.round((THUMB_SIZE * 2) / 3) + 12;
@@ -54,9 +70,19 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   metaOpen: boolean;
   onCloseMetadata: () => void;
   filters: Filters;
-}>(function FoldersBrowser({ metaOpen, onCloseMetadata, filters }, ref) {
+  onOpenApplicationsPreferences?: () => void;
+  // See PhotosBrowser.tsx's identical prop - whether the Folders tab is the
+  // one currently showing. Stays mounted while another tab is active so its
+  // assetCache/folder tree survive switching away and back, but its global
+  // keydown shortcuts need suppressing while hidden.
+  active?: boolean;
+}>(function FoldersBrowser({ metaOpen, onCloseMetadata, filters, onOpenApplicationsPreferences, active = true }, ref) {
   const [folderPaths, setFolderPaths] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // See PhotosBrowser.tsx's identical state - set only when
+  // update_asset_metadata itself rejects synchronously (read-only mode,
+  // over the batch cap), before anything was enqueued.
+  const [enqueueError, setEnqueueError] = useState<string | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
   const [selectedNode, setSelectedNode] = useState<string>('all');
   // Keyed by time_bucket, same cache shape as PhotosBrowser - shared nowhere
@@ -79,9 +105,10 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // asset records. Kept independent of assetCache/patchAssetLocal - see the
   // filteredAssetCache overlay below.
   const [stackByAssetId, setStackByAssetId] = useState<Map<string, AssetStackInfo>>(new Map());
-  // See PhotosBrowser.tsx's identical state for the full explanation - only
-  // ever holds true gaps (Immich has no rating/description, a local
-  // sidecar/embedded file does).
+  // See PhotosBrowser.tsx's identical state for the full explanation - holds
+  // whichever field(s) differ from what Immich currently has: a plain gap
+  // (Immich has nothing) or a stale value (Immich has something, but the
+  // sidecar changed since).
   const [unsyncedMetadata, setUnsyncedMetadata] = useState<Map<string, UnsyncedMetadata>>(new Map());
   const { shortcuts, capturing } = useShortcuts();
   const { overrideIds, setOverride } = useRawOverrides();
@@ -133,20 +160,19 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // caught up yet - `filters` gets a new object on every change, so this is
   // true for exactly the frames where the grid below is showing stale data.
   const isFiltering = filters !== deferredFilters;
-  const filteredAssetCache = useMemo(() => {
-    const out: Record<string, AssetSummary[]> = {};
-    for (const [key, assets] of Object.entries(assetCache)) {
-      out[key] = assets
+  const filteredAssetCache = useBucketMemo(
+    assetCache,
+    [deferredFilters, stackByAssetId, overrideIds, unsyncedMetadata],
+    (assets) =>
+      assets
         .map((a) => ({
           ...a,
           stack: stackByAssetId.get(a.id) ?? null,
           isRawOverride: overrideIds.has(a.id),
           unsyncedMetadata: unsyncedMetadata.get(a.id),
         }))
-        .filter((a) => !isHiddenStackChild(a) && matchesFilters(a, deferredFilters));
-    }
-    return out;
-  }, [assetCache, deferredFilters, stackByAssetId, overrideIds, unsyncedMetadata]);
+        .filter((a) => !isHiddenStackChild(a) && matchesFilters(a, deferredFilters)),
+  );
 
   // Flat visual order of every currently-loaded, currently-visible asset
   // under the selected node - drives shift-click range selection and the
@@ -173,20 +199,24 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // matchesFilters trims - needed to resolve a specific known id (opening a
   // non-pick stack member from StackBand, or selecting one to rate it) that
   // isHiddenStackChild deliberately keeps out of the flat grid/assetById.
+  const overlaidAssetCache = useBucketMemo(
+    assetCache,
+    [stackByAssetId, overrideIds, unsyncedMetadata],
+    (assets) =>
+      assets.map((a) => ({
+        ...a,
+        stack: stackByAssetId.get(a.id) ?? null,
+        isRawOverride: overrideIds.has(a.id),
+        unsyncedMetadata: unsyncedMetadata.get(a.id),
+      })),
+  );
   const assetByIdAll = useMemo(() => {
     const map = new Map<string, AssetSummary>();
-    for (const assets of Object.values(assetCache)) {
-      for (const a of assets) {
-        map.set(a.id, {
-          ...a,
-          stack: stackByAssetId.get(a.id) ?? null,
-          isRawOverride: overrideIds.has(a.id),
-          unsyncedMetadata: unsyncedMetadata.get(a.id),
-        });
-      }
+    for (const assets of Object.values(overlaidAssetCache)) {
+      for (const a of assets) map.set(a.id, a);
     }
     return map;
-  }, [assetCache, stackByAssetId, overrideIds, unsyncedMetadata]);
+  }, [overlaidAssetCache]);
 
   const patchAssetLocal = useCallback((id: string, patch: Partial<AssetSummary>) => {
     setAssetCache((cache) => {
@@ -202,20 +232,61 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     });
   }, []);
 
-  const commitEdit = useCallback(
-    async (id: string, patch: AssetMetadataPatch) => {
-      await updateAssetMetadata([id], patch);
-      patchAssetLocal(id, patch);
+  // See PhotosBrowser.tsx's identical setup for the full explanation.
+  const rollbackById = useRef<Map<number, { id: string; prevValues: Partial<AssetSummary> }>>(new Map());
+  const { jobs: editJobs } = useEditQueue();
+
+  const reconcileJob = useCallback(
+    (job: EditJob) => {
+      const entry = rollbackById.current.get(job.jobId);
+      if (!entry) return;
+      rollbackById.current.delete(job.jobId);
+      if (job.status === 'failed') {
+        patchAssetLocal(entry.id, entry.prevValues);
+        setEnqueueError(job.error ?? "Couldn't save an edit — it's been reverted.");
+      }
     },
     [patchAssetLocal],
+  );
+  const { trackJobs } = useEditJobReconciliation(editJobs, reconcileJob);
+
+  // Optimistic - see PhotosBrowser.tsx's identical commitEdit for the full
+  // explanation.
+  const commitEdit = useCallback(
+    async (id: string, patch: AssetMetadataPatch) => {
+      const originalPath = assetByIdAll.get(id)?.originalPath ?? null;
+      const prevValues = prevValuesFor(assetByIdAll.get(id), patch);
+      patchAssetLocal(id, patch);
+      try {
+        const jobIds = await updateAssetMetadata([{ id, originalPath }], patch);
+        for (const jobId of jobIds) rollbackById.current.set(jobId, { id, prevValues });
+        trackJobs(jobIds);
+      } catch (e) {
+        patchAssetLocal(id, prevValues);
+        setEnqueueError(String(e));
+      }
+    },
+    [patchAssetLocal, assetByIdAll, trackJobs],
   );
 
   const commitEditMany = useCallback(
     async (ids: string[], patch: AssetMetadataPatch) => {
-      await updateAssetMetadata(ids, patch);
+      const targets = ids.map((id) => ({ id, originalPath: assetByIdAll.get(id)?.originalPath ?? null }));
+      const prevByAsset = new Map(ids.map((id) => [id, prevValuesFor(assetByIdAll.get(id), patch)]));
       for (const id of ids) patchAssetLocal(id, patch);
+      try {
+        const jobIds = await updateAssetMetadata(targets, patch);
+        jobIds.forEach((jobId, i) => {
+          const id = ids[i];
+          rollbackById.current.set(jobId, { id, prevValues: prevByAsset.get(id)! });
+        });
+        trackJobs(jobIds);
+      } catch (e) {
+        for (const id of ids) patchAssetLocal(id, prevByAsset.get(id)!);
+        setEnqueueError(String(e));
+      }
     },
-    [patchAssetLocal],
+    [patchAssetLocal, assetByIdAll, trackJobs],
   );
 
   const removeAssetsLocal = useCallback((ids: string[]) => {
@@ -483,7 +554,10 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   }, [selectedNode]);
 
   useEffect(() => {
-    if (openId) return;
+    // See PhotosBrowser.tsx's identical guard - also skipped while inactive
+    // (mounted but hidden behind the Photos tab) so these don't fire on top
+    // of whatever tab actually has focus.
+    if (openId || !active) return;
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(e) || capturing) return;
       if (matchesShortcut(e, shortcuts.open) && lastClickedId.current) {
@@ -511,6 +585,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           ['rate3', 3],
           ['rate4', 4],
           ['rate5', 5],
+          ['reject', -1],
         ];
         for (const [id, rating] of ratingByShortcut) {
           if (matchesShortcut(e, shortcuts[id])) {
@@ -523,7 +598,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openId, selectAll, deselectAll, selected, shortcuts, capturing, commitEditMany, createStackForSelection, toggleFavoriteForSelection]);
+  }, [openId, active, selectAll, deselectAll, selected, shortcuts, capturing, commitEditMany, createStackForSelection, toggleFavoriteForSelection]);
 
   const selectExclusive = useCallback((id: string) => {
     setSelected(new Set([id]));
@@ -632,6 +707,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      {enqueueError && <InlineWarningBanner message={enqueueError} onDismiss={() => setEnqueueError(null)} />}
       {selected.size > 0 && (
         <SelectionBar
           count={selected.size}
@@ -778,6 +854,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
                 }
               : undefined
           }
+          onOpenApplicationsPreferences={onOpenApplicationsPreferences}
         />
       )}
       {contextMenu && (

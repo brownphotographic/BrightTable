@@ -1,6 +1,7 @@
 use tauri::{http, Manager, UriSchemeResponder};
 
 use crate::immich::ImmichClient;
+use crate::io_guard;
 use crate::state::AppState;
 use crate::thumb_cache;
 
@@ -18,6 +19,7 @@ pub fn handle(
     let app_state = app.state::<AppState>();
     let cfg = app_state.library_config();
     let http = app_state.http.clone();
+    let io_guard = app_state.io_guard.clone();
 
     let uri = request.uri().clone();
     let asset_id = uri
@@ -46,9 +48,14 @@ pub fn handle(
         // the "choppy" lag this was causing. spawn_blocking runs them on
         // Tokio's separate, much larger blocking-thread pool instead.
         let (app2, id2, size2) = (app.clone(), asset_id.clone(), size.clone());
-        let cached = tokio::task::spawn_blocking(move || thumb_cache::read(&app2, &id2, &size2))
-            .await
-            .unwrap_or(None);
+        let cached = match io_guard::guarded_spawn_blocking(&io_guard, move || {
+            thumb_cache::read(&app2, &id2, &size2)
+        }) {
+            Some(handle) => handle.await.unwrap_or(None),
+            // Suspend imminent - treat as a cache miss, same as any other
+            // miss; falls through to the network fetch below.
+            None => None,
+        };
         if let Some((bytes, content_type)) = cached {
             let response = http::Response::builder()
                 .status(200)
@@ -75,7 +82,9 @@ pub fn handle(
                     content_type.clone(),
                     bytes.clone(),
                 );
-                tokio::task::spawn_blocking(move || thumb_cache::write(&app3, &id3, &size3, &ct3, &bytes3));
+                io_guard::guarded_spawn_blocking(&io_guard, move || {
+                    thumb_cache::write(&app3, &id3, &size3, &ct3, &bytes3)
+                });
                 http::Response::builder()
                     .status(200)
                     .header("Content-Type", content_type)

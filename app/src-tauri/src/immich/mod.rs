@@ -2,8 +2,9 @@ pub mod models;
 
 use crate::config::LibraryConfig;
 use models::{
-    ConnectionStatus, RawSearchAsset, RawSearchMetadataResponse, RawStackResponse, RawTimeBucket,
-    RawTimeBucketAssets, ServerVersion, StackInfo, UserInfo, MIN_TESTED_SERVER_VERSION,
+    ConnectionStatus, LibraryInfo, RawLibraryResponse, RawSearchAsset, RawSearchMetadataResponse,
+    RawStackResponse, RawTimeBucket, RawTimeBucketAssets, ServerVersion, StackInfo, UserInfo,
+    MIN_TESTED_SERVER_VERSION,
 };
 
 pub struct ImmichClient {
@@ -293,6 +294,31 @@ impl ImmichClient {
         Ok(())
     }
 
+    /// POST /assets/jobs {name: "refresh-metadata"} - best-effort nudge after
+    /// ImmAture has written a rating/description straight into an asset's
+    /// `.xmp` sidecar (see `xmp::patch_or_create`), so Immich re-reads the
+    /// file and its own `exifInfo`/UI catch up promptly instead of waiting on
+    /// Immich's own periodic sidecar-scan queue. Callers treat failure here
+    /// as non-fatal - it only affects how soon Immich's own view reflects an
+    /// edit that has already durably landed on disk either way.
+    pub async fn refresh_metadata(&self, id: &str) -> Result<(), String> {
+        let body = serde_json::json!({ "assetIds": [id], "name": "refresh-metadata" });
+        let resp = self
+            .http
+            .post(self.url("/assets/jobs"))
+            .header("x-api-key", &self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Refresh-metadata request failed: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("Refresh-metadata returned {status}: {text}"));
+        }
+        Ok(())
+    }
+
     /// PUT /assets/{id} - only the fields actually passed as `Some` are sent,
     /// so this never clobbers fields the caller didn't mean to touch.
     pub async fn update_asset(
@@ -377,6 +403,38 @@ impl ImmichClient {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
             return Err(format!("Update stack returned {status}: {text}"));
+        }
+        Ok(())
+    }
+
+    /// GET /libraries - used only by the import feature's library-id
+    /// auto-match (`import::library_match::find_matching_library`), to
+    /// identify which Immich External Library corresponds to the
+    /// configured `immich_root` without asking the user to paste a library
+    /// id manually.
+    pub async fn get_libraries(&self) -> Result<Vec<LibraryInfo>, String> {
+        let raw: Vec<RawLibraryResponse> = self.get_json("/libraries", &[]).await?;
+        Ok(raw.into_iter().map(Into::into).collect())
+    }
+
+    /// POST /libraries/{id}/scan - queues Immich's own External Library
+    /// scan job to discover files that exist on disk under that library's
+    /// `importPaths` but that Immich has never seen before. Distinct from
+    /// `refresh_metadata` above: that one only re-reads a file for an
+    /// asset Immich *already knows about* - it does nothing for a
+    /// genuinely new file, which is exactly what an import just created.
+    pub async fn scan_library(&self, library_id: &str) -> Result<(), String> {
+        let resp = self
+            .http
+            .post(self.url(&format!("/libraries/{library_id}/scan")))
+            .header("x-api-key", &self.api_key)
+            .send()
+            .await
+            .map_err(|e| format!("Library scan request failed: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("Library scan returned {status}: {text}"));
         }
         Ok(())
     }

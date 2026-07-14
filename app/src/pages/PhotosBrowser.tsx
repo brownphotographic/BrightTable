@@ -14,6 +14,7 @@ import {
   type AssetMetadataPatch,
   type AssetStackInfo,
   type AssetSummary,
+  type EditJob,
   type TimeBucketInfo,
   type UnsyncedMetadata,
 } from '../lib/api';
@@ -25,12 +26,28 @@ import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import SmartStackDialog from '../components/SmartStackDialog';
 import MetadataPanel from '../components/MetadataPanel';
 import ConfirmDialog from '../components/ConfirmDialog';
+import InlineWarningBanner from '../components/InlineWarningBanner';
 import { isTypingTarget, matchesShortcut, useShortcuts, type ShortcutId } from '../lib/shortcuts';
 import { matchesFilters, type Filters } from '../lib/filters';
 import { isHiddenStackChild } from '../lib/stacks';
 import type { SmartStackGroup } from '../lib/smartStack';
 import { useRawOverrides } from '../lib/rawOverrides';
 import { pendingStyle } from '../lib/pending';
+import { useEditQueue } from '../lib/editQueue';
+import { useEditJobReconciliation } from '../lib/useEditJobReconciliation';
+import { useBucketMemo } from '../lib/bucketMemo';
+
+// Snapshots whichever AssetSummary fields a patch is about to touch, so a
+// job that later fails (the sidecar write, the authoritative mechanism -
+// see edit_queue.rs) can be rolled back to exactly what it was before the
+// optimistic apply.
+function prevValuesFor(asset: AssetSummary | undefined, patch: AssetMetadataPatch): Partial<AssetSummary> {
+  const prev: Partial<AssetSummary> = {};
+  if (patch.rating !== undefined) prev.rating = asset?.rating ?? null;
+  if (patch.isFavorite !== undefined) prev.isFavorite = asset?.isFavorite ?? false;
+  if (patch.description !== undefined) prev.description = asset?.description ?? null;
+  return prev;
+}
 
 // `new Date("2026-06-01")` parses bare (time-less) date strings as UTC midnight,
 // then toLocaleDateString() renders that back in the local timezone - shifting
@@ -60,9 +77,23 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   metaOpen: boolean;
   onCloseMetadata: () => void;
   filters: Filters;
-}>(function PhotosBrowser({ onTotalCount, metaOpen, onCloseMetadata, filters }, ref) {
+  onOpenApplicationsPreferences?: () => void;
+  // Whether the Photos tab is the one currently showing - stays mounted
+  // (rather than unmounted) while another tab is active so its assetCache
+  // survives switching away and back instead of refetching the whole
+  // timeline every time, but its global keydown shortcuts still need to be
+  // suppressed while hidden or they'd fire on top of whatever tab actually
+  // has focus. Defaults true so FoldersBrowser (no such prop) keeps working
+  // unaffected - only PhotosBrowser and FoldersBrowser pass this explicitly.
+  active?: boolean;
+}>(function PhotosBrowser({ onTotalCount, metaOpen, onCloseMetadata, filters, onOpenApplicationsPreferences, active = true }, ref) {
   const [buckets, setBuckets] = useState<TimeBucketInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Set only when update_asset_metadata itself rejects synchronously (read-
+  // only mode, over the batch cap) - i.e. before anything was enqueued. An
+  // async job failure discovered later (the sidecar write failed) surfaces
+  // via the shared ActivityPanel/EditQueueIndicator instead, not this banner.
+  const [enqueueError, setEnqueueError] = useState<string | null>(null);
   // Fetched asset data is cached permanently per bucket (cheap - just ids/dates,
   // not images) so scrolling back to an already-visited month is instant. Only
   // the DOM (thumbnail <img> elements) is virtualized/torn down when scrolled
@@ -87,11 +118,12 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // filteredAssetCache overlay below.
   const [stackByAssetId, setStackByAssetId] = useState<Map<string, AssetStackInfo>>(new Map());
   // Asset id -> rating/description found in that asset's local sidecar or
-  // embedded file, only for whichever field(s) Immich's own value is unset -
-  // Immich already wins outright per-field whenever it has a value, so this
-  // only ever holds true gaps (see check_sidecar_metadata in commands.rs).
-  // Populated passively as buckets load; the actual write into Immich only
-  // happens when the user explicitly triggers a sync (never automatic).
+  // embedded file, for whichever field(s) differ from what Immich currently
+  // has - a plain gap (Immich has nothing) or a stale value (Immich has
+  // something, but the sidecar changed since); see check_sidecar_metadata in
+  // commands.rs. Populated passively as buckets load; the actual write into
+  // Immich only happens when the user explicitly triggers a sync (never
+  // automatic).
   const [unsyncedMetadata, setUnsyncedMetadata] = useState<Map<string, UnsyncedMetadata>>(new Map());
   const { shortcuts, capturing } = useShortcuts();
   const { overrideIds, setOverride } = useRawOverrides();
@@ -124,20 +156,19 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // caught up yet - `filters` gets a new object on every change, so this is
   // true for exactly the frames where the grid below is showing stale data.
   const isFiltering = filters !== deferredFilters;
-  const filteredAssetCache = useMemo(() => {
-    const out: Record<string, AssetSummary[]> = {};
-    for (const [key, assets] of Object.entries(assetCache)) {
-      out[key] = assets
+  const filteredAssetCache = useBucketMemo(
+    assetCache,
+    [deferredFilters, stackByAssetId, overrideIds, unsyncedMetadata],
+    (assets) =>
+      assets
         .map((a) => ({
           ...a,
           stack: stackByAssetId.get(a.id) ?? null,
           isRawOverride: overrideIds.has(a.id),
           unsyncedMetadata: unsyncedMetadata.get(a.id),
         }))
-        .filter((a) => !isHiddenStackChild(a) && matchesFilters(a, deferredFilters));
-    }
-    return out;
-  }, [assetCache, deferredFilters, stackByAssetId, overrideIds, unsyncedMetadata]);
+        .filter((a) => !isHiddenStackChild(a) && matchesFilters(a, deferredFilters)),
+  );
 
   // Flat visual order (bucket order, then day order, then asset order) of every
   // currently-loaded, currently-visible asset - this is what shift-click range
@@ -168,20 +199,24 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // matchesFilters trims - needed to resolve a specific known id (opening a
   // non-pick stack member from StackBand, or selecting one to rate it) that
   // isHiddenStackChild deliberately keeps out of the flat grid/assetById.
+  const overlaidAssetCache = useBucketMemo(
+    assetCache,
+    [stackByAssetId, overrideIds, unsyncedMetadata],
+    (assets) =>
+      assets.map((a) => ({
+        ...a,
+        stack: stackByAssetId.get(a.id) ?? null,
+        isRawOverride: overrideIds.has(a.id),
+        unsyncedMetadata: unsyncedMetadata.get(a.id),
+      })),
+  );
   const assetByIdAll = useMemo(() => {
     const map = new Map<string, AssetSummary>();
-    for (const assets of Object.values(assetCache)) {
-      for (const a of assets) {
-        map.set(a.id, {
-          ...a,
-          stack: stackByAssetId.get(a.id) ?? null,
-          isRawOverride: overrideIds.has(a.id),
-          unsyncedMetadata: unsyncedMetadata.get(a.id),
-        });
-      }
+    for (const assets of Object.values(overlaidAssetCache)) {
+      for (const a of assets) map.set(a.id, a);
     }
     return map;
-  }, [assetCache, stackByAssetId, overrideIds, unsyncedMetadata]);
+  }, [overlaidAssetCache]);
 
   // Patches the one asset's copy that lives in whichever bucket's cached
   // array it's in - assetById/openAsset/selectedAssets all derive from
@@ -201,14 +236,52 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     });
   }, []);
 
-  // Applied only after the server confirms the write - no optimistic update/
-  // rollback dance, since a failed edit should just leave the UI as it was.
-  const commitEdit = useCallback(
-    async (id: string, patch: AssetMetadataPatch) => {
-      await updateAssetMetadata([id], patch);
-      patchAssetLocal(id, patch);
+  // jobId -> the one asset id + pre-edit values it needs rolled back to, if
+  // that job comes back Failed. Populated right after a successful enqueue;
+  // drained by reconcileJob below as each tracked job settles.
+  const rollbackById = useRef<Map<number, { id: string; prevValues: Partial<AssetSummary> }>>(new Map());
+  const { jobs: editJobs } = useEditQueue();
+
+  // Fires once per tracked job the moment it settles (done/failed), however
+  // many polls that takes - see useEditJobReconciliation. A `failed` job
+  // rolls its optimistic patch back and surfaces the reason; a `done` job
+  // (its immichWarning, if any, is visible only in the ActivityPanel) just
+  // drops its own rollback bookkeeping.
+  const reconcileJob = useCallback(
+    (job: EditJob) => {
+      const entry = rollbackById.current.get(job.jobId);
+      if (!entry) return;
+      rollbackById.current.delete(job.jobId);
+      if (job.status === 'failed') {
+        patchAssetLocal(entry.id, entry.prevValues);
+        setEnqueueError(job.error ?? "Couldn't save an edit — it's been reverted.");
+      }
     },
     [patchAssetLocal],
+  );
+  const { trackJobs } = useEditJobReconciliation(editJobs, reconcileJob);
+
+  // Optimistic: applies the patch to local state immediately, then enqueues
+  // the actual XMP/Immich writes onto the backend's background EditQueue
+  // (see edit_queue.rs) without waiting for them. Only a *synchronous*
+  // rejection from the enqueue call itself (read-only mode, over the batch
+  // cap) rolls back and surfaces here - an async job failure discovered
+  // later is handled by reconcileJob instead.
+  const commitEdit = useCallback(
+    async (id: string, patch: AssetMetadataPatch) => {
+      const originalPath = assetByIdAll.get(id)?.originalPath ?? null;
+      const prevValues = prevValuesFor(assetByIdAll.get(id), patch);
+      patchAssetLocal(id, patch);
+      try {
+        const jobIds = await updateAssetMetadata([{ id, originalPath }], patch);
+        for (const jobId of jobIds) rollbackById.current.set(jobId, { id, prevValues });
+        trackJobs(jobIds);
+      } catch (e) {
+        patchAssetLocal(id, prevValues);
+        setEnqueueError(String(e));
+      }
+    },
+    [patchAssetLocal, assetByIdAll, trackJobs],
   );
 
   // Bulk sibling of commitEdit - used by the grid's rating/favorite keyboard
@@ -216,10 +289,22 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // editing) apply to the whole current selection at once.
   const commitEditMany = useCallback(
     async (ids: string[], patch: AssetMetadataPatch) => {
-      await updateAssetMetadata(ids, patch);
+      const targets = ids.map((id) => ({ id, originalPath: assetByIdAll.get(id)?.originalPath ?? null }));
+      const prevByAsset = new Map(ids.map((id) => [id, prevValuesFor(assetByIdAll.get(id), patch)]));
       for (const id of ids) patchAssetLocal(id, patch);
+      try {
+        const jobIds = await updateAssetMetadata(targets, patch);
+        jobIds.forEach((jobId, i) => {
+          const id = ids[i];
+          rollbackById.current.set(jobId, { id, prevValues: prevByAsset.get(id)! });
+        });
+        trackJobs(jobIds);
+      } catch (e) {
+        for (const id of ids) patchAssetLocal(id, prevByAsset.get(id)!);
+        setEnqueueError(String(e));
+      }
     },
-    [patchAssetLocal],
+    [patchAssetLocal, assetByIdAll, trackJobs],
   );
 
   // Strips deleted ids out of whichever bucket's cached array they're in,
@@ -522,7 +607,12 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // viewer's already open so they don't fight with Viewer's own keydown
   // handling, and while typing in a text field.
   useEffect(() => {
-    if (openId) return;
+    // Also skipped while inactive (kept mounted but hidden behind another
+    // tab) - otherwise these would fire on top of whichever tab actually has
+    // focus, e.g. Ctrl+A on Folders silently also selecting everything in a
+    // backgrounded Photos tab, or "open" popping Photos' viewer up over the
+    // Folders grid.
+    if (openId || !active) return;
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(e) || capturing) return;
       if (matchesShortcut(e, shortcuts.open) && lastClickedId.current) {
@@ -550,6 +640,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           ['rate3', 3],
           ['rate4', 4],
           ['rate5', 5],
+          ['reject', -1],
         ];
         for (const [id, rating] of ratingByShortcut) {
           if (matchesShortcut(e, shortcuts[id])) {
@@ -562,7 +653,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openId, selectAll, deselectAll, selected, shortcuts, capturing, commitEditMany, createStackForSelection, toggleFavoriteForSelection]);
+  }, [openId, active, selectAll, deselectAll, selected, shortcuts, capturing, commitEditMany, createStackForSelection, toggleFavoriteForSelection]);
 
   // Plain click: select only this one, clearing everything else (standard
   // file-manager semantics). Also used as the checkbox's own click target,
@@ -688,6 +779,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      {enqueueError && <InlineWarningBanner message={enqueueError} onDismiss={() => setEnqueueError(null)} />}
       {selected.size > 0 && (
         <SelectionBar
           count={selected.size}
@@ -777,6 +869,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
                 }
               : undefined
           }
+          onOpenApplicationsPreferences={onOpenApplicationsPreferences}
         />
       )}
       {confirmDeleteSelection && (

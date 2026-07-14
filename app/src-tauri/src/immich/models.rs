@@ -303,3 +303,27 @@ impl From<RawStackResponse> for StackInfo {
         }
     }
 }
+
+/// GET /libraries - only the fields the import feature's library-id
+/// auto-match needs (`immich/mod.rs::find_matching_library`); Immich's
+/// `LibraryResponseDto` has several more (name, ownerId, assetCount,
+/// exclusionPatterns) not used here.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RawLibraryResponse {
+    pub id: String,
+    pub import_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryInfo {
+    pub id: String,
+    pub import_paths: Vec<String>,
+}
+
+impl From<RawLibraryResponse> for LibraryInfo {
+    fn from(r: RawLibraryResponse) -> Self {
+        Self { id: r.id, import_paths: r.import_paths }
+    }
+}
