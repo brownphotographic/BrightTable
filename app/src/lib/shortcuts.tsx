@@ -21,7 +21,9 @@ export type ShortcutId =
   | 'reject'
   | 'stack'
   | 'refreshTimeline'
-  | 'openPreferences';
+  | 'openPreferences'
+  | 'openInRawEditor'
+  | 'openInExternalEditor';
 
 export const SHORTCUT_DEFS: { id: ShortcutId; label: string }[] = [
   { id: 'open', label: 'Open photo' },
@@ -44,6 +46,8 @@ export const SHORTCUT_DEFS: { id: ShortcutId; label: string }[] = [
   { id: 'stack', label: 'Stack selected' },
   { id: 'refreshTimeline', label: 'Refresh timeline' },
   { id: 'openPreferences', label: 'Open preferences' },
+  { id: 'openInRawEditor', label: 'Open in RAW Editor' },
+  { id: 'openInExternalEditor', label: 'Open in Ext. Editor' },
 ];
 
 // `toggleFilmstrip` moved off "F" to "M" to make room for "favorite" - both
@@ -68,8 +72,10 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutId, string> = {
   rate5: '5',
   reject: '9',
   stack: 'S',
-  refreshTimeline: 'F5',
+  refreshTimeline: 'Ctrl+R',
   openPreferences: 'Ctrl+,',
+  openInRawEditor: 'Ctrl+Enter',
+  openInExternalEditor: 'Ctrl+E',
 };
 
 // Canonical stored form: modifier prefixes (Ctrl/Alt/Shift, in that order)

@@ -207,10 +207,12 @@ export default function Viewer({
       else if (matchesShortcut(e, shortcuts.rate5)) handleEdit(shown.id, { rating: 5 }).catch(() => {});
       else if (matchesShortcut(e, shortcuts.reject)) handleEdit(shown.id, { rating: shown.rating === -1 ? 0 : -1 }).catch(() => {});
       else if (matchesShortcut(e, shortcuts.delete)) setConfirmDelete(true);
+      else if (matchesShortcut(e, shortcuts.openInRawEditor) && isRawAsset(shown)) handleLaunch('rawEditor').catch(() => {});
+      else if (matchesShortcut(e, shortcuts.openInExternalEditor)) handleLaunch('externalEditor').catch(() => {});
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, onPrev, onNext, hasPrev, hasNext, confirmDelete, shortcuts, capturing, shown, onEdit, handleEdit]);
+  }, [onClose, onPrev, onNext, hasPrev, hasNext, confirmDelete, shortcuts, capturing, shown, onEdit, handleEdit, handleLaunch]);
 
   const previewSrc = thumbnailSrc(shown.id, 'preview');
 

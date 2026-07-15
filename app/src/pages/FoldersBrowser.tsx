@@ -8,6 +8,7 @@ import {
   getFolderAssets,
   getFolderPaths,
   getStack,
+  launchEditor,
   listStacks,
   setStackPick,
   updateAssetMetadata,
@@ -28,10 +29,11 @@ import MetadataPanel from '../components/MetadataPanel';
 import ConfirmDialog from '../components/ConfirmDialog';
 import InlineWarningBanner from '../components/InlineWarningBanner';
 import { isTypingTarget, matchesShortcut, useShortcuts, type ShortcutId } from '../lib/shortcuts';
-import { matchesFilters, type Filters } from '../lib/filters';
+import { isRawAsset, matchesFilters, type Filters } from '../lib/filters';
 import { isHiddenStackChild } from '../lib/stacks';
 import type { SmartStackGroup } from '../lib/smartStack';
 import { useRawOverrides } from '../lib/rawOverrides';
+import { useApplications } from '../lib/applications';
 import { pendingStyle } from '../lib/pending';
 import { useEditQueue } from '../lib/editQueue';
 import { useEditJobReconciliation } from '../lib/useEditJobReconciliation';
@@ -449,6 +451,22 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   }, [selected, allSelectedFavorited, commitEditMany]);
 
   // See PhotosBrowser.tsx's identical callback for the full explanation -
+  // launch-only, single-asset, redirects to Preferences when unconfigured.
+  const { applications } = useApplications();
+  const launchEditorForSelection = useCallback(
+    async (role: 'rawEditor' | 'externalEditor') => {
+      if (selectedAssets.length !== 1) return;
+      const choice = applications[role];
+      if (!choice) {
+        onOpenApplicationsPreferences?.();
+        return;
+      }
+      await launchEditor(selectedAssets[0].originalPath, choice);
+    },
+    [selectedAssets, applications, onOpenApplicationsPreferences],
+  );
+
+  // See PhotosBrowser.tsx's identical callback for the full explanation -
   // one commitEdit per asset (descriptions are per-asset-unique, so unlike a
   // plain rating there's no meaningful grouping), reusing the existing
   // bulk-edit path's read-only/max-writes-per-batch gate unchanged.
@@ -720,6 +738,9 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           unsyncedCount={[...selected].filter((id) => unsyncedMetadata.has(id)).length}
           onSyncMetadata={() => syncMetadata([...selected].filter((id) => unsyncedMetadata.has(id))).catch(() => {})}
           onDelete={() => setConfirmDeleteSelection(true)}
+          canOpenInRawEditor={selectedAssets.length === 1 && isRawAsset(selectedAssets[0])}
+          onOpenInRawEditor={() => launchEditorForSelection('rawEditor').catch(() => {})}
+          onOpenInExternalEditor={() => launchEditorForSelection('externalEditor').catch(() => {})}
         />
       )}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>

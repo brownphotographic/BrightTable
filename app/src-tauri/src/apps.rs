@@ -122,12 +122,19 @@ fn parse_desktop_entry(path: &Path) -> Option<AppChoice> {
     Some(AppChoice { name, kind: classify_exec(&exec), exec })
 }
 
-/// Flatpak's own desktop-file exporter always starts `Exec=` with
-/// `flatpak run`; Snap's launcher wrapper always routes through
-/// `/snap/bin/<name>` (directly, or via an `env ...` prefix) - anything else
-/// is a plain native binary.
+/// Flatpak's own desktop-file exporter always starts `Exec=` with a `run`
+/// invocation of a `flatpak` binary - as a bare command (`flatpak run ...`)
+/// on most distros, but as an absolute path (`/usr/bin/flatpak run ...`) on
+/// others (e.g. Fedora), so this checks the first token's basename rather
+/// than a literal string prefix. Snap's launcher wrapper always routes
+/// through `/snap/bin/<name>` (directly, or via an `env ...` prefix) -
+/// anything else is a plain native binary.
 fn classify_exec(exec: &str) -> AppKind {
-    if exec.trim_start().starts_with("flatpak run") {
+    let mut tokens = exec.split_whitespace();
+    let program = tokens.next().unwrap_or("");
+    let is_flatpak_run = tokens.next() == Some("run")
+        && Path::new(program).file_name().and_then(|n| n.to_str()) == Some("flatpak");
+    if is_flatpak_run {
         AppKind::Flatpak
     } else if exec.contains("/snap/") {
         AppKind::Snap
@@ -233,6 +240,13 @@ mod tests {
     fn classifies_flatpak_and_snap_from_exec_shape() {
         assert_eq!(
             classify_exec("flatpak run --branch=stable --arch=x86_64 --command=darktable org.darktable.Darktable @@u %u @@"),
+            AppKind::Flatpak
+        );
+        // Fedora's flatpak exporter writes an absolute path rather than the
+        // bare "flatpak run" most distros use - see real-world desktop entry
+        // for org.gimp.GIMP on this system.
+        assert_eq!(
+            classify_exec("/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=gimp-3.2 --file-forwarding org.gimp.GIMP @@u %U @@"),
             AppKind::Flatpak
         );
         assert_eq!(classify_exec("env BAMF_DESKTOP_FILE_HINT=/x /snap/bin/gimp %U"), AppKind::Snap);

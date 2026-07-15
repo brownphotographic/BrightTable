@@ -8,6 +8,7 @@ import {
   getStack,
   getTimelineBuckets,
   getTimelineBucketAssets,
+  launchEditor,
   listStacks,
   setStackPick,
   updateAssetMetadata,
@@ -28,10 +29,11 @@ import MetadataPanel from '../components/MetadataPanel';
 import ConfirmDialog from '../components/ConfirmDialog';
 import InlineWarningBanner from '../components/InlineWarningBanner';
 import { isTypingTarget, matchesShortcut, useShortcuts, type ShortcutId } from '../lib/shortcuts';
-import { matchesFilters, type Filters } from '../lib/filters';
+import { isRawAsset, matchesFilters, type Filters } from '../lib/filters';
 import { isHiddenStackChild } from '../lib/stacks';
 import type { SmartStackGroup } from '../lib/smartStack';
 import { useRawOverrides } from '../lib/rawOverrides';
+import { useApplications } from '../lib/applications';
 import { pendingStyle } from '../lib/pending';
 import { useEditQueue } from '../lib/editQueue';
 import { useEditJobReconciliation } from '../lib/useEditJobReconciliation';
@@ -484,6 +486,23 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     commitEditMany([...selected], { isFavorite: !allSelectedFavorited }).catch(() => {});
   }, [selected, allSelectedFavorited, commitEditMany]);
 
+  // Launch-only, single-asset - mirrors Viewer.tsx's handleLaunch exactly
+  // (same redirect-to-Preferences-when-unconfigured behavior), just sourced
+  // from the selection bar's one selected asset instead of the open asset.
+  const { applications } = useApplications();
+  const launchEditorForSelection = useCallback(
+    async (role: 'rawEditor' | 'externalEditor') => {
+      if (selectedAssets.length !== 1) return;
+      const choice = applications[role];
+      if (!choice) {
+        onOpenApplicationsPreferences?.();
+        return;
+      }
+      await launchEditor(selectedAssets[0].originalPath, choice);
+    },
+    [selectedAssets, applications, onOpenApplicationsPreferences],
+  );
+
   // Writes each id's sidecar/embedded-discovered rating and/or description
   // into Immich - one commitEdit per asset (descriptions are per-asset-
   // unique text, so unlike a plain rating there's no meaningful way to group
@@ -792,6 +811,9 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           unsyncedCount={[...selected].filter((id) => unsyncedMetadata.has(id)).length}
           onSyncMetadata={() => syncMetadata([...selected].filter((id) => unsyncedMetadata.has(id))).catch(() => {})}
           onDelete={() => setConfirmDeleteSelection(true)}
+          canOpenInRawEditor={selectedAssets.length === 1 && isRawAsset(selectedAssets[0])}
+          onOpenInRawEditor={() => launchEditorForSelection('rawEditor').catch(() => {})}
+          onOpenInExternalEditor={() => launchEditorForSelection('externalEditor').catch(() => {})}
         />
       )}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>

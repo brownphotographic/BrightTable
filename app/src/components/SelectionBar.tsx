@@ -18,6 +18,9 @@ export default function SelectionBar({
   unsyncedCount,
   onSyncMetadata,
   onDelete,
+  canOpenInRawEditor,
+  onOpenInRawEditor,
+  onOpenInExternalEditor,
 }: {
   count: number;
   onCancel: () => void;
@@ -32,8 +35,18 @@ export default function SelectionBar({
   unsyncedCount: number;
   onSyncMetadata: () => void;
   onDelete: () => void;
+  // Whether the single selected asset (if any) is RAW - mirrors Viewer.tsx's
+  // header, which likewise only shows the RAW Editor button for RAW assets.
+  canOpenInRawEditor: boolean;
+  onOpenInRawEditor: () => void;
+  onOpenInExternalEditor: () => void;
 }) {
   const canStack = count >= 2;
+  // Both editors are a single-file launch (see Viewer.tsx's handleLaunch) -
+  // there's no meaningful "open N files in the RAW editor" batch action, so
+  // both are scoped to exactly one selected asset rather than the whole
+  // selection like the other bar actions.
+  const singleSelected = count === 1;
   return (
     <div
       style={{
@@ -86,6 +99,12 @@ export default function SelectionBar({
       <BarButton onClick={onSmartStack} disabled={!canStack}>
         <StackIcon />
         Smart Stack
+      </BarButton>
+      {singleSelected && canOpenInRawEditor && (
+        <BarButton onClick={onOpenInRawEditor}>Open in RAW Editor</BarButton>
+      )}
+      <BarButton onClick={onOpenInExternalEditor} disabled={!singleSelected} title={singleSelected ? undefined : 'Select a single photo to open it in an editor'}>
+        Open in Ext. Editor
       </BarButton>
       <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)' }} />
       <BarButton onClick={onDelete} color="#ff8080">
