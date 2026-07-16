@@ -37,6 +37,9 @@ export interface AppChoice {
   name: string;
   exec: string;
   kind: AppKind;
+  // Extra flags inserted before the file argument on launch (e.g. ART's
+  // `-s` Simple editor mode) - see apps.rs's AppChoice for why this exists.
+  extraArgs: string;
 }
 
 export interface ApplicationsConfig {
@@ -123,12 +126,36 @@ export interface AssetSummary {
   // description Immich doesn't have yet (see checkSidecarMetadata below).
   // Absent once synced or when no gap exists in either field.
   unsyncedMetadata?: UnsyncedMetadata;
+  // Client-only annotation, overlaid the same way as `unsyncedMetadata` -
+  // whether this asset currently has an ART/RawTherapee processing sidecar
+  // (`.arp`/`.pp3`) on disk, piggybacked onto the same checkSidecarMetadata
+  // scan. Gates whether "Copy Image Processing" is enabled for this asset -
+  // independent of `unsyncedMetadata` (a processing sidecar can exist with
+  // no metadata gap, and vice versa).
+  hasProcessingSidecar?: boolean;
 }
 
 export interface StackInfo {
   id: string;
   primaryAssetId: string;
   assets: AssetSummary[];
+}
+
+// Payload of the 'round-trip-file-detected' Tauri event (see round_trip.rs)
+// - emitted whenever a new, non-junk file settles into a folder ImmAture is
+// watching for round-trip output. `candidates` lists every asset currently
+// registered as pending in that folder (usually just one); it's up to the
+// listener to decide via matchesVersionSuffix (smartStack.ts) whether any of
+// them is a real match for `newFileName`, not this event itself.
+export interface RoundTripCandidate {
+  originalAssetId: string;
+  originalFileName: string;
+}
+
+export interface RoundTripFileDetected {
+  candidates: RoundTripCandidate[];
+  newFileName: string;
+  folderImmichPath: string;
 }
 
 export interface AssetMetadataPatch {
@@ -208,8 +235,19 @@ export function listInstalledApps(): Promise<AppChoice[]> {
 // Resolves the asset's local path and spawns the chosen editor on it. Unlike
 // every other mutating call in this file, this isn't gated by read-only mode
 // - it launches a third-party process and touches no Immich data itself.
-export function launchEditor(originalPath: string | null, appChoice: AppChoice): Promise<void> {
-  return invoke('launch_editor', { originalPath, appChoice });
+//
+// `originalAssetId`/`originalFileName` register a round-trip watch on the
+// asset's folder (see round_trip.rs) so a matching output file the editor
+// saves back can be picked up automatically - see the
+// 'round-trip-file-detected' listener in PhotosBrowser.tsx. Omit either to
+// launch without registering a watch.
+export function launchEditor(
+  originalPath: string | null,
+  appChoice: AppChoice,
+  originalAssetId?: string | null,
+  originalFileName?: string | null,
+): Promise<void> {
+  return invoke('launch_editor', { originalPath, appChoice, originalAssetId, originalFileName });
 }
 
 export function testConnection(cfg: LibraryConfig): Promise<ConnectionStatus> {
@@ -303,6 +341,14 @@ export function setStackPick(stackId: string, assetId: string): Promise<void> {
   return invoke('set_stack_pick', { stackId, assetId });
 }
 
+// Corrects an asset's indexed capture date - used by the round-trip watcher
+// once it finds the editor's output file, since that file often has no EXIF
+// DateTimeOriginal of its own and gets indexed under "now" otherwise. See
+// the Rust side for why this bypasses the edit queue.
+export function setAssetCaptureDate(assetId: string, dateTimeOriginal: string): Promise<void> {
+  return invoke('set_asset_capture_date', { assetId, dateTimeOriginal });
+}
+
 export function deleteStack(stackId: string): Promise<void> {
   return invoke('delete_stack', { stackId });
 }
@@ -323,6 +369,7 @@ export interface MetadataSyncResult {
   assetId: string;
   rating: number | null;
   description: string | null;
+  hasProcessingSidecar: boolean;
 }
 
 // Read-only, best-effort - resolves silently to an empty/partial result if
@@ -333,6 +380,43 @@ export interface MetadataSyncResult {
 // rating/description.
 export function checkSidecarMetadata(queries: MetadataSyncQuery[]): Promise<MetadataSyncResult[]> {
   return invoke('check_sidecar_metadata', { queries });
+}
+
+// Enqueues Paste Image Processing onto the backend's background
+// ProcessingQueue and returns immediately with the assigned job ids (one per
+// target, same order/shape as updateAssetMetadata). Rejects synchronously
+// for a structural reason (read-only mode, over the batch cap, or the
+// source has no processing sidecar at all) before anything is queued; a
+// per-job copy failure discovered later surfaces via
+// getProcessingQueueStatus polling instead.
+export function pasteImageProcessing(sourceOriginalPath: string, targets: MetadataEditTarget[]): Promise<number[]> {
+  return invoke('paste_image_processing', { sourceOriginalPath, targets });
+}
+
+export type ProcessingJobStatus = 'pending' | 'copying' | 'done' | 'failed';
+
+// Mirrors processing_queue.rs's ProcessingJob - one row of Paste Image
+// Processing's advisory activity panel.
+export interface ProcessingJob {
+  jobId: number;
+  targetAssetId: string;
+  status: ProcessingJobStatus;
+  createdAtMs: number;
+  finishedAtMs: number | null;
+  error: string | null;
+}
+
+export interface ProcessingQueueStatus {
+  jobs: ProcessingJob[];
+  pendingCount: number;
+}
+
+export function getProcessingQueueStatus(): Promise<ProcessingQueueStatus> {
+  return invoke('get_processing_queue_status');
+}
+
+export function clearCompletedProcessingJobs(): Promise<void> {
+  return invoke('clear_completed_processing_jobs');
 }
 
 // Grid cells render at ~160px - "thumbnail" (~30KB) is the right size for that.

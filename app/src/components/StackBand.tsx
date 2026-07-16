@@ -18,6 +18,7 @@ export default function StackBand({
   onUnstack,
   onSetPick,
   onRate,
+  onContextMenu,
   resolveAsset,
 }: {
   stackId: string;
@@ -28,6 +29,15 @@ export default function StackBand({
   onUnstack: (memberIds: string[]) => Promise<void>;
   onSetPick: (assetId: string, memberIds: string[]) => Promise<void>;
   onRate: (assetId: string, rating: number) => Promise<void>;
+  // Previously omitted entirely - a stack member (including the pick, once
+  // its band is expanded) had no right-click menu at all, unlike every plain
+  // or collapsed-pick tile. Harmless while the menu only had Stack/Unstack/
+  // Sync Metadata (this band already has its own Unstack button and
+  // per-member Set Pick/rating controls), but Copy/Paste Image Processing
+  // and Copy/Paste Metadata have no other in-band entry point, so the gap
+  // became a real, common-case dead end - found live by the user testing
+  // Copy Image Processing on a stacked asset.
+  onContextMenu?: (id: string, x: number, y: number) => void;
   // Resolves a known member id to its live AssetSummary from the browser's
   // reactive asset cache. Members are displayed through this (falling back
   // to the one-time getStack() snapshot only if a bucket isn't loaded) so
@@ -187,6 +197,7 @@ export default function StackBand({
                   onToggleOne={() => onSelectMember(m.id)}
                   onOpen={onOpen}
                   onRate={handleRate}
+                  onContextMenu={onContextMenu}
                 />
                 <button
                   onClick={(e) => {

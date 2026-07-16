@@ -39,6 +39,16 @@ pub struct AppChoice {
     pub name: String,
     pub exec: String,
     pub kind: AppKind,
+    /// Extra flags inserted before the file argument on launch - e.g. ART's
+    /// `-s` (Simple editor mode), which skips loading its own file-browser
+    /// thumbnail panel for the opened file's containing folder. That panel's
+    /// thumbnail generation is what was actually causing multi-minute hangs
+    /// over NFS, not the path handoff itself - `-s` opens straight into the
+    /// editor for just the one file, same as Shotwell's equivalent feature
+    /// does. Free text, split on whitespace; `#[serde(default)]` so configs
+    /// saved before this field existed still deserialize cleanly.
+    #[serde(default)]
+    pub extra_args: String,
 }
 
 /// Every directory that might hold a `.desktop` entry worth showing in the
@@ -119,7 +129,7 @@ fn parse_desktop_entry(path: &Path) -> Option<AppChoice> {
     }
     let name = name?;
     let exec = exec?;
-    Some(AppChoice { name, kind: classify_exec(&exec), exec })
+    Some(AppChoice { name, kind: classify_exec(&exec), exec, extra_args: String::new() })
 }
 
 /// Flatpak's own desktop-file exporter always starts `Exec=` with a `run`
@@ -186,6 +196,7 @@ fn parse_exec_tokens(exec: &str) -> Vec<String> {
 /// path with no `Exec=` grammar at all, so the path is simply appended.
 pub fn launch_app(choice: &AppChoice, path: &Path) -> Result<(), String> {
     let path_str = path.to_string_lossy().to_string();
+    let extra_args = parse_exec_tokens(&choice.extra_args);
     match choice.kind {
         AppKind::Native | AppKind::Flatpak | AppKind::Snap => {
             let tokens = parse_exec_tokens(&choice.exec);
@@ -196,9 +207,15 @@ pub fn launch_app(choice: &AppChoice, path: &Path) -> Result<(), String> {
             if !had_field_code {
                 args.push(path_str);
             }
-            spawn(program, &args, &choice.name)
+            let mut full_args = extra_args;
+            full_args.extend(args);
+            spawn(program, &full_args, &choice.name)
         }
-        AppKind::AppImage | AppKind::Custom => spawn(&choice.exec, &[path_str], &choice.name),
+        AppKind::AppImage | AppKind::Custom => {
+            let mut full_args = extra_args;
+            full_args.push(path_str);
+            spawn(&choice.exec, &full_args, &choice.name)
+        }
     }
 }
 

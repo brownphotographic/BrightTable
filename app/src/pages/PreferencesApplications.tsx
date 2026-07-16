@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { useApplications } from '../lib/applications';
 import AppPickerDialog from '../components/AppPickerDialog';
 import type { AppChoice } from '../lib/api';
@@ -40,6 +40,12 @@ export default function PreferencesApplications() {
                     {choice ? choice.name : 'No application chosen'}
                   </div>
                   {choice && <div style={execText}>{choice.exec}</div>}
+                  {choice && (
+                    <ExtraArgsRow
+                      choice={choice}
+                      onCommit={(extraArgs) => setEditor(role, { ...choice, extraArgs })}
+                    />
+                  )}
                 </div>
                 <button onClick={() => setPickerRole(role)} style={btnSecondary}>
                   Change…
@@ -60,6 +66,29 @@ export default function PreferencesApplications() {
 
 function Divider() {
   return <div style={{ height: 1, background: 'var(--border)', marginLeft: 16 }} />;
+}
+
+// Local draft state so every keystroke doesn't trigger a save - only commits
+// (via useApplications' setEditor, which persists immediately) on blur.
+function ExtraArgsRow({ choice, onCommit }: { choice: AppChoice; onCommit: (extraArgs: string) => void }) {
+  const [value, setValue] = useState(choice.extraArgs);
+
+  useEffect(() => setValue(choice.extraArgs), [choice.exec, choice.extraArgs]);
+
+  return (
+    <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ fontSize: 11.5, color: 'var(--text-dimmer)', flexShrink: 0 }}>Extra args</span>
+      <input
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={() => {
+          if (value !== choice.extraArgs) onCommit(value);
+        }}
+        placeholder="e.g. -s"
+        style={argsInput}
+      />
+    </div>
+  );
 }
 
 const panel: CSSProperties = {
@@ -83,6 +112,18 @@ const execText: CSSProperties = {
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
+};
+
+const argsInput: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  height: 26,
+  padding: '0 8px',
+  background: 'rgba(0,0,0,0.3)',
+  border: '1px solid rgba(255,255,255,0.12)',
+  borderRadius: 6,
+  color: '#fff',
+  font: '500 11px ui-monospace,monospace',
 };
 
 const btnSecondary: CSSProperties = {

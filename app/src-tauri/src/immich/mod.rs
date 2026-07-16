@@ -327,6 +327,7 @@ impl ImmichClient {
         rating: Option<i32>,
         is_favorite: Option<bool>,
         description: Option<&str>,
+        date_time_original: Option<&str>,
     ) -> Result<(), String> {
         let mut body = serde_json::Map::new();
         if let Some(r) = rating {
@@ -337,6 +338,9 @@ impl ImmichClient {
         }
         if let Some(d) = description {
             body.insert("description".into(), serde_json::json!(d));
+        }
+        if let Some(dt) = date_time_original {
+            body.insert("dateTimeOriginal".into(), serde_json::json!(dt));
         }
         if body.is_empty() {
             return Ok(());

@@ -23,7 +23,11 @@ export type ShortcutId =
   | 'refreshTimeline'
   | 'openPreferences'
   | 'openInRawEditor'
-  | 'openInExternalEditor';
+  | 'openInExternalEditor'
+  | 'copyMetadata'
+  | 'pasteMetadata'
+  | 'copyImageProcessing'
+  | 'pasteImageProcessing';
 
 export const SHORTCUT_DEFS: { id: ShortcutId; label: string }[] = [
   { id: 'open', label: 'Open photo' },
@@ -48,6 +52,10 @@ export const SHORTCUT_DEFS: { id: ShortcutId; label: string }[] = [
   { id: 'openPreferences', label: 'Open preferences' },
   { id: 'openInRawEditor', label: 'Open in RAW Editor' },
   { id: 'openInExternalEditor', label: 'Open in Ext. Editor' },
+  { id: 'copyMetadata', label: 'Copy Metadata' },
+  { id: 'pasteMetadata', label: 'Paste Metadata' },
+  { id: 'copyImageProcessing', label: 'Copy Image Processing' },
+  { id: 'pasteImageProcessing', label: 'Paste Image Processing' },
 ];
 
 // `toggleFilmstrip` moved off "F" to "M" to make room for "favorite" - both
@@ -76,19 +84,29 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutId, string> = {
   openPreferences: 'Ctrl+,',
   openInRawEditor: 'Ctrl+Enter',
   openInExternalEditor: 'Ctrl+E',
+  copyImageProcessing: 'Ctrl+C',
+  pasteImageProcessing: 'Ctrl+V',
+  copyMetadata: 'Ctrl+Shift+C',
+  pasteMetadata: 'Ctrl+Shift+V',
 };
 
 // Canonical stored form: modifier prefixes (Ctrl/Alt/Shift, in that order)
-// plus the raw `e.key` (single letters uppercased). Shift is only recorded
-// for multi-char keys (e.g. Shift+ArrowLeft) - for a plain letter, shift
-// already changes what `e.key` is (or doesn't, for symbols), so recording
-// it separately would just make "A" and "Shift+A" fail to match the same
-// binding for no benefit.
+// plus the raw `e.key` (single letters uppercased). Shift is recorded for
+// multi-char keys (e.g. Shift+ArrowLeft) always, and for a plain letter only
+// when Ctrl or Alt is also held - a *bare* Shift+letter already changes what
+// `e.key` is (or doesn't, for symbols), so recording it separately there
+// would just make "A" and "Shift+A" fail to match the same binding for no
+// benefit. But once Ctrl/Alt are in play, `e.key` alone no longer carries
+// that distinction usefully to a human (browsers still report the
+// shifted-case letter, but nobody reads "Ctrl+C" vs "Ctrl+C" as different),
+// so Ctrl+C and Ctrl+Shift+C need Shift recorded explicitly to be two
+// distinct, reachable bindings (Copy Image Processing vs Copy Metadata rely
+// on exactly this).
 export function formatShortcut(e: KeyboardEvent | React.KeyboardEvent): string {
   const mods: string[] = [];
   if (e.ctrlKey) mods.push('Ctrl');
   if (e.altKey) mods.push('Alt');
-  if (e.shiftKey && e.key.length > 1) mods.push('Shift');
+  if (e.shiftKey && (e.key.length > 1 || e.ctrlKey || e.altKey)) mods.push('Shift');
   let k = e.key;
   if (k === ' ') k = 'Space';
   else if (k.length === 1) k = k.toUpperCase();

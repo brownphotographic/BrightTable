@@ -7,7 +7,9 @@ mod immich;
 mod import;
 mod io_guard;
 mod paths;
+mod processing_queue;
 mod protocol;
+mod round_trip;
 mod state;
 #[cfg(target_os = "linux")]
 mod suspend_guard;
@@ -42,10 +44,14 @@ pub fn run() {
                 .join("import_history.json");
             let (import_queue, import_queue_rx) = import::ImportQueue::new(history_path);
             let max_concurrent_import_jobs = cfg.import.max_concurrent_jobs;
-            app.manage(AppState::new(cfg, edit_queue, import_queue));
+            let (round_trip, round_trip_rx) = round_trip::RoundTripWatcher::new();
+            let (processing_queue, processing_queue_rx) = processing_queue::ProcessingQueue::new();
+            app.manage(AppState::new(cfg, edit_queue, import_queue, round_trip.clone(), processing_queue));
 
             tauri::async_runtime::spawn(edit_queue::run(app.handle().clone(), edit_queue_rx));
             tauri::async_runtime::spawn(import::queue::run(app.handle().clone(), import_queue_rx, max_concurrent_import_jobs));
+            tauri::async_runtime::spawn(round_trip::run(app.handle().clone(), round_trip, round_trip_rx));
+            tauri::async_runtime::spawn(processing_queue::run(app.handle().clone(), processing_queue_rx));
 
             #[cfg(target_os = "linux")]
             {
@@ -53,6 +59,28 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     suspend_guard::run(io_guard).await;
                 });
+            }
+
+            // WebKitGTK defaults to WEBKIT_CACHE_MODEL_WEB_BROWSER, which is
+            // tuned for a multi-tab browser and keeps every distinct
+            // resource it has ever decoded (here, every `immich-thumb://`
+            // thumbnail this session) in its in-memory resource cache rather
+            // than releasing it once the corresponding <img> leaves the DOM.
+            // This is a single-window, single-origin app that never
+            // benefits from that model - DOCUMENT_VIEWER is WebKit's most
+            // conservative cache model and is what actually let the content
+            // process's RSS come back down after scrolling through a large
+            // library instead of monotonically climbing all session.
+            #[cfg(target_os = "linux")]
+            {
+                if let Some(webview) = app.get_webview_window("main") {
+                    let _ = webview.with_webview(|pw| {
+                        use webkit2gtk::{WebContextExt, WebViewExt};
+                        if let Some(ctx) = pw.inner().context() {
+                            ctx.set_cache_model(webkit2gtk::CacheModel::DocumentViewer);
+                        }
+                    });
+                }
             }
 
             Ok(())
@@ -70,7 +98,8 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let state = window.state::<AppState>();
-                let pending = state.edit_queue.pending_count() + state.import_queue.pending_count();
+                let pending =
+                    state.edit_queue.pending_count() + state.import_queue.pending_count() + state.processing_queue.pending_count();
                 if pending > 0 {
                     api.prevent_close();
                     let _ = window.emit("queue-close-blocked", pending);
@@ -101,6 +130,7 @@ pub fn run() {
             commands::get_stack,
             commands::list_stacks,
             commands::set_stack_pick,
+            commands::set_asset_capture_date,
             commands::delete_stack,
             commands::check_sidecar_metadata,
             commands::get_folder_paths,
@@ -115,6 +145,9 @@ pub fn run() {
             commands::get_memory_usage,
             commands::get_edit_queue_status,
             commands::clear_completed_edit_jobs,
+            commands::paste_image_processing,
+            commands::get_processing_queue_status,
+            commands::clear_completed_processing_jobs,
             commands::force_quit,
         ])
         .run(tauri::generate_context!())

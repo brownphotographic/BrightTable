@@ -54,7 +54,7 @@ export default function AppPickerDialog({
       if (!path || typeof path !== 'string') return;
       const base = path.split('/').pop() ?? path;
       const kind: AppKind = base.toLowerCase().endsWith('.appimage') ? 'appimage' : 'custom';
-      onPick({ name: base, exec: path, kind });
+      onPick({ name: base, exec: path, kind, extraArgs: '' });
     } catch (e) {
       setBrowseError(String(e));
     }

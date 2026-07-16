@@ -332,7 +332,7 @@ pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedWork>) {
                 match &client_result {
                     Ok(client) => {
                         client
-                            .update_asset(&work.asset_id, work.rating, work.is_favorite, work.description.as_deref())
+                            .update_asset(&work.asset_id, work.rating, work.is_favorite, work.description.as_deref(), None)
                             .await
                     }
                     Err(e) => Err(e.clone()),

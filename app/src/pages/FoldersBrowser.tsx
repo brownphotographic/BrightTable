@@ -10,12 +10,14 @@ import {
   getStack,
   launchEditor,
   listStacks,
+  pasteImageProcessing,
   setStackPick,
   updateAssetMetadata,
   type AssetMetadataPatch,
   type AssetStackInfo,
   type AssetSummary,
   type EditJob,
+  type MetadataEditTarget,
   type UnsyncedMetadata,
 } from '../lib/api';
 import { buildFolderTree, collectAssetPaths, findFolderNode, type FolderNode } from '../lib/folderTree';
@@ -34,6 +36,7 @@ import { isHiddenStackChild } from '../lib/stacks';
 import type { SmartStackGroup } from '../lib/smartStack';
 import { useRawOverrides } from '../lib/rawOverrides';
 import { useApplications } from '../lib/applications';
+import { useClipboard } from '../lib/clipboard';
 import { pendingStyle } from '../lib/pending';
 import { useEditQueue } from '../lib/editQueue';
 import { useEditJobReconciliation } from '../lib/useEditJobReconciliation';
@@ -60,6 +63,10 @@ export interface FoldersBrowserHandle {
   openSmartStack: () => void;
   toggleRawOverrideForSelection: () => void;
   syncAllUnsyncedMetadata: () => void;
+  copyImageProcessing: () => void;
+  pasteImageProcessing: () => void;
+  copyMetadata: () => void;
+  pasteMetadata: () => void;
 }
 
 // Backed by Immich's real server-side folder structure (GET
@@ -112,8 +119,12 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // (Immich has nothing) or a stale value (Immich has something, but the
   // sidecar changed since).
   const [unsyncedMetadata, setUnsyncedMetadata] = useState<Map<string, UnsyncedMetadata>>(new Map());
+  // See PhotosBrowser.tsx's identical state for the full explanation.
+  const [processingSidecarAssets, setProcessingSidecarAssets] = useState<Set<string>>(new Set());
+  const [pasteProcessingTargets, setPasteProcessingTargets] = useState<string[] | null>(null);
   const { shortcuts, capturing } = useShortcuts();
   const { overrideIds, setOverride } = useRawOverrides();
+  const { copiedProcessingSource, setCopiedProcessingSource, copiedMetadata, setCopiedMetadata } = useClipboard();
 
   useEffect(() => {
     listStacks()
@@ -164,7 +175,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   const isFiltering = filters !== deferredFilters;
   const filteredAssetCache = useBucketMemo(
     assetCache,
-    [deferredFilters, stackByAssetId, overrideIds, unsyncedMetadata],
+    [deferredFilters, stackByAssetId, overrideIds, unsyncedMetadata, processingSidecarAssets],
     (assets) =>
       assets
         .map((a) => ({
@@ -172,6 +183,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           stack: stackByAssetId.get(a.id) ?? null,
           isRawOverride: overrideIds.has(a.id),
           unsyncedMetadata: unsyncedMetadata.get(a.id),
+          hasProcessingSidecar: processingSidecarAssets.has(a.id),
         }))
         .filter((a) => !isHiddenStackChild(a) && matchesFilters(a, deferredFilters)),
   );
@@ -203,13 +215,14 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // isHiddenStackChild deliberately keeps out of the flat grid/assetById.
   const overlaidAssetCache = useBucketMemo(
     assetCache,
-    [stackByAssetId, overrideIds, unsyncedMetadata],
+    [stackByAssetId, overrideIds, unsyncedMetadata, processingSidecarAssets],
     (assets) =>
       assets.map((a) => ({
         ...a,
         stack: stackByAssetId.get(a.id) ?? null,
         isRawOverride: overrideIds.has(a.id),
         unsyncedMetadata: unsyncedMetadata.get(a.id),
+        hasProcessingSidecar: processingSidecarAssets.has(a.id),
       })),
   );
   const assetByIdAll = useMemo(() => {
@@ -489,13 +502,65 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     [unsyncedMetadata, commitEdit],
   );
 
-  // Right-click menu is deliberately minimal: only primaries/unstacked
-  // assets are ever visible in the main grid to right-click on (band
-  // members already have their own Unstack button and pick-star), so
-  // "Set as Stack Pick" never applies here - only bulk Stack and Unstack.
+  // See PhotosBrowser.tsx's identical callbacks for the full explanation.
+  const handleCopyImageProcessing = useCallback(
+    (asset: AssetSummary) => {
+      if (!asset.originalPath || !asset.hasProcessingSidecar) return;
+      setCopiedProcessingSource({ assetId: asset.id, originalPath: asset.originalPath, fileName: asset.fileName });
+    },
+    [setCopiedProcessingSource],
+  );
+
+  const handleCopyMetadata = useCallback(
+    (asset: AssetSummary) => {
+      setCopiedMetadata({ rating: asset.rating ?? undefined, isFavorite: asset.isFavorite, description: asset.description ?? undefined });
+    },
+    [setCopiedMetadata],
+  );
+
+  const handlePasteMetadata = useCallback(
+    (ids: string[]) => {
+      if (!copiedMetadata || ids.length === 0) return;
+      commitEditMany(ids, copiedMetadata).catch(() => {});
+    },
+    [copiedMetadata, commitEditMany],
+  );
+
+  const requestPasteImageProcessing = useCallback(
+    (ids: string[]) => {
+      if (!copiedProcessingSource) return;
+      const rawIds = ids.filter((id) => {
+        const a = assetByIdAll.get(id);
+        return !!a && isRawAsset(a);
+      });
+      if (rawIds.length === 0) return;
+      setPasteProcessingTargets(rawIds);
+    },
+    [copiedProcessingSource, assetByIdAll],
+  );
+
+  const confirmPasteImageProcessing = useCallback(async () => {
+    if (!copiedProcessingSource || !pasteProcessingTargets) return;
+    const targets: MetadataEditTarget[] = pasteProcessingTargets.map((id) => ({
+      id,
+      originalPath: assetByIdAll.get(id)?.originalPath ?? null,
+    }));
+    await pasteImageProcessing(copiedProcessingSource.originalPath, targets);
+  }, [copiedProcessingSource, pasteProcessingTargets, assetByIdAll]);
+
+  // Stack/Unstack/Smart-Stack stay minimal here (band members already have
+  // their own Unstack button and pick-star, so "Set as Stack Pick" never
+  // applies) - but Copy/Paste Image Processing/Metadata are real per-member
+  // actions with no other in-band entry point, so `StackBand` now forwards
+  // right-clicks here too (see its own doc comment). Resolved via
+  // `assetByIdAll`, not the filtered `assetById`, specifically so a
+  // right-clicked *non-pick* member (excluded from the filtered map by
+  // `isHiddenStackChild`) still resolves instead of silently rendering an
+  // empty menu - same fix `Viewer.tsx`'s peek architecture already needed
+  // for the identical structural reason (§7.16).
   const contextMenuItems: ContextMenuItem[] = useMemo(() => {
     if (!contextMenu) return [];
-    const asset = assetById.get(contextMenu.assetId);
+    const asset = assetByIdAll.get(contextMenu.assetId);
     const items: ContextMenuItem[] = [];
     if (selected.size >= 2) {
       items.push({
@@ -519,8 +584,52 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         onClick: () => syncMetadata([asset.id]).catch(() => {}),
       });
     }
+    if (asset) {
+      if (isRawAsset(asset) && asset.hasProcessingSidecar) {
+        items.push({ label: 'Copy Image Processing', onClick: () => handleCopyImageProcessing(asset) });
+      }
+    }
+    // Paste targets the whole current selection when 2+ are selected -
+    // matching "Stack N Photos" above, which already does this regardless of
+    // which specific tile was right-clicked - rather than always the single
+    // right-clicked tile. Found live: a user with a multi-selection active
+    // got a "Paste onto 1 photo?" confirm no matter how many were selected.
+    const pasteTargetIds = selected.size >= 2 ? [...selected] : asset ? [asset.id] : [];
+    const pasteTargetsIncludeRaw = pasteTargetIds.some((id) => {
+      const a = assetByIdAll.get(id);
+      return !!a && isRawAsset(a);
+    });
+    if (copiedProcessingSource && pasteTargetsIncludeRaw) {
+      items.push({
+        label: pasteTargetIds.length > 1 ? `Paste Image Processing to ${pasteTargetIds.length} Photos` : 'Paste Image Processing',
+        onClick: () => requestPasteImageProcessing(pasteTargetIds),
+      });
+    }
+    if (asset) {
+      items.push({ label: 'Copy Metadata', onClick: () => handleCopyMetadata(asset) });
+    }
+    if (copiedMetadata && pasteTargetIds.length > 0) {
+      items.push({
+        label: pasteTargetIds.length > 1 ? `Paste Metadata to ${pasteTargetIds.length} Photos` : 'Paste Metadata',
+        onClick: () => handlePasteMetadata(pasteTargetIds),
+      });
+    }
     return items;
-  }, [contextMenu, assetById, selected, createStackForSelection, unstackByStackId, unsyncedMetadata, syncMetadata]);
+  }, [
+    contextMenu,
+    assetByIdAll,
+    selected,
+    createStackForSelection,
+    unstackByStackId,
+    unsyncedMetadata,
+    syncMetadata,
+    copiedProcessingSource,
+    copiedMetadata,
+    handleCopyImageProcessing,
+    requestPasteImageProcessing,
+    handleCopyMetadata,
+    handlePasteMetadata,
+  ]);
 
   const navigateOpen = (dir: 1 | -1) => {
     const ni = openIndex + dir;
@@ -559,8 +668,33 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       syncAllUnsyncedMetadata: () => {
         syncMetadata([...unsyncedMetadata.keys()]).catch(() => {});
       },
+      copyImageProcessing: () => {
+        if (selectedAssets.length === 1) handleCopyImageProcessing(selectedAssets[0]);
+      },
+      pasteImageProcessing: () => {
+        requestPasteImageProcessing([...selected]);
+      },
+      copyMetadata: () => {
+        if (selectedAssets.length === 1) handleCopyMetadata(selectedAssets[0]);
+      },
+      pasteMetadata: () => {
+        handlePasteMetadata([...selected]);
+      },
     }),
-    [selectAll, deselectAll, createStackForSelection, selected, toggleRawOverrideForSelection, syncMetadata, unsyncedMetadata],
+    [
+      selectAll,
+      deselectAll,
+      createStackForSelection,
+      selected,
+      toggleRawOverrideForSelection,
+      syncMetadata,
+      unsyncedMetadata,
+      selectedAssets,
+      handleCopyImageProcessing,
+      requestPasteImageProcessing,
+      handleCopyMetadata,
+      handlePasteMetadata,
+    ],
   );
 
   // Switching tree nodes starts from a fresh scroll position and selection -
@@ -595,6 +729,18 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       } else if (matchesShortcut(e, shortcuts.stack) && selected.size >= 2) {
         e.preventDefault();
         createStackForSelection([...selected]).catch(() => {});
+      } else if (matchesShortcut(e, shortcuts.copyMetadata) && selectedAssets.length === 1) {
+        e.preventDefault();
+        handleCopyMetadata(selectedAssets[0]);
+      } else if (matchesShortcut(e, shortcuts.pasteMetadata) && selected.size > 0 && copiedMetadata) {
+        e.preventDefault();
+        handlePasteMetadata([...selected]);
+      } else if (matchesShortcut(e, shortcuts.copyImageProcessing) && selectedAssets.length === 1) {
+        e.preventDefault();
+        handleCopyImageProcessing(selectedAssets[0]);
+      } else if (matchesShortcut(e, shortcuts.pasteImageProcessing) && selected.size > 0 && copiedProcessingSource) {
+        e.preventDefault();
+        requestPasteImageProcessing([...selected]);
       } else if (selected.size > 0) {
         const ratingByShortcut: [ShortcutId, number][] = [
           ['rate0', 0],
@@ -616,7 +762,25 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openId, active, selectAll, deselectAll, selected, shortcuts, capturing, commitEditMany, createStackForSelection, toggleFavoriteForSelection]);
+  }, [
+    openId,
+    active,
+    selectAll,
+    deselectAll,
+    selected,
+    shortcuts,
+    capturing,
+    commitEditMany,
+    createStackForSelection,
+    toggleFavoriteForSelection,
+    selectedAssets,
+    handleCopyMetadata,
+    handlePasteMetadata,
+    handleCopyImageProcessing,
+    requestPasteImageProcessing,
+    copiedMetadata,
+    copiedProcessingSource,
+  ]);
 
   const selectExclusive = useCallback((id: string) => {
     setSelected(new Set([id]));
@@ -693,16 +857,29 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           )
             .then((results) => {
               if (!results.length) return;
-              setUnsyncedMetadata((m) => {
-                const next = new Map(m);
-                for (const r of results) {
-                  next.set(r.assetId, {
-                    rating: r.rating ?? undefined,
-                    description: r.description ?? undefined,
-                  });
-                }
-                return next;
-              });
+              // See PhotosBrowser.tsx's identical guard - a result can carry
+              // hasProcessingSidecar: true with no metadata gap at all.
+              const metaResults = results.filter((r) => r.rating !== null || r.description !== null);
+              if (metaResults.length) {
+                setUnsyncedMetadata((m) => {
+                  const next = new Map(m);
+                  for (const r of metaResults) {
+                    next.set(r.assetId, {
+                      rating: r.rating ?? undefined,
+                      description: r.description ?? undefined,
+                    });
+                  }
+                  return next;
+                });
+              }
+              const withSidecar = results.filter((r) => r.hasProcessingSidecar).map((r) => r.assetId);
+              if (withSidecar.length) {
+                setProcessingSidecarAssets((s) => {
+                  const next = new Set(s);
+                  for (const id of withSidecar) next.add(id);
+                  return next;
+                });
+              }
             })
             .catch(() => {});
         })
@@ -741,6 +918,16 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           canOpenInRawEditor={selectedAssets.length === 1 && isRawAsset(selectedAssets[0])}
           onOpenInRawEditor={() => launchEditorForSelection('rawEditor').catch(() => {})}
           onOpenInExternalEditor={() => launchEditorForSelection('externalEditor').catch(() => {})}
+          canPasteImageProcessing={
+            !!copiedProcessingSource &&
+            [...selected].some((id) => {
+              const a = assetByIdAll.get(id);
+              return !!a && isRawAsset(a);
+            })
+          }
+          onPasteImageProcessing={() => requestPasteImageProcessing([...selected])}
+          canPasteMetadata={!!copiedMetadata}
+          onPasteMetadata={() => handlePasteMetadata([...selected])}
         />
       )}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
@@ -803,6 +990,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
                                 onUnstack={(memberIds) => unstack(stackId, memberIds)}
                                 onSetPick={(assetId, memberIds) => setStackPickAction(stackId, assetId, memberIds)}
                                 onRate={(id, rating) => commitEdit(id, { rating })}
+                                onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
                                 resolveAsset={(id) => assetByIdAll.get(id)}
                               />
                             );
@@ -893,6 +1081,15 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           confirmLabel="Move to Trash"
           onConfirm={() => removeAssets([...selected])}
           onClose={() => setConfirmDeleteSelection(false)}
+        />
+      )}
+      {pasteProcessingTargets && (
+        <ConfirmDialog
+          title="Paste image processing?"
+          message={`Paste image processing onto ${pasteProcessingTargets.length} photo${pasteProcessingTargets.length === 1 ? '' : 's'}? This replaces any existing RawTherapee/ART edits on each one.`}
+          confirmLabel="Paste"
+          onConfirm={confirmPasteImageProcessing}
+          onClose={() => setPasteProcessingTargets(null)}
         />
       )}
       {smartStackOpen && (

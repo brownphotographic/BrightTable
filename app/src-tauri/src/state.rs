@@ -2,6 +2,8 @@ use crate::config::AppConfig;
 use crate::edit_queue::EditQueue;
 use crate::import::ImportQueue;
 use crate::io_guard::IoGuard;
+use crate::processing_queue::ProcessingQueue;
+use crate::round_trip::RoundTripWatcher;
 use std::sync::{Arc, Mutex};
 
 pub struct AppState {
@@ -22,16 +24,33 @@ pub struct AppState {
     /// `import/queue.rs`. Same "spawned once from `.setup()`" pattern as
     /// `edit_queue`.
     pub import_queue: Arc<ImportQueue>,
+    /// Watches a round-trip asset's folder for the editor's output file -
+    /// see `round_trip.rs`. Registered from `commands::launch_editor`; its
+    /// background task is spawned once from `lib.rs`'s `.setup()`, same
+    /// pattern as `edit_queue`/`import_queue`.
+    pub round_trip: Arc<RoundTripWatcher>,
+    /// Background Paste Image Processing sidecar-copy queue - see
+    /// `processing_queue.rs`. Same "spawned once from `.setup()`" pattern as
+    /// `edit_queue`/`import_queue`.
+    pub processing_queue: Arc<ProcessingQueue>,
 }
 
 impl AppState {
-    pub fn new(config: AppConfig, edit_queue: Arc<EditQueue>, import_queue: Arc<ImportQueue>) -> Self {
+    pub fn new(
+        config: AppConfig,
+        edit_queue: Arc<EditQueue>,
+        import_queue: Arc<ImportQueue>,
+        round_trip: Arc<RoundTripWatcher>,
+        processing_queue: Arc<ProcessingQueue>,
+    ) -> Self {
         Self {
             config: Mutex::new(config),
             http: reqwest::Client::new(),
             io_guard: IoGuard::new(),
             edit_queue,
             import_queue,
+            round_trip,
+            processing_queue,
         }
     }
 

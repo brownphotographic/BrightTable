@@ -8,6 +8,8 @@ import { ApplicationsProvider } from './lib/applications';
 import { RawOverridesProvider } from './lib/rawOverrides';
 import { EditQueueProvider } from './lib/editQueue';
 import { ImportQueueProvider } from './lib/importQueue';
+import { ClipboardProvider } from './lib/clipboard';
+import { ProcessingQueueProvider } from './lib/processingQueue';
 import { forceQuit } from './lib/api';
 import TitleBar from './components/TitleBar';
 import MenuBar from './components/MenuBar';
@@ -28,13 +30,17 @@ export default function App() {
       <SmartStackSettingsProvider>
         <ApplicationsProvider>
           <RawOverridesProvider>
-            <EditQueueProvider>
-              <ImportQueueProvider>
-                <LibraryStatusProvider>
-                  <AppShell />
-                </LibraryStatusProvider>
-              </ImportQueueProvider>
-            </EditQueueProvider>
+            <ClipboardProvider>
+              <EditQueueProvider>
+                <ImportQueueProvider>
+                  <ProcessingQueueProvider>
+                    <LibraryStatusProvider>
+                      <AppShell />
+                    </LibraryStatusProvider>
+                  </ProcessingQueueProvider>
+                </ImportQueueProvider>
+              </EditQueueProvider>
+            </ClipboardProvider>
           </RawOverridesProvider>
         </ApplicationsProvider>
       </SmartStackSettingsProvider>
@@ -140,6 +146,10 @@ function AppShell() {
         onSmartStack={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.openSmartStack()}
         onToggleRawOverride={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.toggleRawOverrideForSelection()}
         onSyncSidecarRatings={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.syncAllUnsyncedMetadata()}
+        onCopyImageProcessing={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.copyImageProcessing()}
+        onPasteImageProcessing={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.pasteImageProcessing()}
+        onCopyMetadata={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.copyMetadata()}
+        onPasteMetadata={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.pasteMetadata()}
         filters={filters}
         onFiltersChange={setFilters}
       />

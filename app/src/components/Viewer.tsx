@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getStack, launchEditor, thumbnailSrc, type AssetMetadataPatch, type AssetSummary } from '../lib/api';
+import {
+  getStack,
+  launchEditor,
+  pasteImageProcessing,
+  thumbnailSrc,
+  type AssetMetadataPatch,
+  type AssetSummary,
+  type MetadataEditTarget,
+} from '../lib/api';
 import { decodeThumbHash } from '../lib/thumbhash';
 import { formatDims, formatSize } from '../lib/exifFormat';
 import MetadataRows, { Star } from './MetadataRows';
@@ -8,6 +16,7 @@ import { isTypingTarget, matchesShortcut, useShortcuts } from '../lib/shortcuts'
 import { overlayRawOverrides, useRawOverrides } from '../lib/rawOverrides';
 import { isRawAsset } from '../lib/filters';
 import { useApplications } from '../lib/applications';
+import { useClipboard } from '../lib/clipboard';
 
 const MIN_ZOOM = 25;
 const MAX_ZOOM = 400;
@@ -95,9 +104,11 @@ export default function Viewer({
   const [loadedId, setLoadedId] = useState<string | null>(null);
   const [thumbLoadedId, setThumbLoadedId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmPasteProcessing, setConfirmPasteProcessing] = useState(false);
   const [stackMembers, setStackMembers] = useState<AssetSummary[] | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const { applications } = useApplications();
+  const { copiedProcessingSource, setCopiedProcessingSource, copiedMetadata, setCopiedMetadata } = useClipboard();
   // Clicking a non-pick stack member in the info panel "peeks" at it in the
   // main stage without actually navigating there (that member is hidden from
   // the app's flat asset list - see isHiddenStackChild - so openId/assetById
@@ -161,11 +172,13 @@ export default function Viewer({
     [onEdit],
   );
 
-  // Launch-only round-trip (no file-watching/auto-refresh/auto-stacking - the
-  // user comes back and hits Refresh Timeline themselves once the editor
-  // saves). Redirects to Preferences → Applications instead of launching
-  // when that role has no app chosen yet, rather than just disabling the
-  // button with no way to fix it from here.
+  // Passing shown.id/shown.fileName registers a round-trip watch on this
+  // asset's folder (see round_trip.rs + PhotosBrowser.tsx's
+  // 'round-trip-file-detected' listener), so a matching output file the
+  // editor later saves back gets picked up and auto-stacked without the user
+  // hitting Refresh Timeline. Redirects to Preferences → Applications
+  // instead of launching when that role has no app chosen yet, rather than
+  // just disabling the button with no way to fix it from here.
   const handleLaunch = useCallback(
     async (role: 'rawEditor' | 'externalEditor') => {
       const choice = applications[role];
@@ -175,20 +188,47 @@ export default function Viewer({
       }
       setLaunchError(null);
       try {
-        await launchEditor(shown.originalPath, choice);
+        await launchEditor(shown.originalPath, choice, shown.id, shown.fileName);
       } catch (e) {
         setLaunchError(String(e));
       }
     },
-    [applications, shown.originalPath, onOpenApplicationsPreferences],
+    [applications, shown.originalPath, shown.id, shown.fileName, onOpenApplicationsPreferences],
   );
+
+  // Same clipboard, same fields, as the grid's Copy/Paste Image Processing/
+  // Metadata (PhotosBrowser.tsx/FoldersBrowser.tsx) - copying here from the
+  // open photo and pasting there onto a selection (or vice versa) works
+  // automatically since both read/write the one shared ClipboardProvider.
+  const handleCopyImageProcessing = useCallback(() => {
+    if (!shown.originalPath || !shown.hasProcessingSidecar) return;
+    setCopiedProcessingSource({ assetId: shown.id, originalPath: shown.originalPath, fileName: shown.fileName });
+  }, [shown, setCopiedProcessingSource]);
+
+  const handleCopyMetadata = useCallback(() => {
+    setCopiedMetadata({ rating: shown.rating ?? undefined, isFavorite: shown.isFavorite, description: shown.description ?? undefined });
+  }, [shown, setCopiedMetadata]);
+
+  const handlePasteMetadata = useCallback(() => {
+    if (!copiedMetadata) return;
+    handleEdit(shown.id, copiedMetadata).catch(() => {});
+  }, [copiedMetadata, handleEdit, shown.id]);
+
+  const confirmPasteImageProcessingAction = useCallback(async () => {
+    if (!copiedProcessingSource) return;
+    const targets: MetadataEditTarget[] = [{ id: shown.id, originalPath: shown.originalPath }];
+    await pasteImageProcessing(copiedProcessingSource.originalPath, targets);
+  }, [copiedProcessingSource, shown.id, shown.originalPath]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Let the confirm dialog own Escape (cancel) while it's open, rather
       // than also closing the whole viewer underneath it.
-      if (confirmDelete) {
-        if (e.key === 'Escape') setConfirmDelete(false);
+      if (confirmDelete || confirmPasteProcessing) {
+        if (e.key === 'Escape') {
+          setConfirmDelete(false);
+          setConfirmPasteProcessing(false);
+        }
         return;
       }
       if (isTypingTarget(e) || capturing) return;
@@ -199,6 +239,10 @@ export default function Viewer({
       else if (matchesShortcut(e, shortcuts.toggleFilmstrip)) setFilmstripOpen((v) => !v);
       else if (matchesShortcut(e, shortcuts.loupe)) setLoupeOn((v) => !v);
       else if (matchesShortcut(e, shortcuts.favorite)) handleEdit(shown.id, { isFavorite: !shown.isFavorite }).catch(() => {});
+      else if (matchesShortcut(e, shortcuts.copyMetadata)) handleCopyMetadata();
+      else if (matchesShortcut(e, shortcuts.pasteMetadata) && copiedMetadata) handlePasteMetadata();
+      else if (matchesShortcut(e, shortcuts.copyImageProcessing) && isRawAsset(shown)) handleCopyImageProcessing();
+      else if (matchesShortcut(e, shortcuts.pasteImageProcessing) && copiedProcessingSource && isRawAsset(shown)) setConfirmPasteProcessing(true);
       else if (matchesShortcut(e, shortcuts.rate0)) handleEdit(shown.id, { rating: 0 }).catch(() => {});
       else if (matchesShortcut(e, shortcuts.rate1)) handleEdit(shown.id, { rating: 1 }).catch(() => {});
       else if (matchesShortcut(e, shortcuts.rate2)) handleEdit(shown.id, { rating: 2 }).catch(() => {});
@@ -212,7 +256,26 @@ export default function Viewer({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, onPrev, onNext, hasPrev, hasNext, confirmDelete, shortcuts, capturing, shown, onEdit, handleEdit, handleLaunch]);
+  }, [
+    onClose,
+    onPrev,
+    onNext,
+    hasPrev,
+    hasNext,
+    confirmDelete,
+    confirmPasteProcessing,
+    shortcuts,
+    capturing,
+    shown,
+    onEdit,
+    handleEdit,
+    handleLaunch,
+    handleCopyMetadata,
+    handlePasteMetadata,
+    handleCopyImageProcessing,
+    copiedMetadata,
+    copiedProcessingSource,
+  ]);
 
   const previewSrc = thumbnailSrc(shown.id, 'preview');
 
@@ -336,6 +399,25 @@ export default function Viewer({
         <div onClick={() => handleLaunch('externalEditor')} style={headerButtonStyle(false)}>
           Open in Ext. Editor
         </div>
+        <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)', margin: '0 2px' }} />
+        {isRawAsset(shown) && shown.hasProcessingSidecar && (
+          <div onClick={handleCopyImageProcessing} style={headerButtonStyle(false)}>
+            Copy Image Processing
+          </div>
+        )}
+        {isRawAsset(shown) && copiedProcessingSource && (
+          <div onClick={() => setConfirmPasteProcessing(true)} style={headerButtonStyle(false)}>
+            Paste Image Processing
+          </div>
+        )}
+        <div onClick={handleCopyMetadata} style={headerButtonStyle(false)}>
+          Copy Metadata
+        </div>
+        {copiedMetadata && (
+          <div onClick={handlePasteMetadata} style={headerButtonStyle(false)}>
+            Paste Metadata
+          </div>
+        )}
         {launchError && (
           <div style={{ fontSize: 11.5, color: 'var(--danger)', maxWidth: 220, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={launchError}>
             {launchError}
@@ -672,6 +754,15 @@ export default function Viewer({
             onClose();
           }}
           onClose={() => setConfirmDelete(false)}
+        />
+      )}
+      {confirmPasteProcessing && (
+        <ConfirmDialog
+          title="Paste image processing?"
+          message={`Paste image processing onto "${shown.fileName}"? This replaces any existing RawTherapee/ART edits on it.`}
+          confirmLabel="Paste"
+          onConfirm={confirmPasteImageProcessingAction}
+          onClose={() => setConfirmPasteProcessing(false)}
         />
       )}
     </div>

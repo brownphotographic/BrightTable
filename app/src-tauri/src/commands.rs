@@ -97,18 +97,35 @@ pub fn list_installed_apps() -> Vec<AppChoice> {
 /// read-only/max-writes-per-batch gate: it spawns a third-party process and
 /// touches no Immich data and no file itself - whatever that external app
 /// later does to the file is outside ImmAture's own write path.
+///
+/// `original_asset_id`/`original_file_name` are only used to register a
+/// round-trip watch on the asset's folder (see `round_trip.rs`) - when
+/// present, once the editor saves a matching output file back into that
+/// folder, the frontend can pick it up and auto-stack it without the user
+/// hitting Refresh Timeline. Registration is best-effort: a failure here
+/// (e.g. no watcher backend available) never fails the launch itself, since
+/// the launch already succeeded and watching is purely advisory.
 #[tauri::command]
 pub fn launch_editor(
     state: State<AppState>,
     original_path: Option<String>,
     app_choice: AppChoice,
+    original_asset_id: Option<String>,
+    original_file_name: Option<String>,
 ) -> Result<(), String> {
     let cfg = state.library_config();
     let original_path = original_path.ok_or("This asset has no server-side path to resolve")?;
     let local_path = paths::resolve_local_path(&original_path, &cfg).ok_or(
         "No local path mapping configured for this asset — set up External Library mapping in Preferences → Library",
     )?;
-    apps::launch_app(&app_choice, &local_path)
+    apps::launch_app(&app_choice, &local_path)?;
+
+    if let (Some(asset_id), Some(file_name)) = (original_asset_id, original_file_name) {
+        if let Err(e) = state.round_trip.register(asset_id, file_name, &original_path, &local_path) {
+            log::warn!("Couldn't register round-trip watch: {e}");
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -278,6 +295,65 @@ pub fn clear_completed_edit_jobs(state: State<AppState>) {
     state.edit_queue.clear_completed();
 }
 
+/// Enqueues **Paste Image Processing** - copying `source_original_path`'s
+/// RAW-editor develop-adjustment sidecar (ART `.arp` or RawTherapee `.pp3`,
+/// see `paths::find_processing_sidecar`) wholesale onto every target.
+/// Distinct from `update_asset_metadata`/**Paste Metadata**: this touches no
+/// Immich field at all, only local sidecar files, via the separate
+/// `ProcessingQueue` (`processing_queue.rs`) rather than `EditQueue`.
+///
+/// Same `read_only`/`max_writes_per_batch` gate as every other write, plus
+/// one more check specific to this command: the source must actually have a
+/// processing sidecar, checked synchronously up front so a source with
+/// nothing to copy is a real error, not N queued jobs doomed to fail.
+#[tauri::command]
+pub fn paste_image_processing(
+    state: State<AppState>,
+    source_original_path: String,
+    targets: Vec<MetadataEditTarget>,
+) -> Result<Vec<u64>, String> {
+    let cfg = state.library_config();
+    if cfg.read_only {
+        return Err(
+            "Read-only mode is on — turn it off in Preferences → Library to paste image processing".into(),
+        );
+    }
+    if targets.len() as u32 > cfg.max_writes_per_batch {
+        return Err(format!(
+            "This would paste onto {} assets at once, over your cap of {} per action",
+            targets.len(),
+            cfg.max_writes_per_batch
+        ));
+    }
+    let source_local_path = paths::resolve_local_path(&source_original_path, &cfg)
+        .ok_or("Couldn't resolve a local path for the source asset")?;
+    let (source_path, source_kind, source_form) = paths::find_processing_sidecar(&source_local_path)
+        .ok_or("No RAW-editor processing sidecar (.arp/.pp3) found for the source asset")?;
+    Ok(state.processing_queue.enqueue(&cfg, source_path, source_kind, source_form, &targets))
+}
+
+/// Poll target for the processing queue's advisory activity panel, same
+/// shape as `get_edit_queue_status`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessingQueueStatus {
+    pub jobs: Vec<crate::processing_queue::ProcessingJob>,
+    pub pending_count: usize,
+}
+
+#[tauri::command]
+pub fn get_processing_queue_status(state: State<AppState>) -> ProcessingQueueStatus {
+    ProcessingQueueStatus {
+        jobs: state.processing_queue.snapshot(),
+        pending_count: state.processing_queue.pending_count(),
+    }
+}
+
+#[tauri::command]
+pub fn clear_completed_processing_jobs(state: State<AppState>) {
+    state.processing_queue.clear_completed();
+}
+
 /// Bypasses the `CloseRequested` interception in `lib.rs` - what the
 /// frontend's "Quit anyway" button calls after being warned that edits are
 /// still syncing.
@@ -342,6 +418,30 @@ pub async fn set_stack_pick(
 
     let client = ImmichClient::from_config(&cfg, state.http.clone())?;
     client.update_stack_primary(&stack_id, &asset_id).await
+}
+
+/// Corrects an asset's indexed capture date - used by the round-trip watcher
+/// (PhotosBrowser.tsx's 'round-trip-file-detected' listener) right after it
+/// discovers an editor's output file: that file often carries no EXIF
+/// DateTimeOriginal of its own (many editors don't copy it over into an
+/// exported JPEG), so Immich falls back to indexing it under "now" instead
+/// of the original's real capture time. Not routed through the edit queue -
+/// unlike rating/favorite/description, capture date isn't a sidecar-tracked
+/// field, so there's no XMP write to pair it with.
+#[tauri::command]
+pub async fn set_asset_capture_date(
+    state: State<'_, AppState>,
+    asset_id: String,
+    date_time_original: String,
+) -> Result<(), String> {
+    let cfg = state.library_config();
+    if cfg.read_only {
+        return Err(
+            "Read-only mode is on — turn it off in Preferences → Library to correct the capture date".into(),
+        );
+    }
+    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    client.update_asset(&asset_id, None, None, None, Some(&date_time_original)).await
 }
 
 #[tauri::command]
@@ -602,6 +702,15 @@ pub struct MetadataSyncResult {
     pub asset_id: String,
     pub rating: Option<i32>,
     pub description: Option<String>,
+    /// Whether this asset currently has an ART/RawTherapee processing
+    /// sidecar (`.arp`/`.pp3`) on disk - piggybacked onto this same
+    /// already-running per-bucket scan so **Copy Image Processing** can be
+    /// enabled/disabled without a separate round trip per tile. Independent
+    /// of `rating`/`description`: a result can carry `true` here with both
+    /// of those `None` (metadata already in sync, but a processing sidecar
+    /// still exists) - the frontend must not conflate this with the
+    /// unsynced-metadata badge.
+    pub has_processing_sidecar: bool,
 }
 
 /// Read-only, best-effort batch check - "no sidecar/embedded metadata" is
@@ -610,6 +719,11 @@ pub struct MetadataSyncResult {
 /// Only a structural precondition (no local path mapping configured at all)
 /// short-circuits with a real error, to avoid doing N pointless resolve
 /// attempts per bucket fetch when this feature isn't set up yet.
+///
+/// Also reports `has_processing_sidecar` per asset (see `MetadataSyncResult`)
+/// so **Copy Image Processing**'s enablement can piggyback on this same scan
+/// instead of a separate per-tile round trip - unrelated to the rating/
+/// description sync this command otherwise exists for.
 ///
 /// The sidecar/embedded value wins, per field, whenever it differs from
 /// whatever Immich currently has for that field - including when Immich has
@@ -638,8 +752,13 @@ pub async fn check_sidecar_metadata(
                 let current_description = q.current_description.filter(|s| !s.trim().is_empty());
                 let rating = detected.rating.filter(|r| Some(*r) != q.current_rating);
                 let description = detected.description.filter(|d| Some(d) != current_description.as_ref());
-                (rating.is_some() || description.is_some())
-                    .then_some(MetadataSyncResult { asset_id: q.asset_id, rating, description })
+                let has_processing_sidecar = paths::find_processing_sidecar(&local).is_some();
+                (rating.is_some() || description.is_some() || has_processing_sidecar).then_some(MetadataSyncResult {
+                    asset_id: q.asset_id,
+                    rating,
+                    description,
+                    has_processing_sidecar,
+                })
             })
             .collect::<Vec<_>>()
     }) else {

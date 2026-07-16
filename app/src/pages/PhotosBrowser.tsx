@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { listen } from '@tauri-apps/api/event';
 import {
   checkSidecarMetadata,
   createStack,
@@ -10,12 +11,17 @@ import {
   getTimelineBucketAssets,
   launchEditor,
   listStacks,
+  pasteImageProcessing,
+  scanImmichLibrary,
+  setAssetCaptureDate,
   setStackPick,
   updateAssetMetadata,
   type AssetMetadataPatch,
   type AssetStackInfo,
   type AssetSummary,
   type EditJob,
+  type MetadataEditTarget,
+  type RoundTripFileDetected,
   type TimeBucketInfo,
   type UnsyncedMetadata,
 } from '../lib/api';
@@ -31,13 +37,16 @@ import InlineWarningBanner from '../components/InlineWarningBanner';
 import { isTypingTarget, matchesShortcut, useShortcuts, type ShortcutId } from '../lib/shortcuts';
 import { isRawAsset, matchesFilters, type Filters } from '../lib/filters';
 import { isHiddenStackChild } from '../lib/stacks';
-import type { SmartStackGroup } from '../lib/smartStack';
+import { matchesVersionSuffix, type SmartStackGroup } from '../lib/smartStack';
 import { useRawOverrides } from '../lib/rawOverrides';
 import { useApplications } from '../lib/applications';
+import { useClipboard } from '../lib/clipboard';
+import { useSmartStackSettings } from '../lib/smartStackSettings';
 import { pendingStyle } from '../lib/pending';
 import { useEditQueue } from '../lib/editQueue';
 import { useEditJobReconciliation } from '../lib/useEditJobReconciliation';
 import { useBucketMemo } from '../lib/bucketMemo';
+import { pollForNewAsset } from '../lib/roundTrip';
 
 // Snapshots whichever AssetSummary fields a patch is about to touch, so a
 // job that later fails (the sidecar write, the authoritative mechanism -
@@ -72,6 +81,10 @@ export interface PhotosBrowserHandle {
   openSmartStack: () => void;
   toggleRawOverrideForSelection: () => void;
   syncAllUnsyncedMetadata: () => void;
+  copyImageProcessing: () => void;
+  pasteImageProcessing: () => void;
+  copyMetadata: () => void;
+  pasteMetadata: () => void;
 }
 
 const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
@@ -127,8 +140,17 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // Immich only happens when the user explicitly triggers a sync (never
   // automatic).
   const [unsyncedMetadata, setUnsyncedMetadata] = useState<Map<string, UnsyncedMetadata>>(new Map());
+  // Asset ids known to currently have an ART/RawTherapee processing sidecar
+  // on disk - piggybacked off the same checkSidecarMetadata scan as
+  // unsyncedMetadata above, but independent of it (see MetadataSyncResult's
+  // own doc comment): gates whether Copy Image Processing is offered.
+  const [processingSidecarAssets, setProcessingSidecarAssets] = useState<Set<string>>(new Set());
+  // Non-null while the Paste Image Processing confirm dialog is open - the
+  // already RAW-filtered target ids it'll paste onto.
+  const [pasteProcessingTargets, setPasteProcessingTargets] = useState<string[] | null>(null);
   const { shortcuts, capturing } = useShortcuts();
   const { overrideIds, setOverride } = useRawOverrides();
+  const { copiedProcessingSource, setCopiedProcessingSource, copiedMetadata, setCopiedMetadata } = useClipboard();
 
   useEffect(() => {
     listStacks()
@@ -160,7 +182,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   const isFiltering = filters !== deferredFilters;
   const filteredAssetCache = useBucketMemo(
     assetCache,
-    [deferredFilters, stackByAssetId, overrideIds, unsyncedMetadata],
+    [deferredFilters, stackByAssetId, overrideIds, unsyncedMetadata, processingSidecarAssets],
     (assets) =>
       assets
         .map((a) => ({
@@ -168,6 +190,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           stack: stackByAssetId.get(a.id) ?? null,
           isRawOverride: overrideIds.has(a.id),
           unsyncedMetadata: unsyncedMetadata.get(a.id),
+          hasProcessingSidecar: processingSidecarAssets.has(a.id),
         }))
         .filter((a) => !isHiddenStackChild(a) && matchesFilters(a, deferredFilters)),
   );
@@ -203,13 +226,14 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // isHiddenStackChild deliberately keeps out of the flat grid/assetById.
   const overlaidAssetCache = useBucketMemo(
     assetCache,
-    [stackByAssetId, overrideIds, unsyncedMetadata],
+    [stackByAssetId, overrideIds, unsyncedMetadata, processingSidecarAssets],
     (assets) =>
       assets.map((a) => ({
         ...a,
         stack: stackByAssetId.get(a.id) ?? null,
         isRawOverride: overrideIds.has(a.id),
         unsyncedMetadata: unsyncedMetadata.get(a.id),
+        hasProcessingSidecar: processingSidecarAssets.has(a.id),
       })),
   );
   const assetByIdAll = useMemo(() => {
@@ -337,6 +361,113 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     });
     setOpenId((cur) => (cur && idSet.has(cur) ? null : cur));
   }, [onTotalCount]);
+
+  // Inserts a newly-discovered asset (currently only the round-trip watcher
+  // below) into whichever bucket already holds `referenceAssetId` - mirrors
+  // removeAssetsLocal's shape but going the other direction. Deliberately
+  // reads `assetCache` directly (not via the setAssetCache updater) to
+  // locate the bucket key up front, since `buckets`' own count also needs
+  // updating in lockstep and there's no single setState call that can touch
+  // both. A no-op (not a fetch) if the reference asset's bucket isn't
+  // currently loaded - the same edge case patchAssetLocal already accepts
+  // silently - since the next real scroll-into-view will pick it up anyway.
+  const addAssetLocal = useCallback(
+    (asset: AssetSummary, referenceAssetId: string) => {
+      let bucketKey: string | null = null;
+      for (const [key, assets] of Object.entries(assetCache)) {
+        if (assets.some((a) => a.id === asset.id)) return; // already present - dedupe
+        if (assets.some((a) => a.id === referenceAssetId)) bucketKey = key;
+      }
+      if (!bucketKey) return;
+      const key = bucketKey;
+      setAssetCache((cache) => ({ ...cache, [key]: insertByCaptureDateDesc(cache[key] ?? [], asset) }));
+      setBuckets((bs) => bs?.map((b) => (b.timeBucket === key ? { ...b, count: b.count + 1 } : b)) ?? bs);
+      setTotalCount((c) => {
+        const nc = c + 1;
+        onTotalCount?.(nc);
+        return nc;
+      });
+    },
+    [assetCache, onTotalCount],
+  );
+
+  // Watches for the round-trip file the backend detected (see round_trip.rs)
+  // to actually be the editor's output for one of the candidates it's
+  // pending on - matched here (not backend-side) via the same version-string
+  // suffix logic the Smart Stack "Version" mode itself uses, so both places
+  // stay in sync automatically whenever the user changes that setting.
+  const { settings: smartStackSettings } = useSmartStackSettings();
+  useEffect(() => {
+    const unlisten = listen<RoundTripFileDetected>('round-trip-file-detected', (e) => {
+      const { candidates, newFileName, folderImmichPath } = e.payload;
+      const match = candidates.find((c) => {
+        const original = assetByIdAll.get(c.originalAssetId);
+        return original && matchesVersionSuffix(newFileName, original, smartStackSettings.suffix);
+      });
+      if (!match) return;
+      const originalAssetId = match.originalAssetId;
+
+      (async () => {
+        const original = assetByIdAll.get(originalAssetId);
+        if (!original) return;
+
+        await scanImmichLibrary().catch(() => {});
+        let found = await pollForNewAsset(folderImmichPath, newFileName);
+        if (!found) return;
+
+        // RAW editors' exported JPEGs frequently carry no EXIF
+        // DateTimeOriginal of their own, so Immich indexes them under
+        // "now" instead of the original's real capture time - correct it
+        // both server-side and in the object about to be inserted, so the
+        // new asset lands in the same day group as the original it belongs
+        // next to rather than under today's date.
+        if (found.fileCreatedAt !== original.fileCreatedAt) {
+          setAssetCaptureDate(found.id, original.fileCreatedAt).catch(() => {});
+          found = { ...found, fileCreatedAt: original.fileCreatedAt };
+        }
+
+        // Carries the original's rating/favorite/description onto the
+        // round-trip output too - a freshly-created asset otherwise starts
+        // with none of it. Goes through updateAssetMetadata directly (not
+        // commitEdit) using found.originalPath as already returned by
+        // Immich, rather than assetByIdAll's lookup for `found.id` - that
+        // memo hasn't recomputed yet this tick, so it wouldn't see this
+        // asset at all until after this async chain finishes.
+        const metadataPatch: AssetMetadataPatch = {};
+        if (original.rating != null) metadataPatch.rating = original.rating;
+        if (original.isFavorite) metadataPatch.isFavorite = original.isFavorite;
+        if (original.description) metadataPatch.description = original.description;
+        if (Object.keys(metadataPatch).length > 0) {
+          found = { ...found, ...metadataPatch };
+          updateAssetMetadata([{ id: found.id, originalPath: found.originalPath }], metadataPatch).catch(() => {});
+        }
+
+        addAssetLocal(found, originalAssetId);
+
+        let memberIds = [found.id, originalAssetId];
+        const existingStackId = original.stack?.id;
+        if (existingStackId) {
+          const existing = await getStack(existingStackId).catch(() => null);
+          if (existing) {
+            await deleteStack(existingStackId).catch(() => {});
+            const extraIds = existing.assets.map((a) => a.id).filter((id) => id !== originalAssetId);
+            memberIds = [found.id, originalAssetId, ...extraIds];
+          }
+        }
+        const stack = await createStack(memberIds).catch(() => null);
+        if (!stack) return;
+        const info: AssetStackInfo = { id: stack.id, primaryAssetId: stack.primaryAssetId, assetCount: memberIds.length };
+        setStackByAssetId((m) => {
+          const next = new Map(m);
+          for (const id of memberIds) next.set(id, info);
+          return next;
+        });
+      })();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [assetByIdAll, smartStackSettings.suffix, addAssetLocal]);
 
   // Grid deletes always move to trash (permanent=false) - "Delete Forever"
   // only exists from within the Trash view.
@@ -498,7 +629,8 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
         onOpenApplicationsPreferences?.();
         return;
       }
-      await launchEditor(selectedAssets[0].originalPath, choice);
+      const asset = selectedAssets[0];
+      await launchEditor(asset.originalPath, choice, asset.id, asset.fileName);
     },
     [selectedAssets, applications, onOpenApplicationsPreferences],
   );
@@ -527,19 +659,74 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     [unsyncedMetadata, commitEdit],
   );
 
+  const handleCopyImageProcessing = useCallback(
+    (asset: AssetSummary) => {
+      if (!asset.originalPath || !asset.hasProcessingSidecar) return;
+      setCopiedProcessingSource({ assetId: asset.id, originalPath: asset.originalPath, fileName: asset.fileName });
+    },
+    [setCopiedProcessingSource],
+  );
+
+  const handleCopyMetadata = useCallback(
+    (asset: AssetSummary) => {
+      setCopiedMetadata({ rating: asset.rating ?? undefined, isFavorite: asset.isFavorite, description: asset.description ?? undefined });
+    },
+    [setCopiedMetadata],
+  );
+
+  const handlePasteMetadata = useCallback(
+    (ids: string[]) => {
+      if (!copiedMetadata || ids.length === 0) return;
+      commitEditMany(ids, copiedMetadata).catch(() => {});
+    },
+    [copiedMetadata, commitEditMany],
+  );
+
+  // RAW-only - a non-RAW target has no processing-sidecar concept at all, so
+  // filtering here (rather than leaving it to the backend) also means the
+  // confirm dialog's "N photo(s)" count already reflects what's really about
+  // to be pasted onto.
+  const requestPasteImageProcessing = useCallback(
+    (ids: string[]) => {
+      if (!copiedProcessingSource) return;
+      const rawIds = ids.filter((id) => {
+        const a = assetByIdAll.get(id);
+        return !!a && isRawAsset(a);
+      });
+      if (rawIds.length === 0) return;
+      setPasteProcessingTargets(rawIds);
+    },
+    [copiedProcessingSource, assetByIdAll],
+  );
+
+  const confirmPasteImageProcessing = useCallback(async () => {
+    if (!copiedProcessingSource || !pasteProcessingTargets) return;
+    const targets: MetadataEditTarget[] = pasteProcessingTargets.map((id) => ({
+      id,
+      originalPath: assetByIdAll.get(id)?.originalPath ?? null,
+    }));
+    await pasteImageProcessing(copiedProcessingSource.originalPath, targets);
+  }, [copiedProcessingSource, pasteProcessingTargets, assetByIdAll]);
+
   const navigateOpen = (dir: 1 | -1) => {
     const ni = openIndex + dir;
     if (ni < 0 || ni >= flatIds.length) return;
     setOpenId(flatIds[ni]);
   };
 
-  // Right-click menu is deliberately minimal: only primaries/unstacked
-  // assets are ever visible in the main grid to right-click on (band
-  // members already have their own Unstack button and pick-star), so
-  // "Set as Stack Pick" never applies here - only bulk Stack and Unstack.
+  // Stack/Unstack/Smart-Stack stay minimal here (band members already have
+  // their own Unstack button and pick-star, so "Set as Stack Pick" never
+  // applies) - but Copy/Paste Image Processing/Metadata are real per-member
+  // actions with no other in-band entry point, so `StackBand` now forwards
+  // right-clicks here too (see its own doc comment). Resolved via
+  // `assetByIdAll`, not the filtered `assetById`, specifically so a
+  // right-clicked *non-pick* member (excluded from the filtered map by
+  // `isHiddenStackChild`) still resolves instead of silently rendering an
+  // empty menu - same fix `Viewer.tsx`'s peek architecture already needed
+  // for the identical structural reason (§7.16).
   const contextMenuItems: ContextMenuItem[] = useMemo(() => {
     if (!contextMenu) return [];
-    const asset = assetById.get(contextMenu.assetId);
+    const asset = assetByIdAll.get(contextMenu.assetId);
     const items: ContextMenuItem[] = [];
     if (selected.size >= 2) {
       items.push({
@@ -563,8 +750,52 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
         onClick: () => syncMetadata([asset.id]).catch(() => {}),
       });
     }
+    if (asset) {
+      if (isRawAsset(asset) && asset.hasProcessingSidecar) {
+        items.push({ label: 'Copy Image Processing', onClick: () => handleCopyImageProcessing(asset) });
+      }
+    }
+    // Paste targets the whole current selection when 2+ are selected -
+    // matching "Stack N Photos" above, which already does this regardless of
+    // which specific tile was right-clicked - rather than always the single
+    // right-clicked tile. Found live: a user with a multi-selection active
+    // got a "Paste onto 1 photo?" confirm no matter how many were selected.
+    const pasteTargetIds = selected.size >= 2 ? [...selected] : asset ? [asset.id] : [];
+    const pasteTargetsIncludeRaw = pasteTargetIds.some((id) => {
+      const a = assetByIdAll.get(id);
+      return !!a && isRawAsset(a);
+    });
+    if (copiedProcessingSource && pasteTargetsIncludeRaw) {
+      items.push({
+        label: pasteTargetIds.length > 1 ? `Paste Image Processing to ${pasteTargetIds.length} Photos` : 'Paste Image Processing',
+        onClick: () => requestPasteImageProcessing(pasteTargetIds),
+      });
+    }
+    if (asset) {
+      items.push({ label: 'Copy Metadata', onClick: () => handleCopyMetadata(asset) });
+    }
+    if (copiedMetadata && pasteTargetIds.length > 0) {
+      items.push({
+        label: pasteTargetIds.length > 1 ? `Paste Metadata to ${pasteTargetIds.length} Photos` : 'Paste Metadata',
+        onClick: () => handlePasteMetadata(pasteTargetIds),
+      });
+    }
     return items;
-  }, [contextMenu, assetById, selected, createStackForSelection, unstackByStackId, unsyncedMetadata, syncMetadata]);
+  }, [
+    contextMenu,
+    assetByIdAll,
+    selected,
+    createStackForSelection,
+    unstackByStackId,
+    unsyncedMetadata,
+    syncMetadata,
+    copiedProcessingSource,
+    copiedMetadata,
+    handleCopyImageProcessing,
+    requestPasteImageProcessing,
+    handleCopyMetadata,
+    handlePasteMetadata,
+  ]);
 
   useEffect(() => {
     getTimelineBuckets()
@@ -613,8 +844,33 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       syncAllUnsyncedMetadata: () => {
         syncMetadata([...unsyncedMetadata.keys()]).catch(() => {});
       },
+      copyImageProcessing: () => {
+        if (selectedAssets.length === 1) handleCopyImageProcessing(selectedAssets[0]);
+      },
+      pasteImageProcessing: () => {
+        requestPasteImageProcessing([...selected]);
+      },
+      copyMetadata: () => {
+        if (selectedAssets.length === 1) handleCopyMetadata(selectedAssets[0]);
+      },
+      pasteMetadata: () => {
+        handlePasteMetadata([...selected]);
+      },
     }),
-    [selectAll, deselectAll, createStackForSelection, selected, toggleRawOverrideForSelection, syncMetadata, unsyncedMetadata],
+    [
+      selectAll,
+      deselectAll,
+      createStackForSelection,
+      selected,
+      toggleRawOverrideForSelection,
+      syncMetadata,
+      unsyncedMetadata,
+      selectedAssets,
+      handleCopyImageProcessing,
+      requestPasteImageProcessing,
+      handleCopyMetadata,
+      handlePasteMetadata,
+    ],
   );
 
   // Open opens the last-clicked photo (a keyboard path to the viewer that
@@ -651,6 +907,18 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       } else if (matchesShortcut(e, shortcuts.stack) && selected.size >= 2) {
         e.preventDefault();
         createStackForSelection([...selected]).catch(() => {});
+      } else if (matchesShortcut(e, shortcuts.copyMetadata) && selectedAssets.length === 1) {
+        e.preventDefault();
+        handleCopyMetadata(selectedAssets[0]);
+      } else if (matchesShortcut(e, shortcuts.pasteMetadata) && selected.size > 0 && copiedMetadata) {
+        e.preventDefault();
+        handlePasteMetadata([...selected]);
+      } else if (matchesShortcut(e, shortcuts.copyImageProcessing) && selectedAssets.length === 1) {
+        e.preventDefault();
+        handleCopyImageProcessing(selectedAssets[0]);
+      } else if (matchesShortcut(e, shortcuts.pasteImageProcessing) && selected.size > 0 && copiedProcessingSource) {
+        e.preventDefault();
+        requestPasteImageProcessing([...selected]);
       } else if (selected.size > 0) {
         const ratingByShortcut: [ShortcutId, number][] = [
           ['rate0', 0],
@@ -672,7 +940,25 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openId, active, selectAll, deselectAll, selected, shortcuts, capturing, commitEditMany, createStackForSelection, toggleFavoriteForSelection]);
+  }, [
+    openId,
+    active,
+    selectAll,
+    deselectAll,
+    selected,
+    shortcuts,
+    capturing,
+    commitEditMany,
+    createStackForSelection,
+    toggleFavoriteForSelection,
+    selectedAssets,
+    handleCopyMetadata,
+    handlePasteMetadata,
+    handleCopyImageProcessing,
+    requestPasteImageProcessing,
+    copiedMetadata,
+    copiedProcessingSource,
+  ]);
 
   // Plain click: select only this one, clearing everything else (standard
   // file-manager semantics). Also used as the checkbox's own click target,
@@ -762,16 +1048,33 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           )
             .then((results) => {
               if (!results.length) return;
-              setUnsyncedMetadata((m) => {
-                const next = new Map(m);
-                for (const r of results) {
-                  next.set(r.assetId, {
-                    rating: r.rating ?? undefined,
-                    description: r.description ?? undefined,
-                  });
-                }
-                return next;
-              });
+              // A result can carry `hasProcessingSidecar: true` with both
+              // rating/description null (metadata already in sync, but a
+              // processing sidecar still exists) - only results with an
+              // actual metadata gap belong in unsyncedMetadata, or every
+              // asset with just a processing sidecar would wrongly show the
+              // "Sync Metadata from Sidecar" badge too.
+              const metaResults = results.filter((r) => r.rating !== null || r.description !== null);
+              if (metaResults.length) {
+                setUnsyncedMetadata((m) => {
+                  const next = new Map(m);
+                  for (const r of metaResults) {
+                    next.set(r.assetId, {
+                      rating: r.rating ?? undefined,
+                      description: r.description ?? undefined,
+                    });
+                  }
+                  return next;
+                });
+              }
+              const withSidecar = results.filter((r) => r.hasProcessingSidecar).map((r) => r.assetId);
+              if (withSidecar.length) {
+                setProcessingSidecarAssets((s) => {
+                  const next = new Set(s);
+                  for (const id of withSidecar) next.add(id);
+                  return next;
+                });
+              }
             })
             .catch(() => {});
         })
@@ -814,6 +1117,16 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           canOpenInRawEditor={selectedAssets.length === 1 && isRawAsset(selectedAssets[0])}
           onOpenInRawEditor={() => launchEditorForSelection('rawEditor').catch(() => {})}
           onOpenInExternalEditor={() => launchEditorForSelection('externalEditor').catch(() => {})}
+          canPasteImageProcessing={
+            !!copiedProcessingSource &&
+            [...selected].some((id) => {
+              const a = assetByIdAll.get(id);
+              return !!a && isRawAsset(a);
+            })
+          }
+          onPasteImageProcessing={() => requestPasteImageProcessing([...selected])}
+          canPasteMetadata={!!copiedMetadata}
+          onPasteMetadata={() => handlePasteMetadata([...selected])}
         />
       )}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
@@ -901,6 +1214,15 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           confirmLabel="Move to Trash"
           onConfirm={() => removeAssets([...selected])}
           onClose={() => setConfirmDeleteSelection(false)}
+        />
+      )}
+      {pasteProcessingTargets && (
+        <ConfirmDialog
+          title="Paste image processing?"
+          message={`Paste image processing onto ${pasteProcessingTargets.length} photo${pasteProcessingTargets.length === 1 ? '' : 's'}? This replaces any existing RawTherapee/ART edits on each one.`}
+          confirmLabel="Paste"
+          onConfirm={confirmPasteImageProcessing}
+          onClose={() => setPasteProcessingTargets(null)}
         />
       )}
       {contextMenu && (
@@ -1008,6 +1330,20 @@ function StatusBar({
 
 function placeLabel(a: AssetSummary): string | null {
   return a.city || a.country || null;
+}
+
+// Assets within a bucket arrive newest-first (Immich's own timeline
+// endpoints already return them that way, matching the month/day headers'
+// own newest-first order) - groupByDay below does no sorting of its own, it
+// just buckets by day in whatever order the array is already in. A locally
+// inserted asset (addAssetLocal, from the round-trip watcher) has to land in
+// the position that order implies, not just get prepended, or it visually
+// sticks at the top of its capture day until the next full refetch re-sorts
+// it from scratch.
+function insertByCaptureDateDesc(assets: AssetSummary[], asset: AssetSummary): AssetSummary[] {
+  const idx = assets.findIndex((a) => a.fileCreatedAt < asset.fileCreatedAt);
+  if (idx === -1) return [...assets, asset];
+  return [...assets.slice(0, idx), asset, ...assets.slice(idx)];
 }
 
 function groupByDay(assets: AssetSummary[]): Map<string, AssetSummary[]> {
@@ -1150,6 +1486,7 @@ function DayGroups({
                       onUnstack={(memberIds) => onUnstack(stackId, memberIds)}
                       onSetPick={(assetId, memberIds) => onSetPick(stackId, assetId, memberIds)}
                       onRate={onRate}
+                      onContextMenu={onContextMenu}
                       resolveAsset={resolveAsset}
                     />
                   );

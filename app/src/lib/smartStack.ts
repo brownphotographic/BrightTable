@@ -17,6 +17,14 @@ export function toleranceSeconds(index: number): number {
   return TOL[Math.max(0, Math.min(TOL.length - 1, index))];
 }
 
+// Generic "everything before the last dot" split, for a plain filename
+// string with no separately-known extension to strip precisely (see
+// baseName below for the precise form used when a fileExtension is known).
+export function stripExtension(fileName: string): string {
+  const dot = fileName.lastIndexOf('.');
+  return dot > 0 ? fileName.slice(0, dot) : fileName;
+}
+
 // `fileName` is Immich's originalFileName and already includes the extension
 // (e.g. "IMG_4471.ARW") - this strips exactly the known `.{fileExtension}`
 // suffix rather than a generic "everything after the last dot" split, so a
@@ -26,8 +34,7 @@ export function baseName(asset: AssetSummary): string {
   if (fileExtension && fileName.toLowerCase().endsWith('.' + fileExtension.toLowerCase())) {
     return fileName.slice(0, fileName.length - fileExtension.length - 1);
   }
-  const dot = fileName.lastIndexOf('.');
-  return dot > 0 ? fileName.slice(0, dot) : fileName;
+  return stripExtension(fileName);
 }
 
 export function captureTs(asset: AssetSummary): number {
@@ -96,6 +103,23 @@ export function agByVersion(list: AssetSummary[], suffix: string): { key: string
   return [...groups.entries()]
     .filter(([, members]) => members.length >= 2 && members.some((a) => re.test(baseName(a))))
     .map(([key, members]) => ({ key, members }));
+}
+
+// Single-pair version of agByVersion's matching, for the round-trip watcher
+// (PhotosBrowser.tsx's 'round-trip-file-detected' listener): does
+// `newFileName` (a bare filename string just detected on disk, not yet an
+// Immich AssetSummary) look like a version-string rendition of
+// `originalAsset`, per the same suffix pattern the Smart Stack dialog's
+// "Version" mode uses? Reuses buildVersionRegex/the same captured-prefix
+// stripping agByVersion does, just matching one candidate against one known
+// original instead of grouping a whole list.
+export function matchesVersionSuffix(newFileName: string, originalAsset: AssetSummary, suffix: string): boolean {
+  const re = buildVersionRegex((suffix || '').trim());
+  if (!re) return false;
+  const match = stripExtension(newFileName).match(re);
+  if (!match) return false;
+  const key = match[1].replace(/[\s_-]+$/, '');
+  return key === baseName(originalAsset);
 }
 
 export function agByTime(list: AssetSummary[], tolMs: number): { key: string; members: AssetSummary[] }[] {

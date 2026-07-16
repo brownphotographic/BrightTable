@@ -4,9 +4,10 @@ import { Heart, RejectIcon, Star } from './MetadataRows';
 // Floating action bar shown above the grid whenever the selection is
 // non-empty - ported from the design prototype's selection bar (§1.2/§6 in
 // requirements.md), scoped to only the actions that are real today: Stack,
-// Smart Stack, Favorite, and Move to Trash. Paste Settings and Add to Album
-// are left out since Copy/Paste Settings and Albums don't exist in the real
-// app yet.
+// Smart Stack, Favorite, Paste Image Processing/Metadata, and Move to Trash.
+// Add to Album is left out since Albums doesn't exist in the real app yet.
+// No Copy buttons here - Copy Image Processing/Metadata is inherently
+// single-source, so it lives in the context menu/Viewer toolbar instead.
 export default function SelectionBar({
   count,
   onCancel,
@@ -21,6 +22,10 @@ export default function SelectionBar({
   canOpenInRawEditor,
   onOpenInRawEditor,
   onOpenInExternalEditor,
+  canPasteImageProcessing,
+  onPasteImageProcessing,
+  canPasteMetadata,
+  onPasteMetadata,
 }: {
   count: number;
   onCancel: () => void;
@@ -40,6 +45,13 @@ export default function SelectionBar({
   canOpenInRawEditor: boolean;
   onOpenInRawEditor: () => void;
   onOpenInExternalEditor: () => void;
+  // Something's been Copy Image Processing'd AND at least one selected asset
+  // is RAW - a non-RAW member of the selection is just silently skipped as a
+  // paste target, not a reason to disable the whole button.
+  canPasteImageProcessing: boolean;
+  onPasteImageProcessing: () => void;
+  canPasteMetadata: boolean;
+  onPasteMetadata: () => void;
 }) {
   const canStack = count >= 2;
   // Both editors are a single-file launch (see Viewer.tsx's handleLaunch) -
@@ -105,6 +117,13 @@ export default function SelectionBar({
       )}
       <BarButton onClick={onOpenInExternalEditor} disabled={!singleSelected} title={singleSelected ? undefined : 'Select a single photo to open it in an editor'}>
         Open in Ext. Editor
+      </BarButton>
+      <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)' }} />
+      <BarButton onClick={onPasteImageProcessing} disabled={!canPasteImageProcessing} title="Paste image processing onto the RAW photos in this selection">
+        Paste Image Processing
+      </BarButton>
+      <BarButton onClick={onPasteMetadata} disabled={!canPasteMetadata} title="Paste rating/favorite/description onto this selection">
+        Paste Metadata
       </BarButton>
       <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)' }} />
       <BarButton onClick={onDelete} color="#ff8080">

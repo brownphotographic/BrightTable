@@ -20,6 +20,10 @@ export default function MenuBar({
   onSmartStack,
   onToggleRawOverride,
   onSyncSidecarRatings,
+  onCopyImageProcessing,
+  onPasteImageProcessing,
+  onCopyMetadata,
+  onPasteMetadata,
   filters,
   onFiltersChange,
 }: {
@@ -36,6 +40,10 @@ export default function MenuBar({
   onSmartStack: () => void;
   onToggleRawOverride: () => void;
   onSyncSidecarRatings: () => void;
+  onCopyImageProcessing: () => void;
+  onPasteImageProcessing: () => void;
+  onCopyMetadata: () => void;
+  onPasteMetadata: () => void;
   filters: Filters;
   onFiltersChange: (next: Filters) => void;
 }) {
@@ -151,8 +159,38 @@ export default function MenuBar({
           }}
         />
         <Divider />
-        <MenuItem label="Copy Settings" shortcut="Ctrl+C" onClick={close} />
-        <MenuItem label="Paste Settings" shortcut="Ctrl+V" onClick={close} />
+        <MenuItem
+          label="Copy Image Processing"
+          shortcut={prettyShortcut(shortcuts.copyImageProcessing)}
+          onClick={() => {
+            close();
+            onCopyImageProcessing();
+          }}
+        />
+        <MenuItem
+          label="Paste Image Processing"
+          shortcut={prettyShortcut(shortcuts.pasteImageProcessing)}
+          onClick={() => {
+            close();
+            onPasteImageProcessing();
+          }}
+        />
+        <MenuItem
+          label="Copy Metadata"
+          shortcut={prettyShortcut(shortcuts.copyMetadata)}
+          onClick={() => {
+            close();
+            onCopyMetadata();
+          }}
+        />
+        <MenuItem
+          label="Paste Metadata"
+          shortcut={prettyShortcut(shortcuts.pasteMetadata)}
+          onClick={() => {
+            close();
+            onPasteMetadata();
+          }}
+        />
         <Divider />
         <MenuItem
           label="Preferences"

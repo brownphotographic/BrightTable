@@ -68,6 +68,99 @@ pub fn pp3_sidecar_path(original: &Path) -> PathBuf {
     append_ext(original, "pp3")
 }
 
+/// ART's own develop-adjustment sidecar (distinct from the `.xmp` it also
+/// writes for rating/description, per `xmp_sidecar_path_replaced`'s doc
+/// comment) - append-form: `IMG_1234.CR2` -> `IMG_1234.CR2.arp`.
+pub fn arp_sidecar_path(original: &Path) -> PathBuf {
+    append_ext(original, "arp")
+}
+
+/// ART is *confirmed* (manual testing, see `xmp_sidecar_path_replaced`'s doc
+/// comment) to replace the extension outright for its `.xmp`, rather than
+/// appending to it - since `.arp` is that same tool's own sidecar format,
+/// it's a real possibility it follows the identical replace-extension
+/// convention rather than `.pp3`'s append form, and there's no equivalent
+/// manual confirmation on file for `.arp` specifically yet. Both forms are
+/// checked (`find_processing_sidecar`), same precedence idiom as
+/// `xmp_sidecar_path`/`xmp_sidecar_path_replaced`, rather than assuming one.
+pub fn arp_sidecar_path_replaced(original: &Path) -> PathBuf {
+    original.with_extension("arp")
+}
+
+pub fn pp3_sidecar_path_replaced(original: &Path) -> PathBuf {
+    original.with_extension("pp3")
+}
+
+/// Which RAW-editor develop-adjustment sidecar exists for an asset, for the
+/// Copy/Paste Image Processing feature - deliberately just ART (`.arp`) and
+/// RawTherapee (`.pp3`), not darktable's `.xmp`-embedded history, since that
+/// shares a file with rating/description (owned by Copy/Paste Metadata
+/// instead) and would need a surgical merge rather than a plain copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessingKind {
+    Arp,
+    Pp3,
+}
+
+/// Which of the two sidecar-naming conventions (append vs. replace-extension,
+/// see `xmp_sidecar_path`/`xmp_sidecar_path_replaced`) a given real file on
+/// disk actually used - carried alongside `ProcessingKind` so a paste can
+/// write the destination in the *same* form the source install actually
+/// produces, rather than guessing a fixed default that might be wrong for
+/// this user's actual tool (see `find_processing_sidecar`'s doc comment).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidecarForm {
+    Append,
+    Replaced,
+}
+
+impl ProcessingKind {
+    /// Computes a destination path for this kind, mirroring `form` - the
+    /// naming convention actually observed on the *source* side by
+    /// `find_processing_sidecar` - rather than a hardcoded guess. If the
+    /// target install's convention genuinely differs from the source's,
+    /// this can still land in the "wrong" spot for that install; there's no
+    /// way to know a target's own convention before it has ever had a
+    /// sidecar of its own, so mirroring the one real data point available
+    /// (the source) is the best available default.
+    pub fn sidecar_path_with_form(self, original: &Path, form: SidecarForm) -> PathBuf {
+        match (self, form) {
+            (ProcessingKind::Arp, SidecarForm::Append) => arp_sidecar_path(original),
+            (ProcessingKind::Arp, SidecarForm::Replaced) => arp_sidecar_path_replaced(original),
+            (ProcessingKind::Pp3, SidecarForm::Append) => pp3_sidecar_path(original),
+            (ProcessingKind::Pp3, SidecarForm::Replaced) => pp3_sidecar_path_replaced(original),
+        }
+    }
+}
+
+/// Resolves whichever processing sidecar actually exists on disk for an
+/// asset, and which naming form it used. `.arp` checked first (ART is the
+/// confirmed real workflow, see `xmp_sidecar_path_replaced`'s doc comment
+/// and the Smart Stack Version mode's own doc comment), append-form before
+/// replaced-form for each kind, then `.pp3`. If more than one candidate
+/// exists (e.g. the user tried both tools, or both naming forms are present)
+/// the first match in that order wins - a known v1 simplification, not
+/// disambiguated further.
+pub fn find_processing_sidecar(original: &Path) -> Option<(PathBuf, ProcessingKind, SidecarForm)> {
+    let arp_append = arp_sidecar_path(original);
+    if arp_append.exists() {
+        return Some((arp_append, ProcessingKind::Arp, SidecarForm::Append));
+    }
+    let arp_replaced = arp_sidecar_path_replaced(original);
+    if arp_replaced.exists() {
+        return Some((arp_replaced, ProcessingKind::Arp, SidecarForm::Replaced));
+    }
+    let pp3_append = pp3_sidecar_path(original);
+    if pp3_append.exists() {
+        return Some((pp3_append, ProcessingKind::Pp3, SidecarForm::Append));
+    }
+    let pp3_replaced = pp3_sidecar_path_replaced(original);
+    if pp3_replaced.exists() {
+        return Some((pp3_replaced, ProcessingKind::Pp3, SidecarForm::Replaced));
+    }
+    None
+}
+
 /// Which `.xmp` path a write should target: whichever naming convention
 /// already has a file on disk (append-form checked first, same precedence
 /// `read_asset_metadata` uses), or the append-form default if neither exists
@@ -341,6 +434,89 @@ mod tests {
         fs::write(xmp_sidecar_path_replaced(&both), "").unwrap();
         fs::write(xmp_sidecar_path(&both), "").unwrap();
         assert_eq!(xmp_write_path(&both), xmp_sidecar_path(&both));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_processing_sidecar_none_when_neither_exists() {
+        let dir = std::env::temp_dir().join(format!("immature-test-proc-none-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let original = dir.join("img.CR2");
+        assert_eq!(find_processing_sidecar(&original), None);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_processing_sidecar_finds_pp3_when_only_pp3_exists() {
+        let dir = std::env::temp_dir().join(format!("immature-test-proc-pp3-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let original = dir.join("img.CR2");
+        fs::write(pp3_sidecar_path(&original), "[General]\nRank=3\n").unwrap();
+        assert_eq!(
+            find_processing_sidecar(&original),
+            Some((pp3_sidecar_path(&original), ProcessingKind::Pp3, SidecarForm::Append))
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_processing_sidecar_prefers_arp_when_both_exist() {
+        let dir = std::env::temp_dir().join(format!("immature-test-proc-both-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let original = dir.join("img.CR2");
+        fs::write(pp3_sidecar_path(&original), "[General]\nRank=3\n").unwrap();
+        fs::write(arp_sidecar_path(&original), "1\n").unwrap();
+        assert_eq!(
+            find_processing_sidecar(&original),
+            Some((arp_sidecar_path(&original), ProcessingKind::Arp, SidecarForm::Append))
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_processing_sidecar_finds_replaced_extension_form() {
+        let dir = std::env::temp_dir().join(format!("immature-test-proc-replaced-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        // ART is confirmed to replace the extension outright for its `.xmp`
+        // (see xmp_sidecar_path_replaced's doc comment) - this is the same
+        // real-world possibility for `.arp`, which motivated adding this form
+        // at all.
+        let original = dir.join("20260103_14-56-24.DNG");
+        fs::write(arp_sidecar_path_replaced(&original), "1\n").unwrap();
+        assert_eq!(
+            find_processing_sidecar(&original),
+            Some((arp_sidecar_path_replaced(&original), ProcessingKind::Arp, SidecarForm::Replaced))
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sidecar_path_with_form_mirrors_the_source_forms_naming() {
+        let dir = std::env::temp_dir().join(format!("immature-test-proc-mirror-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let target = dir.join("target.CR2");
+        assert_eq!(
+            ProcessingKind::Arp.sidecar_path_with_form(&target, SidecarForm::Replaced),
+            arp_sidecar_path_replaced(&target)
+        );
+        assert_eq!(
+            ProcessingKind::Arp.sidecar_path_with_form(&target, SidecarForm::Append),
+            arp_sidecar_path(&target)
+        );
+        assert_eq!(
+            ProcessingKind::Pp3.sidecar_path_with_form(&target, SidecarForm::Replaced),
+            pp3_sidecar_path_replaced(&target)
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

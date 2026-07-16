@@ -44,8 +44,8 @@
   Trash. The bottom status bar's redundant text links for the same two actions were removed
   once the bar covered them (§7.17). A right-click **context menu** (**Stack N Photos**,
   **Smart Stack N Photos**, **Unstack** — §7.13) remains for per-tile access. Paste Settings
-  and Add to Album from the prototype's bar are deliberately left out — no Copy/Paste
-  Settings or Albums feature exists in the real app yet (§1.5, §7.15).
+  and Add to Album from the prototype's bar are deliberately left out — no Copy/Paste Image
+  Processing, Copy/Paste Metadata, or Albums feature exists in the real app yet (§1.5, §7.15).
 - ✅ Detail view (`Viewer.tsx`) with zoomable preview, EXIF info panel, and a filmstrip of
   the current set (§7.5).
 - 🟡 Adjustable thumbnail size and file-type badges are real and always-on. They are **not**
@@ -102,7 +102,17 @@
   - 🟡 Bulk edit — only rating/favorite have a bulk path, and only via keyboard shortcuts
     over the current grid selection (§7.8), not a Copy Settings → Paste Settings flow.
     Description, and everything else, is single-asset-only (the panel says so explicitly).
-  - ⬜ Copy Settings / Paste Settings (adjustments, EXIF/IPTC fields, ratings) — prototype only.
+  - ⬜ **Copy Image Processing / Paste Image Processing** — copies the RAW-edit sidecar's
+    develop **adjustments** wholesale (e.g. ART's `.arp`, RawTherapee's `.pp3`, darktable's
+    `.xmp` develop history) from a source asset onto one or more target assets. A separate
+    function from Metadata below, not a combined "Settings" concept — prototype only so far;
+    §7.18's intro already flagged this split ("wholesale sidecar copy vs. this feature's
+    targeted field patch") before it had these names.
+  - ⬜ **Copy Metadata / Paste Metadata** — copies **EXIF/IPTC fields and ratings** (DB +
+    XMP) from a source asset onto one or more target assets — the bulk-multi-asset
+    counterpart to the single-asset field sync §7.18 Stages A/B already built (rating/
+    description via `.xmp`/embedded/`.pp3` read and `.xmp` patch-write). Prototype only so
+    far as a distinct Copy/Paste function.
 
 ### 1.6 Versioning & round-trip
 > The prototype's "Create Version" concept (version lineage, auto-stacked renditions, a
@@ -757,12 +767,13 @@
   in the `.dc.html` prototype (manual Stacks and Smart Stack are now both real, §7.13/§7.14;
   the much smaller launch-only editor round-trip that survived §1.6's scope cut is real too,
   §7.21).
-- **Menu bar stubs** (`MenuBar.tsx`): Upload…, Print…, Copy/Paste Settings, View → Zoom
-  In/Out, View → Sort Photos By (Newest/Oldest/Name/Rating) are present in the menu but not
-  wired to anything real yet. **Refresh Timeline** (`F5`), **Select All / Deselect All**
-  (`Ctrl+A` / Edit menu), **Stack Selected** (`S`, §7.13), **Smart Stack…** (§7.14), **Import
-  from SD Card/Disk…** (§7.22), **Recent Activity…**, **Quit**, **Preferences** (`Ctrl+,`),
-  and the **Filters** dropdown (§7.11) are real.
+- **Menu bar stubs** (`MenuBar.tsx`): Upload…, Print…, View → Zoom In/Out, View → Sort
+  Photos By (Newest/Oldest/Name/Rating) are present in the menu but not wired to anything
+  real yet. **Refresh Timeline** (`F5`), **Select All / Deselect All** (`Ctrl+A` / Edit
+  menu), **Stack Selected** (`S`, §7.13), **Smart Stack…** (§7.14), **Import from SD
+  Card/Disk…** (§7.22), **Recent Activity…**, **Quit**, **Preferences** (`Ctrl+,`), the
+  **Filters** dropdown (§7.11), and now **Copy/Paste Image Processing** and **Copy/Paste
+  Metadata** (§7.24, split out of the old combined "Copy/Paste Settings" stub) are real.
 - Next real-app milestone: pick one of the above (Albums/People, sharing/printing) to wire
   up the same way Library + Photos + Folders + Viewer + Delete/Trash + Filters + Stacks +
   Applications + Import were done so far.
@@ -863,9 +874,11 @@
   reflection of any one asset's current value, unlike the single-asset rating row in
   `MetadataRows`.
 - ✅ **Scoped to real functionality only** — the prototype's bar also had **Paste Settings**
-  (needs a clipboard/copy-paste-settings feature, §1.5, prototype-only) and **Add to Album**
-  (needs Albums, still a placeholder, §7.15); both intentionally left out rather than wired
-  to dead ends, per an explicit decision with the user.
+  (needs a clipboard/copy-paste-settings feature, §1.5, prototype-only at the time) and
+  **Add to Album** (needs Albums, still a placeholder, §7.15); both intentionally left out
+  rather than wired to dead ends, per an explicit decision with the user. **Paste Settings
+  is now real, split into Paste Image Processing and Paste Metadata (§7.24)** — Add to
+  Album remains out, Albums is still unbuilt.
 - ✅ **Favorite is now a real click target**, not just a keyboard shortcut (§7.8's gap) — a
   shared `toggleFavoriteForSelection` callback (same "any non-favorited member flips
   everything on" convention the `f` shortcut already used) is now the single implementation
@@ -884,9 +897,15 @@
 ### 7.18 RAW-editor metadata sync — Stage 0 through Stage B + reject control (real)
 > Larger, user-planned feature: digiKam/darktable/RawTherapee/ART all write sidecar files (or,
 > for JPEG/TIFF, straight into the image itself) that Immich never sees. Full plan (all stages)
-> recorded in this session's plan file. darktable/ART Copy-Paste Settings + the local "pasted
-> settings" badge remain queued next, not yet built (separate feature, separate risk profile —
-> wholesale sidecar copy vs. this feature's targeted field patch).
+> recorded in this session's plan file. The "wholesale sidecar copy vs. this feature's
+> targeted field patch" split flagged here turned into exactly that: **Copy/Paste Image
+> Processing** (ART `.arp`/RawTherapee `.pp3`, wholesale copy) and **Copy/Paste Metadata**
+> (rating/favorite/description, reusing this section's own targeted field patch/sync
+> plumbing) are now real as two separate functions — see §7.24. darktable's own `.xmp`-
+> embedded develop history is **not** covered by Image Processing (it shares a file with
+> rating/description, which would need a surgical merge rather than a copy — an explicit,
+> accepted v1 gap, not revisited here) and the local "pasted settings" badge idea remains
+> unbuilt, a possible future polish item.
 - ✅ **Stage 0 — local path resolution.** A second NFS/SMB mount mapping on `LibraryConfig`/
   Preferences → Library → Originals on Disk: `uploadedLocalRoot`/`uploadedImmichRoot`,
   alongside the existing External Library `localRoot`/`immichRoot` pair — External Library
@@ -1433,5 +1452,173 @@
   card). In particular still outstanding: the Immich Library Scan API against the user's actual
   server version, `kamadak-exif`'s real coverage on the user's own RAW formats (especially any
   CR3/RAF), and the full dialog → scan → import → Activity-panel → Immich-nudge flow end to end.
+
+### 7.24 Copy/Paste Image Processing & Copy/Paste Metadata (real)
+> User request: split the prototype's single "Copy Settings / Paste Settings" concept
+> (§1.5, §4.2) into **two independent functions** instead — one for a RAW asset's
+> develop-adjustment sidecar, one for the DB/XMP fields ImmAture already edits. §7.18's own
+> intro had already flagged this exact split ("wholesale sidecar copy vs. this feature's
+> targeted field patch") before either function had a name.
+- ✅ **Copy/Paste Metadata needed almost no new backend code** — it reuses
+  `update_asset_metadata`/`EditQueue` (§7.18 Stage B/§7.20) as-is: Copy Metadata just reads
+  an asset's current `{rating, isFavorite, description}` into a new in-memory clipboard;
+  Paste Metadata calls the existing `commitEdit`/`commitEditMany` with that as the patch —
+  the same Immich-PUT + `.xmp`-mirror path every other rating/favorite/description edit
+  already goes through. No confirm dialog, matching the existing no-confirm bulk
+  rating/favorite UX.
+- ✅ **Copy/Paste Image Processing is fully new**, scoped to **ART `.arp` + RawTherapee
+  `.pp3` only** (an explicit decision with the user) — both are standalone
+  develop-adjustment files with no metadata mixed in, so this is a plain wholesale file
+  copy. darktable's own `.xmp`-embedded develop history is **not** supported: it shares a
+  file with rating/description (Copy/Paste Metadata's territory), so copying it wholesale
+  would leak metadata across the two functions — would need a surgical XML merge instead
+  of a copy, left as a known, accepted v1 gap rather than solved.
+  - `paths.rs`: `arp_sidecar_path()`/`arp_sidecar_path_replaced()` and
+    `find_processing_sidecar()` (new `ProcessingKind`/`SidecarForm` enums) — checks `.arp`
+    first (ART is this app's confirmed real workflow, §7.14), append-form before
+    replaced-form for each kind, then `.pp3`; if more than one candidate exists the first
+    match in that order wins, a known v1 simplification, not disambiguated further.
+  - 🐛 **Suspected real bug, found via code review, not yet live-confirmed**: the first cut
+    of this only checked `.arp`/`.pp3` in the append form (`IMG_1234.CR2.arp`), copying that
+    exact naming form onto the paste target. But `xmp_sidecar_path_replaced`'s own doc
+    comment already establishes ART **replaces** the extension outright for its `.xmp`
+    (`20260103_14-56-24.DNG` → `20260103_14-56-24.xmp`, confirmed against a real file) — the
+    same tool's `.arp` plausibly follows the identical convention, which the append-only
+    assumption would silently miss or, worse, write the pasted sidecar to a path the editor
+    never actually reads. Fixed by adding the replaced-extension form for both `.arp`/`.pp3`
+    and having `find_processing_sidecar` report which form it actually found
+    (`SidecarForm::Append`/`Replaced`) alongside the path/kind — `paste_image_processing`
+    then writes the destination via `ProcessingKind::sidecar_path_with_form`, **mirroring
+    the exact form observed on the source** rather than a hardcoded guess, so it's correct
+    regardless of which convention this user's real ART/RawTherapee install actually uses.
+    Awaiting the user's live test (see below) to confirm this was the actual root cause of
+    "pasted settings don't show up in the RAW editor."
+  - New `app/src-tauri/src/processing_queue.rs` — a small sibling queue to `edit_queue.rs`
+    (§7.20), not a new job kind bolted onto it: this job is a plain local file copy with no
+    Immich call at all, which doesn't fit `edit_queue`'s hardcoded `tokio::join!`(XMP-write,
+    Immich-PUT) dispatch. Same idioms reused throughout: `Pending → Copying → Done|Failed`
+    board, bounded `Semaphore`, `io_guard::guarded_spawn_blocking`, per-target asset locks,
+    capped completed-history trim, atomic tmp-file+rename write.
+  - `commands::paste_image_processing` — same `read_only`/`max_writes_per_batch` gate as
+    every other write, plus one more check specific to this command: it resolves the
+    source's local path and confirms a processing sidecar actually exists **before**
+    enqueueing anything, so a source with nothing to copy is a synchronous error, not N
+    queued jobs doomed to fail.
+  - `check_sidecar_metadata`/`MetadataSyncResult` gained `hasProcessingSidecar: bool`,
+    piggybacked onto the same already-running per-bucket/per-folder scan that computes
+    `unsyncedMetadata` gaps (§7.18 Stage A) — avoids a second per-tile polling mechanism
+    just to know whether "Copy Image Processing" should be enabled for a given asset.
+    Independent of the rating/description gap it was already reporting: a result can now
+    carry `hasProcessingSidecar: true` with no metadata gap at all (an asset with synced
+    metadata but a processing sidecar to copy), so the frontend keeps the two flags in
+    separate maps (`unsyncedMetadata` vs. a new `processingSidecarAssets` set per browser
+    page) rather than conflating them into one badge.
+- ✅ **Frontend**: new `lib/clipboard.tsx` (`ClipboardProvider`/`useClipboard`) — deliberately
+  in-memory only, never persisted to `config.json`, matching a real OS clipboard's lifetime
+  rather than a setting. New `lib/processingQueue.tsx` mirrors `lib/editQueue.tsx` exactly
+  (1s poll, shared context). Four new rebindable shortcuts in `shortcuts.tsx`:
+  `copyImageProcessing`/`pasteImageProcessing` default to `Ctrl+C`/`Ctrl+V`;
+  `copyMetadata`/`pasteMetadata` default to `Ctrl+Shift+C`/`Ctrl+Shift+V` (per the user's
+  own preferred assignment).
+  - 🐛 **Real bug found and fixed**: `Ctrl+Shift+C` originally formatted identically to
+    `Ctrl+C` — `formatShortcut` only recorded Shift for multi-char keys (e.g.
+    `Shift+ArrowLeft`), on the theory that for a bare letter, Shift already changes what
+    `e.key` is and recording it separately would just fracture "A"/"Shift+A" into two
+    bindings for no benefit. That reasoning doesn't hold once Ctrl/Alt are also in play —
+    "Ctrl+C" and "Ctrl+Shift+C" need to be distinguishable, which the app's whole
+    Image-Processing-vs-Metadata shortcut split depends on. Fixed by recording Shift
+    whenever it's held **and** (the key is multi-char **or** Ctrl/Alt is also held) —
+    preserves the original plain-letter behavior (no defaults use bare Shift+letter) while
+    making the Ctrl+Shift combos real, reachable, distinct bindings.
+- ✅ **Entry points**, matching the existing dual context-menu/`SelectionBar` convention
+  already established by Stack/Sync-Metadata (§7.13/§7.18): a context-menu item on the
+  single right-clicked tile for all four actions (Copy Image Processing only offered when
+  the asset is RAW and `hasProcessingSidecar`; Paste Image Processing only when something's
+  copied and the asset is RAW), plus `SelectionBar.tsx` **Paste Image Processing**/**Paste
+  Metadata** buttons for the whole current selection (no Copy buttons there — Copy is
+  inherently single-source). `Viewer.tsx` got all four as header buttons for the single
+  open/peeked asset. The two previously-inert `MenuBar.tsx` Edit-menu stubs (`"Copy
+  Settings"`/`"Paste Settings"`, hardcoded `Ctrl+C`/`Ctrl+V` labels) were replaced with four
+  real items showing their actual bound shortcut via `prettyShortcut()`.
+  - 🐛 **Fixed a labeling inconsistency, reported live by the user**: `Viewer.tsx`'s two
+    Image Processing buttons were shortened to "Copy Processing"/"Paste Processing" (fitting
+    the header row), while every other surface used the full "Copy/Paste Image Processing" —
+    inconsistent wording across the four surfaces for what's otherwise the same action.
+    Fixed by using the full label in `Viewer.tsx` too, matching Copy/Paste Metadata's label
+    there (which was never shortened). Broader visual consistency (icons, button chrome)
+    across the four surfaces was **not** further unified — Viewer's own toolbar already mixes
+    icon and plain-text buttons for older, unrelated actions (Loupe has an icon, Info/
+    Filmstrip/Unstack/RAW-editor buttons don't), so matching that existing mixed style rather
+    than introducing new icons was the deliberately narrower fix; revisit if the user wants
+    a real icon pass.
+- ✅ **Paste Image Processing gets a `ConfirmDialog`** ("Paste image processing onto N
+  photo(s)? This replaces any existing RawTherapee/ART edits on each one.") before calling
+  the backend — an explicit decision with the user, since it silently overwrites real edit
+  work, especially across a multi-select paste; matches the app's existing Delete/Unstack/
+  Empty-Trash confirm pattern. Paste Metadata has no confirm, matching the existing
+  no-confirm bulk rating/favorite UX.
+- ✅ **`ActivityIndicator.tsx`/`ActivityPanel.tsx`** gained a third "Processing" queue/section
+  (`useProcessingQueue()`), folded into the same combined TitleBar pill and modal as the
+  existing Edits/Imports sections (§7.20/§7.22) rather than a fourth separate UI surface.
+- ✅ 7 new backend unit tests (`paths.rs`: `find_processing_sidecar` none/pp3-only/
+  arp-preferred-when-both/replaced-extension-form, `sidecar_path_with_form` mirrors the
+  source's form; `processing_queue.rs`: id assignment, atomic-copy cleanup on a write
+  failure, trim never evicts in-flight jobs) — `cargo test` (109/109 across the whole
+  backend), `cargo check` clean. `cargo clippy` isn't installed in this sandbox, so `cargo
+  check`/`cargo test` are the available signal here, same limitation as every prior round
+  that mentions clippy.
+- ✅ `tsc -b`/`oxlint` clean across the frontend — the only warnings are the pre-existing
+  `react(only-export-components)` pattern every other provider file in this codebase already
+  has (`editQueue.tsx`, `applications.tsx`, etc., not a new category) plus one pre-existing,
+  unrelated `PhotosBrowser.tsx` dependency warning predating this change.
+- ✅ **Live-tested end to end against the user's real Immich server, real NFS-mounted
+  library, and the already-running `cargo tauri dev` session** — this particular sandbox
+  turned out to have real access to all three (the user's actual desktop), unlike the
+  no-display/no-server/no-mount limitation every prior round in this file mentions; used
+  that access to inspect real `.arp`/`.xmp` files on disk directly rather than only trust
+  the UI. Two real bugs surfaced and got fixed live, plus one theory ruled out:
+  - 🐛 **Root cause of "pasted settings don't show up," found and fixed live**: `StackBand`
+    (the expanded-stack grid view) never had a right-click context menu wired up at all —
+    `onContextMenu` was simply never passed to it or its member `AssetTile`s, unlike every
+    plain or collapsed-pick tile. Harmless while the menu only had Stack/Unstack/Sync
+    Metadata (this band already has its own Unstack button and per-member Set Pick/rating
+    controls), but Copy/Paste Image Processing and Copy/Paste Metadata have no other
+    in-band entry point, so a stacked source/target (common in this user's real library)
+    made the feature silently unreachable — no error, no dialog, just nothing happening.
+    Fixed by threading `onContextMenu` through `StackBand.tsx` into each member's
+    `AssetTile`, wired from both browser pages the same way the collapsed case already was.
+  - 🐛 **Related bug, found while fixing the above**: even once wired up, `contextMenuItems`
+    resolved the right-clicked asset via the **filtered** `assetById` map, which structurally
+    excludes non-pick stack members (`isHiddenStackChild`) — right-clicking any member other
+    than the stack's pick would have opened an empty menu. Fixed by resolving via the
+    unfiltered `assetByIdAll` instead, the same fix `Viewer.tsx`'s peek architecture already
+    needed for the identical structural reason (§7.16).
+  - 🐛 **Second real bug, found live right after the first**: with a multi-selection active,
+    "Paste Image Processing"/"Paste Metadata" from the context menu always confirmed onto
+    just the single right-clicked tile ("Paste image processing onto 1 photo?"), silently
+    ignoring the rest of the selection — inconsistent with "Stack N Photos"/"Smart Stack N
+    Photos" in that same menu, which already target the whole `selected` set whenever 2+ are
+    selected, regardless of which tile was right-clicked. Fixed to follow the identical rule:
+    both Paste actions now target `[...selected]` when `selected.size >= 2` (label changes to
+    "Paste Image Processing to N Photos"/"Paste Metadata to N Photos"), falling back to the
+    single right-clicked tile otherwise.
+  - **Theory ruled out**: before finding the real cause, suspected the sidecar-naming-form
+    fix above (`.arp` append vs. extension-replaced) might be the culprit. Checked the user's
+    actual `.arp` files directly on disk — ART genuinely uses append-form
+    (`IMG_1234.DNG.arp`) in this real library, so that wasn't it. The dual-form fix is kept
+    anyway as reasonable hardening (still correct, just not what was broken here).
+  - **Confirmed working**: Copy Image Processing → Paste Image Processing onto both a
+    single RAW target and a multi-selection of RAW targets, verified by diffing the actual
+    `.arp` bytes on disk (byte-for-byte match with the source at paste time; a later
+    real-world divergence traced to the user's own subsequent edit in ART, not a copy bug).
+  - ⬜ Copy/Paste Metadata itself was **not** separately live-tested this round (only Image
+    Processing was) — same concrete manual check as before still applies: Copy Metadata from
+    a rated+favorited+captioned asset, Paste onto a selection, confirm both Immich and each
+    target's `.xmp` reflect the pasted values.
+  - **Unrelated bug noticed along the way, not fixed**: the bottom status bar's "Activity"
+    label (`PhotosBrowser.tsx`'s `StatusBar`) has no click handler at all — predates this
+    feature, not something it introduced. The real, working activity indicator is the
+    title-bar pill (§7.20/§7.23), which only appears while a job is in-flight or failed. Left
+    as a known small gap; revisit if the user wants the bottom-bar label wired up or removed.
 
 <!-- Paste further decisions, rationale, rejected ideas, or transcripts below; ask Claude to fold them in. -->

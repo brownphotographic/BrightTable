@@ -1,6 +1,7 @@
 import { useEditQueue } from '../lib/editQueue';
 import { useImportQueue } from '../lib/importQueue';
-import { thumbnailSrc, type EditJob, type ImportJob, type ImportJobStatus } from '../lib/api';
+import { useProcessingQueue } from '../lib/processingQueue';
+import { thumbnailSrc, type EditJob, type ImportJob, type ImportJobStatus, type ProcessingJobStatus } from '../lib/api';
 
 function kindLabel(job: EditJob): string {
   const parts: string[] = [];
@@ -36,6 +37,19 @@ function importStatusPill(status: ImportJobStatus): { label: string; color: stri
   }
 }
 
+function processingStatusPill(status: ProcessingJobStatus): { label: string; color: string; bg: string } {
+  switch (status) {
+    case 'pending':
+      return { label: 'Queued', color: 'rgba(255,255,255,0.6)', bg: 'rgba(255,255,255,0.08)' };
+    case 'copying':
+      return { label: 'Copying…', color: '#9cc2f0', bg: 'rgba(53,132,228,0.22)' };
+    case 'done':
+      return { label: 'Done', color: '#8ce0ae', bg: 'rgba(46,194,126,0.18)' };
+    case 'failed':
+      return { label: 'Failed', color: '#ff8080', bg: 'rgba(224,27,36,0.2)' };
+  }
+}
+
 function baseName(path: string): string {
   return path.split('/').pop() ?? path;
 }
@@ -55,15 +69,19 @@ function formatMB(bytes: number): string {
 export default function ActivityPanel({ onClose }: { onClose: () => void }) {
   const { jobs: editJobs, clearCompleted: clearEditCompleted } = useEditQueue();
   const { jobs: importJobs, clearCompleted: clearImportCompleted, nudgeError } = useImportQueue();
+  const { jobs: processingJobs, clearCompleted: clearProcessingCompleted } = useProcessingQueue();
   const sortedEdits = [...editJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
   const sortedImports = [...importJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
+  const sortedProcessing = [...processingJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
   const hasCompleted =
     editJobs.some((j) => j.status === 'done' || j.status === 'failed') ||
-    importJobs.some((j) => j.status === 'done' || j.status === 'failed');
+    importJobs.some((j) => j.status === 'done' || j.status === 'failed') ||
+    processingJobs.some((j) => j.status === 'done' || j.status === 'failed');
 
   function clearAllCompleted() {
     clearEditCompleted();
     clearImportCompleted();
+    clearProcessingCompleted();
   }
 
   return (
@@ -193,6 +211,29 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
                         {job.bytesCopied > 0 && ` (got ${formatMB(job.bytesCopied)} / ${formatMB(job.sizeBytes)} MB)`}
                       </div>
                     )}
+                  </div>
+                  <StatusPill pill={pill} />
+                </div>
+              );
+            })
+          )}
+
+          <SectionLabel>Processing</SectionLabel>
+          {sortedProcessing.length === 0 ? (
+            <EmptyRow>No image processing pasted yet this session.</EmptyRow>
+          ) : (
+            sortedProcessing.map((job) => {
+              const pill = processingStatusPill(job.status);
+              return (
+                <div key={job.jobId} style={rowStyle}>
+                  <img
+                    src={thumbnailSrc(job.targetAssetId)}
+                    alt=""
+                    style={{ width: 40, height: 40, borderRadius: 6, objectFit: 'cover', flexShrink: 0, background: '#333' }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={rowTitle}>Paste Image Processing</div>
+                    {job.error && <div style={rowError}>{job.error}</div>}
                   </div>
                   <StatusPill pill={pill} />
                 </div>
