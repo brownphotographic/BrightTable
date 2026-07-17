@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react';
+import { open } from '@tauri-apps/plugin-dialog';
 import { useApplications } from '../lib/applications';
 import AppPickerDialog from '../components/AppPickerDialog';
 import type { AppChoice } from '../lib/api';
@@ -12,12 +13,24 @@ const ROLE_HELP: Record<Role, string> = {
 };
 
 export default function PreferencesApplications() {
-  const { applications, setEditor } = useApplications();
+  const { applications, setEditor, setArtCliPath, artRoundTripEnabled } = useApplications();
   const [pickerRole, setPickerRole] = useState<Role | null>(null);
+  const [browseError, setBrowseError] = useState<string | null>(null);
 
   function handlePick(choice: AppChoice) {
     if (pickerRole) setEditor(pickerRole, choice);
     setPickerRole(null);
+  }
+
+  async function browseForArtCli() {
+    setBrowseError(null);
+    try {
+      const path = await open({ multiple: false, directory: false, title: 'Choose the ART-cli binary' });
+      if (!path || typeof path !== 'string') return;
+      setArtCliPath(path);
+    } catch (e) {
+      setBrowseError(String(e));
+    }
   }
 
   return (
@@ -55,6 +68,39 @@ export default function PreferencesApplications() {
             </div>
           );
         })}
+      </div>
+
+      <div style={{ fontSize: 14, fontWeight: 700, margin: '24px 4px 12px' }}>ART CLI Round Trip</div>
+      <div style={{ fontSize: 12.5, color: 'var(--text-dimmer)', margin: '0 4px 16px', lineHeight: 1.5 }}>
+        Requires the RAW Editor above to actually be{' '}
+        <a href="https://bitbucket.org/agriggio/art/" target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>
+          ART
+        </a>{' '}
+        (the RawTherapee fork). When its <code>ART-cli</code> binary is configured here, "Open in RAW Editor" opens
+        ART itself, waits for you to finish, then runs <code>ART-cli</code> to produce the export deterministically -
+        no more manually exporting inside ART's own UI. A "Batch RAW Roundtrip" action also becomes available for
+        exporting several RAW photos headlessly at once.
+      </div>
+      <div style={panel}>
+        <div style={row}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.85)' }}>ART-cli path</div>
+            <div style={{ fontSize: 12, marginTop: 6, color: artRoundTripEnabled ? '#fff' : 'var(--text-dimmer)' }}>
+              {artRoundTripEnabled ? applications.artCliPath : 'Not configured'}
+            </div>
+          </div>
+          <button onClick={browseForArtCli} style={btnSecondary}>
+            Browse…
+          </button>
+          {artRoundTripEnabled && (
+            <button onClick={() => setArtCliPath('')} style={{ ...btnSecondary, marginLeft: 8 }}>
+              Clear
+            </button>
+          )}
+        </div>
+        {browseError && (
+          <div style={{ padding: '0 16px 13px', fontSize: 12, color: 'var(--danger)' }}>{browseError}</div>
+        )}
       </div>
 
       {pickerRole && (

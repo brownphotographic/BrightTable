@@ -1,3 +1,4 @@
+use crate::art_queue::ArtQueue;
 use crate::config::AppConfig;
 use crate::edit_queue::EditQueue;
 use crate::import::ImportQueue;
@@ -27,12 +28,18 @@ pub struct AppState {
     /// Watches a round-trip asset's folder for the editor's output file -
     /// see `round_trip.rs`. Registered from `commands::launch_editor`; its
     /// background task is spawned once from `lib.rs`'s `.setup()`, same
-    /// pattern as `edit_queue`/`import_queue`.
+    /// pattern as `edit_queue`/`import_queue`. Never touched by the ART CLI
+    /// round trip - both its variants know their export filename
+    /// synchronously, so they have no need to register with this watcher.
     pub round_trip: Arc<RoundTripWatcher>,
     /// Background Paste Image Processing sidecar-copy queue - see
     /// `processing_queue.rs`. Same "spawned once from `.setup()`" pattern as
     /// `edit_queue`/`import_queue`.
     pub processing_queue: Arc<ProcessingQueue>,
+    /// Background Batch RAW Roundtrip queue (ART CLI round trip Variant 2) -
+    /// see `art_queue.rs`. Same "spawned once from `.setup()`" pattern as
+    /// the other background queues.
+    pub art_queue: Arc<ArtQueue>,
 }
 
 impl AppState {
@@ -42,6 +49,7 @@ impl AppState {
         import_queue: Arc<ImportQueue>,
         round_trip: Arc<RoundTripWatcher>,
         processing_queue: Arc<ProcessingQueue>,
+        art_queue: Arc<ArtQueue>,
     ) -> Self {
         Self {
             config: Mutex::new(config),
@@ -51,6 +59,7 @@ impl AppState {
             import_queue,
             round_trip,
             processing_queue,
+            art_queue,
         }
     }
 

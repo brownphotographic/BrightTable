@@ -2,6 +2,7 @@ import { forwardRef, useCallback, useDeferredValue, useEffect, useImperativeHand
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { listen } from '@tauri-apps/api/event';
 import {
+  batchArtRoundTrip,
   checkSidecarMetadata,
   createStack,
   deleteAssets,
@@ -9,13 +10,14 @@ import {
   getStack,
   getTimelineBuckets,
   getTimelineBucketAssets,
+  launchArtRoundTrip,
   launchEditor,
   listStacks,
   pasteImageProcessing,
-  scanImmichLibrary,
-  setAssetCaptureDate,
   setStackPick,
   updateAssetMetadata,
+  type ArtJob,
+  type ArtRoundTripTarget,
   type AssetMetadataPatch,
   type AssetStackInfo,
   type AssetSummary,
@@ -45,8 +47,10 @@ import { useSmartStackSettings } from '../lib/smartStackSettings';
 import { pendingStyle } from '../lib/pending';
 import { useEditQueue } from '../lib/editQueue';
 import { useEditJobReconciliation } from '../lib/useEditJobReconciliation';
+import { useArtQueue } from '../lib/artQueue';
+import { useArtJobReconciliation } from '../lib/useArtJobReconciliation';
 import { useBucketMemo } from '../lib/bucketMemo';
-import { pollForNewAsset } from '../lib/roundTrip';
+import { ingestRoundTripExport, type RoundTripIngestOutcome } from '../lib/roundTrip';
 
 // Snapshots whichever AssetSummary fields a patch is about to touch, so a
 // job that later fails (the sidecar write, the authoritative mechanism -
@@ -391,6 +395,25 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     [assetCache, onTotalCount],
   );
 
+  // Applies an ingestRoundTripExport outcome (lib/roundTrip.ts) to local
+  // state - shared by the generic round trip's 'round-trip-file-detected'
+  // listener below and both ART CLI round-trip variants (Viewer.tsx's
+  // onRoundTripExported for Variant 1, reconcileArtJob for Variant 2).
+  const applyRoundTripOutcome = useCallback(
+    (outcome: RoundTripIngestOutcome) => {
+      addAssetLocal(outcome.asset, outcome.originalAssetId);
+      if (outcome.stack) {
+        const { memberIds, info } = outcome.stack;
+        setStackByAssetId((m) => {
+          const next = new Map(m);
+          for (const id of memberIds) next.set(id, info);
+          return next;
+        });
+      }
+    },
+    [addAssetLocal],
+  );
+
   // Watches for the round-trip file the backend detected (see round_trip.rs)
   // to actually be the editor's output for one of the candidates it's
   // pending on - matched here (not backend-side) via the same version-string
@@ -399,7 +422,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   const { settings: smartStackSettings } = useSmartStackSettings();
   useEffect(() => {
     const unlisten = listen<RoundTripFileDetected>('round-trip-file-detected', (e) => {
-      const { candidates, newFileName, folderImmichPath } = e.payload;
+      const { candidates, newFileName } = e.payload;
       const match = candidates.find((c) => {
         const original = assetByIdAll.get(c.originalAssetId);
         return original && matchesVersionSuffix(newFileName, original, smartStackSettings.suffix);
@@ -411,63 +434,14 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
         const original = assetByIdAll.get(originalAssetId);
         if (!original) return;
 
-        await scanImmichLibrary().catch(() => {});
-        let found = await pollForNewAsset(folderImmichPath, newFileName);
-        if (!found) return;
-
-        // RAW editors' exported JPEGs frequently carry no EXIF
-        // DateTimeOriginal of their own, so Immich indexes them under
-        // "now" instead of the original's real capture time - correct it
-        // both server-side and in the object about to be inserted, so the
-        // new asset lands in the same day group as the original it belongs
-        // next to rather than under today's date.
-        if (found.fileCreatedAt !== original.fileCreatedAt) {
-          setAssetCaptureDate(found.id, original.fileCreatedAt).catch(() => {});
-          found = { ...found, fileCreatedAt: original.fileCreatedAt };
-        }
-
-        // Carries the original's rating/favorite/description onto the
-        // round-trip output too - a freshly-created asset otherwise starts
-        // with none of it. Goes through updateAssetMetadata directly (not
-        // commitEdit) using found.originalPath as already returned by
-        // Immich, rather than assetByIdAll's lookup for `found.id` - that
-        // memo hasn't recomputed yet this tick, so it wouldn't see this
-        // asset at all until after this async chain finishes.
-        const metadataPatch: AssetMetadataPatch = {};
-        if (original.rating != null) metadataPatch.rating = original.rating;
-        if (original.isFavorite) metadataPatch.isFavorite = original.isFavorite;
-        if (original.description) metadataPatch.description = original.description;
-        if (Object.keys(metadataPatch).length > 0) {
-          found = { ...found, ...metadataPatch };
-          updateAssetMetadata([{ id: found.id, originalPath: found.originalPath }], metadataPatch).catch(() => {});
-        }
-
-        addAssetLocal(found, originalAssetId);
-
-        let memberIds = [found.id, originalAssetId];
-        const existingStackId = original.stack?.id;
-        if (existingStackId) {
-          const existing = await getStack(existingStackId).catch(() => null);
-          if (existing) {
-            await deleteStack(existingStackId).catch(() => {});
-            const extraIds = existing.assets.map((a) => a.id).filter((id) => id !== originalAssetId);
-            memberIds = [found.id, originalAssetId, ...extraIds];
-          }
-        }
-        const stack = await createStack(memberIds).catch(() => null);
-        if (!stack) return;
-        const info: AssetStackInfo = { id: stack.id, primaryAssetId: stack.primaryAssetId, assetCount: memberIds.length };
-        setStackByAssetId((m) => {
-          const next = new Map(m);
-          for (const id of memberIds) next.set(id, info);
-          return next;
-        });
+        const outcome = await ingestRoundTripExport(original, newFileName);
+        if (outcome) applyRoundTripOutcome(outcome);
       })();
     });
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, [assetByIdAll, smartStackSettings.suffix, addAssetLocal]);
+  }, [assetByIdAll, smartStackSettings.suffix, applyRoundTripOutcome]);
 
   // Grid deletes always move to trash (permanent=false) - "Delete Forever"
   // only exists from within the Trash view.
@@ -618,9 +592,10 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   }, [selected, allSelectedFavorited, commitEditMany]);
 
   // Launch-only, single-asset - mirrors Viewer.tsx's handleLaunch exactly
-  // (same redirect-to-Preferences-when-unconfigured behavior), just sourced
-  // from the selection bar's one selected asset instead of the open asset.
-  const { applications } = useApplications();
+  // (same redirect-to-Preferences-when-unconfigured behavior and ART CLI
+  // round-trip branch), just sourced from the selection bar's one selected
+  // asset instead of the open asset.
+  const { applications, artRoundTripEnabled } = useApplications();
   const launchEditorForSelection = useCallback(
     async (role: 'rawEditor' | 'externalEditor') => {
       if (selectedAssets.length !== 1) return;
@@ -630,9 +605,15 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
         return;
       }
       const asset = selectedAssets[0];
+      if (role === 'rawEditor' && artRoundTripEnabled) {
+        const exportFileName = await launchArtRoundTrip(asset.originalPath, asset.fileName, asset.fileExtension, choice);
+        const outcome = await ingestRoundTripExport(asset, exportFileName);
+        if (outcome) applyRoundTripOutcome(outcome);
+        return;
+      }
       await launchEditor(asset.originalPath, choice, asset.id, asset.fileName);
     },
-    [selectedAssets, applications, onOpenApplicationsPreferences],
+    [selectedAssets, applications, artRoundTripEnabled, onOpenApplicationsPreferences, applyRoundTripOutcome],
   );
 
   // Writes each id's sidecar/embedded-discovered rating and/or description
@@ -708,6 +689,59 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     await pasteImageProcessing(copiedProcessingSource.originalPath, targets);
   }, [copiedProcessingSource, pasteProcessingTargets, assetByIdAll]);
 
+  // Batch RAW Roundtrip (ART CLI round trip Variant 2) - fully headless,
+  // background-queued export of 2+ RAW assets at once. Only reachable when
+  // artRoundTripEnabled (see PreferencesApplications.tsx). RAW-filtered here
+  // (not left to the backend) for the same reason requestPasteImageProcessing
+  // is: the confirm dialog's count should reflect what's really about to be
+  // exported.
+  const { jobs: artJobs } = useArtQueue();
+  const [batchArtTargets, setBatchArtTargets] = useState<string[] | null>(null);
+  const requestBatchArtRoundTrip = useCallback(
+    (ids: string[]) => {
+      const rawIds = ids.filter((id) => {
+        const a = assetByIdAll.get(id);
+        return !!a && isRawAsset(a);
+      });
+      if (rawIds.length < 2) return;
+      setBatchArtTargets(rawIds);
+    },
+    [assetByIdAll],
+  );
+
+  // Fires once per queued job as it settles - a `done` job ingests its
+  // deterministic export (same tail as Variant 1/the generic round trip,
+  // via ingestRoundTripExport) incrementally rather than waiting for the
+  // whole batch to finish; a `failed` job surfaces its error in the same
+  // banner a synchronous enqueue rejection would.
+  const reconcileArtJob = useCallback(
+    (job: ArtJob) => {
+      if (job.status === 'failed') {
+        setEnqueueError(job.error ?? "Couldn't complete a Batch RAW Roundtrip export.");
+        return;
+      }
+      if (!job.exportFileName) return;
+      const original = assetByIdAll.get(job.assetId);
+      if (!original) return;
+      ingestRoundTripExport(original, job.exportFileName).then((outcome) => {
+        if (outcome) applyRoundTripOutcome(outcome);
+      });
+    },
+    [assetByIdAll, applyRoundTripOutcome],
+  );
+  const { trackJobs: trackArtJobs } = useArtJobReconciliation(artJobs, reconcileArtJob);
+
+  const confirmBatchArtRoundTrip = useCallback(async () => {
+    if (!batchArtTargets) return;
+    const targets: ArtRoundTripTarget[] = batchArtTargets.map((id) => {
+      const a = assetByIdAll.get(id)!;
+      return { id, originalPath: a.originalPath, fileName: a.fileName, fileExtension: a.fileExtension };
+    });
+    const jobIds = await batchArtRoundTrip(targets);
+    trackArtJobs(jobIds);
+    setSelected(new Set());
+  }, [batchArtTargets, assetByIdAll, trackArtJobs]);
+
   const navigateOpen = (dir: 1 | -1) => {
     const ni = openIndex + dir;
     if (ni < 0 || ni >= flatIds.length) return;
@@ -771,6 +805,18 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
         onClick: () => requestPasteImageProcessing(pasteTargetIds),
       });
     }
+    if (artRoundTripEnabled) {
+      const rawTargetIds = pasteTargetIds.filter((id) => {
+        const a = assetByIdAll.get(id);
+        return !!a && isRawAsset(a);
+      });
+      if (rawTargetIds.length >= 2) {
+        items.push({
+          label: `Batch RAW Roundtrip (${rawTargetIds.length})`,
+          onClick: () => requestBatchArtRoundTrip(rawTargetIds),
+        });
+      }
+    }
     if (asset) {
       items.push({ label: 'Copy Metadata', onClick: () => handleCopyMetadata(asset) });
     }
@@ -795,6 +841,8 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     requestPasteImageProcessing,
     handleCopyMetadata,
     handlePasteMetadata,
+    artRoundTripEnabled,
+    requestBatchArtRoundTrip,
   ]);
 
   useEffect(() => {
@@ -1127,6 +1175,15 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           onPasteImageProcessing={() => requestPasteImageProcessing([...selected])}
           canPasteMetadata={!!copiedMetadata}
           onPasteMetadata={() => handlePasteMetadata([...selected])}
+          rawSelectedCount={
+            artRoundTripEnabled
+              ? [...selected].filter((id) => {
+                  const a = assetByIdAll.get(id);
+                  return !!a && isRawAsset(a);
+                }).length
+              : undefined
+          }
+          onBatchArtRoundTrip={artRoundTripEnabled ? () => requestBatchArtRoundTrip([...selected]) : undefined}
         />
       )}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
@@ -1205,6 +1262,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
               : undefined
           }
           onOpenApplicationsPreferences={onOpenApplicationsPreferences}
+          onRoundTripExported={(_original, outcome) => applyRoundTripOutcome(outcome)}
         />
       )}
       {confirmDeleteSelection && (
@@ -1223,6 +1281,16 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           confirmLabel="Paste"
           onConfirm={confirmPasteImageProcessing}
           onClose={() => setPasteProcessingTargets(null)}
+        />
+      )}
+      {batchArtTargets && (
+        <ConfirmDialog
+          title="Batch RAW Roundtrip?"
+          message={`Export ${batchArtTargets.length} RAW photos through ART-cli in the background, applying each one's own sidecar (if any) over your ART default profile?`}
+          confirmLabel="Roundtrip"
+          danger={false}
+          onConfirm={confirmBatchArtRoundTrip}
+          onClose={() => setBatchArtTargets(null)}
         />
       )}
       {contextMenu && (

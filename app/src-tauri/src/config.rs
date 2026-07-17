@@ -170,6 +170,17 @@ impl Default for SmartStackSettings {
 pub struct ApplicationsConfig {
     pub raw_editor: Option<AppChoice>,
     pub external_editor: Option<AppChoice>,
+    /// Path to the `ART-cli` binary - a plain string, not an `AppChoice`,
+    /// since there's no `.desktop` entry for it to pick from the app picker,
+    /// only a manual file-browse in Preferences → Applications. A non-empty
+    /// value is the single signal that switches "Open in RAW Editor"/the new
+    /// "Batch RAW Roundtrip" action over to the ART CLI round trip (see
+    /// `commands::launch_art_round_trip`/`batch_art_round_trip`) - empty
+    /// (the default) means the existing generic round trip's behavior stays
+    /// byte-for-byte unchanged. `#[serde(default)]` so existing config.json
+    /// files (saved before this field existed) still deserialize cleanly.
+    #[serde(default)]
+    pub art_cli_path: String,
 }
 
 /// Last-used SD-card/disk import settings - the chosen folder hierarchy and

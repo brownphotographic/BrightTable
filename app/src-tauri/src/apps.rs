@@ -160,12 +160,25 @@ fn classify_exec(exec: &str) -> AppKind {
 /// literal `%`. Returns whether a file-argument code was actually found, so
 /// the caller knows whether it still needs to append the path itself for an
 /// `Exec=` that takes no file argument at all.
-fn substitute_field_codes(tokens: &[String], file_path: &str) -> (bool, Vec<String>) {
+fn substitute_field_codes(
+    tokens: &[String],
+    file_path: &str,
+    extra_args: &[String],
+) -> (bool, Vec<String>) {
     let mut found = false;
-    let mut out = Vec::with_capacity(tokens.len());
+    let mut out = Vec::with_capacity(tokens.len() + extra_args.len());
     for tok in tokens {
         match tok.as_str() {
             "%f" | "%F" | "%u" | "%U" => {
+                // Extra args (e.g. ART's `-s`) belong to the editor itself,
+                // so they must land right before the path - not before the
+                // exec line's own leading tokens, which for a Snap/env-wrapped
+                // entry (`env VAR=val /snap/bin/art %f`) would otherwise put
+                // them ahead of `env`'s own VAR=val args and get parsed as
+                // flags to `env` rather than to the editor.
+                if !found {
+                    out.extend(extra_args.iter().cloned());
+                }
                 out.push(file_path.to_string());
                 found = true;
             }
@@ -188,13 +201,16 @@ fn parse_exec_tokens(exec: &str) -> Vec<String> {
     exec.split_whitespace().map(str::to_string).collect()
 }
 
-/// Launches `choice` with `path` as the file to open. Native/Flatpak/Snap
+/// Builds the `(program, args)` to launch `choice` with `path` as the file to
+/// open - factored out of `launch_app` so `launch_app_and_wait` (the ART CLI
+/// round trip's "done editing" signal, see `art.rs`) can reuse the exact same
+/// argv-building logic rather than duplicating it. Native/Flatpak/Snap
 /// entries all carry a real `Exec=` command line that already knows how to
 /// invoke the app (for Flatpak/Snap this includes `flatpak run <id>`/the
 /// `/snap/bin/<name>` wrapper itself) - only the file-argument field code
 /// needs substituting. AppImage/Custom entries are just a bare executable
 /// path with no `Exec=` grammar at all, so the path is simply appended.
-pub fn launch_app(choice: &AppChoice, path: &Path) -> Result<(), String> {
+fn build_argv(choice: &AppChoice, path: &Path) -> Result<(String, Vec<String>), String> {
     let path_str = path.to_string_lossy().to_string();
     let extra_args = parse_exec_tokens(&choice.extra_args);
     match choice.kind {
@@ -203,20 +219,42 @@ pub fn launch_app(choice: &AppChoice, path: &Path) -> Result<(), String> {
             let Some((program, rest)) = tokens.split_first() else {
                 return Err(format!("\"{}\" has no launch command configured", choice.name));
             };
-            let (had_field_code, mut args) = substitute_field_codes(rest, &path_str);
+            let (had_field_code, mut args) = substitute_field_codes(rest, &path_str, &extra_args);
             if !had_field_code {
+                args.extend(extra_args);
                 args.push(path_str);
             }
-            let mut full_args = extra_args;
-            full_args.extend(args);
-            spawn(program, &full_args, &choice.name)
+            Ok((program.clone(), args))
         }
         AppKind::AppImage | AppKind::Custom => {
             let mut full_args = extra_args;
             full_args.push(path_str);
-            spawn(&choice.exec, &full_args, &choice.name)
+            Ok((choice.exec.clone(), full_args))
         }
     }
+}
+
+pub fn launch_app(choice: &AppChoice, path: &Path) -> Result<(), String> {
+    let (program, args) = build_argv(choice, path)?;
+    spawn(&program, &args, &choice.name)
+}
+
+/// Same argv construction as `launch_app`, but spawns and `.wait()`s on the
+/// process's exit instead of firing-and-forgetting it - the ART CLI round
+/// trip's Variant 1 "done editing" signal (spawning `ART <raw_path>` as its
+/// own dedicated process per invocation, not a shared `-R` instance - see the
+/// feature plan's decision on this trade-off). Any clean process exit counts
+/// as "done", including a non-zero one from the user cancelling inside the
+/// GUI - this only reports a *launch* failure, never treats the app's own
+/// exit code as this command's own failure.
+pub async fn launch_app_and_wait(choice: &AppChoice, path: &Path) -> Result<(), String> {
+    let (program, args) = build_argv(choice, path)?;
+    let mut child = tokio::process::Command::new(&program)
+        .args(&args)
+        .spawn()
+        .map_err(|e| format!("Couldn't launch {}: {e}", choice.name))?;
+    child.wait().await.map_err(|e| format!("Couldn't wait for {}: {e}", choice.name))?;
+    Ok(())
 }
 
 fn spawn(program: &str, args: &[String], name: &str) -> Result<(), String> {
@@ -235,6 +273,47 @@ mod tests {
         let path = dir.join(filename);
         fs::write(&path, contents).unwrap();
         path
+    }
+
+    #[test]
+    fn build_argv_native_substitutes_field_code() {
+        let choice = AppChoice { name: "GIMP".into(), exec: "gimp %U".into(), kind: AppKind::Native, extra_args: String::new() };
+        let (program, args) = build_argv(&choice, Path::new("/mnt/photos/img.CR2")).unwrap();
+        assert_eq!(program, "gimp");
+        assert_eq!(args, vec!["/mnt/photos/img.CR2".to_string()]);
+    }
+
+    #[test]
+    fn build_argv_custom_appends_path_with_no_exec_grammar() {
+        let choice = AppChoice { name: "MyTool".into(), exec: "/opt/mytool".into(), kind: AppKind::Custom, extra_args: "-s".into() };
+        let (program, args) = build_argv(&choice, Path::new("/x/img.DNG")).unwrap();
+        assert_eq!(program, "/opt/mytool");
+        assert_eq!(args, vec!["-s".to_string(), "/x/img.DNG".to_string()]);
+    }
+
+    #[test]
+    fn build_argv_errors_on_empty_exec() {
+        let choice = AppChoice { name: "Broken".into(), exec: String::new(), kind: AppKind::Native, extra_args: String::new() };
+        assert!(build_argv(&choice, Path::new("/x/img.DNG")).is_err());
+    }
+
+    #[tokio::test]
+    async fn launch_app_and_wait_succeeds_on_clean_exit_including_nonzero() {
+        let dir = std::env::temp_dir().join(format!("immature-test-apps-wait-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("fake-editor.sh");
+        fs::write(&script, "#!/bin/sh\nexit 7\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&script).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).unwrap();
+
+        let choice = AppChoice { name: "Fake".into(), exec: script.to_string_lossy().to_string(), kind: AppKind::Custom, extra_args: String::new() };
+        let result = launch_app_and_wait(&choice, &dir.join("img.DNG")).await;
+        // A non-zero exit (e.g. the user cancelling inside the GUI) is still
+        // "done editing", not a launch failure.
+        assert!(result.is_ok());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -301,7 +380,7 @@ mod tests {
     #[test]
     fn substitutes_file_field_code() {
         let tokens = parse_exec_tokens("gimp %U --new-instance");
-        let (found, args) = substitute_field_codes(&tokens[1..], "/mnt/photos/img.CR2");
+        let (found, args) = substitute_field_codes(&tokens[1..], "/mnt/photos/img.CR2", &[]);
         assert!(found);
         assert_eq!(args, vec!["/mnt/photos/img.CR2".to_string(), "--new-instance".to_string()]);
     }
@@ -309,7 +388,7 @@ mod tests {
     #[test]
     fn appends_path_when_no_field_code_present() {
         let tokens = parse_exec_tokens("some-editor --gui");
-        let (found, args) = substitute_field_codes(&tokens[1..], "/mnt/photos/img.CR2");
+        let (found, args) = substitute_field_codes(&tokens[1..], "/mnt/photos/img.CR2", &[]);
         assert!(!found);
         assert_eq!(args, vec!["--gui".to_string()]);
     }
@@ -317,8 +396,29 @@ mod tests {
     #[test]
     fn unescapes_literal_percent() {
         let tokens = parse_exec_tokens("some-editor %% %f");
-        let (found, args) = substitute_field_codes(&tokens[1..], "/x.jpg");
+        let (found, args) = substitute_field_codes(&tokens[1..], "/x.jpg", &[]);
         assert!(found);
         assert_eq!(args, vec!["%".to_string(), "/x.jpg".to_string()]);
+    }
+
+    #[test]
+    fn extra_args_land_before_path_not_before_env_wrapper() {
+        // Snap desktop entries are commonly exported as `env VAR=val
+        // /snap/bin/app %f` - extra_args (e.g. ART's `-s`) must end up right
+        // before the path, not ahead of `env`'s own VAR=val token, or `env`
+        // itself tries (and fails) to parse them as its own flags.
+        let tokens = parse_exec_tokens("env BAMF_DESKTOP_FILE_HINT=/x /snap/bin/art %f");
+        let extra_args = parse_exec_tokens("-s");
+        let (found, args) = substitute_field_codes(&tokens[1..], "/mnt/photos/img.CR2", &extra_args);
+        assert!(found);
+        assert_eq!(
+            args,
+            vec![
+                "BAMF_DESKTOP_FILE_HINT=/x".to_string(),
+                "/snap/bin/art".to_string(),
+                "-s".to_string(),
+                "/mnt/photos/img.CR2".to_string(),
+            ]
+        );
     }
 }

@@ -1,10 +1,14 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 use crate::apps::{self, AppChoice};
+use crate::art;
+use crate::art_queue::ArtJob;
 use crate::config::{self, AppConfig, ApplicationsConfig, ImportSettings, LibraryConfig, SmartStackSettings};
 use crate::edit_queue::EditJob;
+use crate::export_naming;
 use crate::immich::models::{AssetSummary, ConnectionStatus, StackInfo, TimeBucketInfo};
 use crate::immich::ImmichClient;
 use crate::import::{self, FolderDepth, ImportJob, ScannedGroup};
@@ -352,6 +356,171 @@ pub fn get_processing_queue_status(state: State<AppState>) -> ProcessingQueueSta
 #[tauri::command]
 pub fn clear_completed_processing_jobs(state: State<AppState>) {
     state.processing_queue.clear_completed();
+}
+
+/// Resolves `file_name`/`smart_stack.suffix` down to the export path
+/// `ART-cli` should write - shared by `launch_art_round_trip` (one target) and
+/// `batch_art_round_trip` (many, via its own `guarded_spawn_blocking`
+/// closure). Not `#[tauri::command]` itself - pure enough to call directly
+/// from inside an already-blocking closure without another layer of
+/// `spawn_blocking`.
+fn resolve_art_export_path(
+    original_path: &str,
+    file_name: &str,
+    file_extension: &str,
+    cfg: &LibraryConfig,
+    suffix_pattern: &str,
+) -> Result<(PathBuf, PathBuf), String> {
+    let local_path = paths::resolve_local_path(original_path, cfg).ok_or_else(|| {
+        format!("No local path mapping configured for {file_name} — set up External Library mapping in Preferences → Library")
+    })?;
+    let dir = local_path.parent().ok_or_else(|| format!("{file_name} has no parent directory"))?.to_path_buf();
+    let base = export_naming::base_name(file_name, file_extension);
+    let core = export_naming::suffix_core(suffix_pattern);
+    let export_path = export_naming::next_export_path(&dir, base, &core, "jpg");
+    Ok((local_path, export_path))
+}
+
+/// Variant 1 of the ART CLI round trip (see the feature plan): hooks into the
+/// existing "Open in RAW Editor" action when ART round-trip is configured
+/// (`applications.art_cli_path` non-empty). Opens ART itself as its own
+/// dedicated process (`apps::launch_app_and_wait` - see its own doc comment
+/// for why a shared `-R` instance isn't used) and awaits the user finishing
+/// their edit there, then runs `ART-cli` to produce the export
+/// deterministically - no dependency on the user manually exporting inside
+/// ART's own GUI, and no dependency on `round_trip.rs`'s passive file
+/// watcher, since this command already knows the export's filename as its
+/// own return value.
+///
+/// Gated **upfront**, before ART even opens - read-only mode blocks this
+/// command entirely rather than just failing at the final export step, since
+/// unlike the generic (non-ART) editor flow, this one really does write a
+/// new file to disk itself.
+#[tauri::command]
+pub async fn launch_art_round_trip(
+    state: State<'_, AppState>,
+    original_path: Option<String>,
+    file_name: String,
+    file_extension: String,
+    raw_editor: AppChoice,
+) -> Result<String, String> {
+    let (cfg, art_cli_path, suffix_pattern) = {
+        let guard = state.config.lock().unwrap();
+        (guard.library.clone(), guard.applications.art_cli_path.clone(), guard.smart_stack.suffix.clone())
+    };
+    if cfg.read_only {
+        return Err("Read-only mode is on — turn it off in Preferences → Library to use ART Round Trip".into());
+    }
+    if art_cli_path.trim().is_empty() {
+        return Err("No ART-cli path configured — set one in Preferences → Applications".into());
+    }
+    if 1 > cfg.max_writes_per_batch {
+        return Err(format!("Your cap of {} per action doesn't allow any writes", cfg.max_writes_per_batch));
+    }
+    let original_path = original_path.ok_or("This asset has no server-side path to resolve")?;
+    let local_path = paths::resolve_local_path(&original_path, &cfg).ok_or(
+        "No local path mapping configured for this asset — set up External Library mapping in Preferences → Library",
+    )?;
+
+    apps::launch_app_and_wait(&raw_editor, &local_path).await?;
+
+    let cfg_for_scan = cfg.clone();
+    let file_name_for_scan = file_name.clone();
+    let file_extension_for_scan = file_extension.clone();
+    let suffix_for_scan = suffix_pattern.clone();
+    let Some(handle) = io_guard::guarded_spawn_blocking(&state.io_guard, move || {
+        resolve_art_export_path(&original_path, &file_name_for_scan, &file_extension_for_scan, &cfg_for_scan, &suffix_for_scan)
+    }) else {
+        return Err("Skipped: system is about to suspend, try again after it wakes".to_string());
+    };
+    let (raw_path, export_path) = handle.await.map_err(|e| e.to_string())??;
+
+    let args = art::build_art_cli_args(art::ArtCliMode::ApplySidecar, &export_path, &raw_path);
+    art::run_art_cli(&art_cli_path, &args).await?;
+
+    export_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_string)
+        .ok_or_else(|| "Couldn't determine the export file's name".to_string())
+}
+
+/// One Batch RAW Roundtrip target - mirrors `MetadataEditTarget` plus the
+/// `file_name`/`file_extension` `export_naming::base_name` needs (which
+/// `MetadataEditTarget` has no use for).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtRoundTripTarget {
+    pub id: String,
+    pub original_path: Option<String>,
+    pub file_name: String,
+    pub file_extension: String,
+}
+
+/// Variant 2 of the ART CLI round trip: fully headless, applies each asset's
+/// own sidecar (if any) over the user's ART default profile
+/// (`art::ArtCliMode::DefaultThenSidecarOverride`) and exports every target in
+/// the background via `ArtQueue`, returning immediately with the assigned job
+/// ids (same "enqueue and let the frontend poll" shape as
+/// `start_import`/`paste_image_processing`). Every target's local/export path
+/// is resolved up front, inside one `guarded_spawn_blocking` closure (mirrors
+/// `scan_import_source`'s "resolve everything, then enqueue synchronously"
+/// shape) - a target that can't be resolved fails the whole call rather than
+/// silently dropping just that one asset, so the confirm dialog's count
+/// always matches what's actually queued.
+#[tauri::command]
+pub async fn batch_art_round_trip(state: State<'_, AppState>, targets: Vec<ArtRoundTripTarget>) -> Result<Vec<u64>, String> {
+    let (cfg, art_cli_path, suffix_pattern) = {
+        let guard = state.config.lock().unwrap();
+        (guard.library.clone(), guard.applications.art_cli_path.clone(), guard.smart_stack.suffix.clone())
+    };
+    if cfg.read_only {
+        return Err("Read-only mode is on — turn it off in Preferences → Library to use Batch RAW Roundtrip".into());
+    }
+    if art_cli_path.trim().is_empty() {
+        return Err("No ART-cli path configured — set one in Preferences → Applications".into());
+    }
+    if targets.len() as u32 > cfg.max_writes_per_batch {
+        return Err(format!(
+            "This would roundtrip {} assets at once, over your cap of {} per action",
+            targets.len(),
+            cfg.max_writes_per_batch
+        ));
+    }
+
+    let art_queue = state.art_queue.clone();
+    let art_cli_path_for_worker = art_cli_path.clone();
+    let Some(handle) = io_guard::guarded_spawn_blocking(&state.io_guard, move || -> Result<Vec<u64>, String> {
+        let mut resolved = Vec::with_capacity(targets.len());
+        for t in &targets {
+            let original_path = t.original_path.as_deref().ok_or_else(|| format!("{} has no server-side path to resolve", t.file_name))?;
+            let (raw_path, export_path) = resolve_art_export_path(original_path, &t.file_name, &t.file_extension, &cfg, &suffix_pattern)?;
+            resolved.push((t.id.clone(), raw_path, export_path));
+        }
+        Ok(art_queue.enqueue(&art_cli_path_for_worker, resolved))
+    }) else {
+        return Err("Skipped: system is about to suspend, try again after it wakes".to_string());
+    };
+    handle.await.map_err(|e| e.to_string())?
+}
+
+/// Poll target for the ART queue's advisory activity panel, same shape as
+/// `get_processing_queue_status`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtQueueStatus {
+    pub jobs: Vec<ArtJob>,
+    pub pending_count: usize,
+}
+
+#[tauri::command]
+pub fn get_art_queue_status(state: State<AppState>) -> ArtQueueStatus {
+    ArtQueueStatus { jobs: state.art_queue.snapshot(), pending_count: state.art_queue.pending_count() }
+}
+
+#[tauri::command]
+pub fn clear_completed_art_jobs(state: State<AppState>) {
+    state.art_queue.clear_completed();
 }
 
 /// Bypasses the `CloseRequested` interception in `lib.rs` - what the

@@ -1,11 +1,17 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { getConfig, saveApplicationsConfig, type AppChoice, type ApplicationsConfig } from './api';
 
-const DEFAULT_APPLICATIONS: ApplicationsConfig = { rawEditor: null, externalEditor: null };
+const DEFAULT_APPLICATIONS: ApplicationsConfig = { rawEditor: null, externalEditor: null, artCliPath: '' };
 
 interface ApplicationsContextValue {
   applications: ApplicationsConfig;
   setEditor: (role: 'rawEditor' | 'externalEditor', choice: AppChoice) => void;
+  setArtCliPath: (path: string) => void;
+  // Whether the ART CLI round trip is configured - the single signal that
+  // switches "Open in RAW Editor"/adds "Batch RAW Roundtrip" over to the new
+  // flow (see the feature plan's decision on this). Derived rather than
+  // stored separately so it can never drift from applications.artCliPath.
+  artRoundTripEnabled: boolean;
 }
 
 const ApplicationsContext = createContext<ApplicationsContextValue | null>(null);
@@ -31,7 +37,21 @@ export function ApplicationsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  return <ApplicationsContext.Provider value={{ applications, setEditor }}>{children}</ApplicationsContext.Provider>;
+  const setArtCliPath = useCallback((path: string) => {
+    setApplicationsState((prev) => {
+      const next = { ...prev, artCliPath: path };
+      saveApplicationsConfig(next).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const artRoundTripEnabled = applications.artCliPath.trim().length > 0;
+
+  return (
+    <ApplicationsContext.Provider value={{ applications, setEditor, setArtCliPath, artRoundTripEnabled }}>
+      {children}
+    </ApplicationsContext.Provider>
+  );
 }
 
 export function useApplications(): ApplicationsContextValue {

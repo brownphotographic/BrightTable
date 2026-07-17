@@ -1,7 +1,8 @@
 import { useEditQueue } from '../lib/editQueue';
 import { useImportQueue } from '../lib/importQueue';
 import { useProcessingQueue } from '../lib/processingQueue';
-import { thumbnailSrc, type EditJob, type ImportJob, type ImportJobStatus, type ProcessingJobStatus } from '../lib/api';
+import { useArtQueue } from '../lib/artQueue';
+import { thumbnailSrc, type ArtJobStatus, type EditJob, type ImportJob, type ImportJobStatus, type ProcessingJobStatus } from '../lib/api';
 
 function kindLabel(job: EditJob): string {
   const parts: string[] = [];
@@ -50,6 +51,19 @@ function processingStatusPill(status: ProcessingJobStatus): { label: string; col
   }
 }
 
+function artStatusPill(status: ArtJobStatus): { label: string; color: string; bg: string } {
+  switch (status) {
+    case 'pending':
+      return { label: 'Queued', color: 'rgba(255,255,255,0.6)', bg: 'rgba(255,255,255,0.08)' };
+    case 'running':
+      return { label: 'Exporting…', color: '#9cc2f0', bg: 'rgba(53,132,228,0.22)' };
+    case 'done':
+      return { label: 'Done', color: '#8ce0ae', bg: 'rgba(46,194,126,0.18)' };
+    case 'failed':
+      return { label: 'Failed', color: '#ff8080', bg: 'rgba(224,27,36,0.2)' };
+  }
+}
+
 function baseName(path: string): string {
   return path.split('/').pop() ?? path;
 }
@@ -70,18 +84,22 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
   const { jobs: editJobs, clearCompleted: clearEditCompleted } = useEditQueue();
   const { jobs: importJobs, clearCompleted: clearImportCompleted, nudgeError } = useImportQueue();
   const { jobs: processingJobs, clearCompleted: clearProcessingCompleted } = useProcessingQueue();
+  const { jobs: artJobs, clearCompleted: clearArtCompleted } = useArtQueue();
   const sortedEdits = [...editJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
   const sortedImports = [...importJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
   const sortedProcessing = [...processingJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
+  const sortedArt = [...artJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
   const hasCompleted =
     editJobs.some((j) => j.status === 'done' || j.status === 'failed') ||
     importJobs.some((j) => j.status === 'done' || j.status === 'failed') ||
-    processingJobs.some((j) => j.status === 'done' || j.status === 'failed');
+    processingJobs.some((j) => j.status === 'done' || j.status === 'failed') ||
+    artJobs.some((j) => j.status === 'done' || j.status === 'failed');
 
   function clearAllCompleted() {
     clearEditCompleted();
     clearImportCompleted();
     clearProcessingCompleted();
+    clearArtCompleted();
   }
 
   return (
@@ -233,6 +251,29 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
                   />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={rowTitle}>Paste Image Processing</div>
+                    {job.error && <div style={rowError}>{job.error}</div>}
+                  </div>
+                  <StatusPill pill={pill} />
+                </div>
+              );
+            })
+          )}
+
+          <SectionLabel>ART Round Trip</SectionLabel>
+          {sortedArt.length === 0 ? (
+            <EmptyRow>No ART round trips yet this session.</EmptyRow>
+          ) : (
+            sortedArt.map((job) => {
+              const pill = artStatusPill(job.status);
+              return (
+                <div key={job.jobId} style={rowStyle}>
+                  <img
+                    src={thumbnailSrc(job.assetId)}
+                    alt=""
+                    style={{ width: 40, height: 40, borderRadius: 6, objectFit: 'cover', flexShrink: 0, background: '#333' }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={rowTitle}>{job.exportFileName ?? 'Batch RAW Roundtrip'}</div>
                     {job.error && <div style={rowError}>{job.error}</div>}
                   </div>
                   <StatusPill pill={pill} />

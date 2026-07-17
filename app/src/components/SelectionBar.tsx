@@ -26,6 +26,8 @@ export default function SelectionBar({
   onPasteImageProcessing,
   canPasteMetadata,
   onPasteMetadata,
+  rawSelectedCount,
+  onBatchArtRoundTrip,
 }: {
   count: number;
   onCancel: () => void;
@@ -52,6 +54,11 @@ export default function SelectionBar({
   onPasteImageProcessing: () => void;
   canPasteMetadata: boolean;
   onPasteMetadata: () => void;
+  // How many of the current selection are RAW - "Batch RAW Roundtrip" (only
+  // shown when artRoundTripEnabled, gated by the caller) needs 2+ RAW assets
+  // selected, same "2+ selected" gating shape as Stack/Smart Stack.
+  rawSelectedCount?: number;
+  onBatchArtRoundTrip?: () => void;
 }) {
   const canStack = count >= 2;
   // Both editors are a single-file launch (see Viewer.tsx's handleLaunch) -
@@ -118,6 +125,15 @@ export default function SelectionBar({
       <BarButton onClick={onOpenInExternalEditor} disabled={!singleSelected} title={singleSelected ? undefined : 'Select a single photo to open it in an editor'}>
         Open in Ext. Editor
       </BarButton>
+      {onBatchArtRoundTrip && (
+        <BarButton
+          onClick={onBatchArtRoundTrip}
+          disabled={(rawSelectedCount ?? 0) < 2}
+          title={(rawSelectedCount ?? 0) < 2 ? 'Select 2 or more RAW photos to batch roundtrip' : undefined}
+        >
+          Batch RAW Roundtrip
+        </BarButton>
+      )}
       <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)' }} />
       <BarButton onClick={onPasteImageProcessing} disabled={!canPasteImageProcessing} title="Paste image processing onto the RAW photos in this selection">
         Paste Image Processing

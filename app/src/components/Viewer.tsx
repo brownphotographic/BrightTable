@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getStack,
+  launchArtRoundTrip,
   launchEditor,
   pasteImageProcessing,
   thumbnailSrc,
@@ -17,6 +18,7 @@ import { overlayRawOverrides, useRawOverrides } from '../lib/rawOverrides';
 import { isRawAsset } from '../lib/filters';
 import { useApplications } from '../lib/applications';
 import { useClipboard } from '../lib/clipboard';
+import { ingestRoundTripExport, type RoundTripIngestOutcome } from '../lib/roundTrip';
 
 const MIN_ZOOM = 25;
 const MAX_ZOOM = 400;
@@ -69,6 +71,7 @@ export default function Viewer({
   onUnstack,
   onSetStackPick,
   onOpenApplicationsPreferences,
+  onRoundTripExported,
 }: {
   asset: AssetSummary;
   hasPrev: boolean;
@@ -87,6 +90,12 @@ export default function Viewer({
   // Opens Preferences straight to the Applications tab - used when the user
   // clicks an editor button with no app chosen for that role yet.
   onOpenApplicationsPreferences?: () => void;
+  // Fired once the ART CLI round trip (Variant 1) actually produced and
+  // ingested a new asset - the parent (PhotosBrowser/FoldersBrowser) applies
+  // the outcome to its own assetCache/stackByAssetId, the same way it
+  // already does for the generic round trip's 'round-trip-file-detected'
+  // listener.
+  onRoundTripExported?: (original: AssetSummary, outcome: RoundTripIngestOutcome) => void;
 }) {
   const [zoom, setZoom] = useState(100);
   const [infoOpen, setInfoOpen] = useState(true);
@@ -107,7 +116,11 @@ export default function Viewer({
   const [confirmPasteProcessing, setConfirmPasteProcessing] = useState(false);
   const [stackMembers, setStackMembers] = useState<AssetSummary[] | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
-  const { applications } = useApplications();
+  // True while the ART CLI round trip (Variant 1) is open in ART and/or
+  // running ART-cli's export - disables/relabels the RAW Editor button so a
+  // second click can't overlap a second export for the same asset.
+  const [artBusy, setArtBusy] = useState(false);
+  const { applications, artRoundTripEnabled } = useApplications();
   const { copiedProcessingSource, setCopiedProcessingSource, copiedMetadata, setCopiedMetadata } = useClipboard();
   // Clicking a non-pick stack member in the info panel "peeks" at it in the
   // main stage without actually navigating there (that member is hidden from
@@ -179,6 +192,12 @@ export default function Viewer({
   // hitting Refresh Timeline. Redirects to Preferences → Applications
   // instead of launching when that role has no app chosen yet, rather than
   // just disabling the button with no way to fix it from here.
+  //
+  // When ART round trip is configured (artRoundTripEnabled), the RAW Editor
+  // role branches to the ART CLI flow instead: awaits ART's own process exit
+  // (launchArtRoundTrip), then ingests the deterministic export it produced
+  // and hands the outcome to the parent via onRoundTripExported - no
+  // dependency on round_trip.rs's passive file watcher for this path.
   const handleLaunch = useCallback(
     async (role: 'rawEditor' | 'externalEditor') => {
       const choice = applications[role];
@@ -187,13 +206,26 @@ export default function Viewer({
         return;
       }
       setLaunchError(null);
+      if (role === 'rawEditor' && artRoundTripEnabled) {
+        setArtBusy(true);
+        try {
+          const exportFileName = await launchArtRoundTrip(shown.originalPath, shown.fileName, shown.fileExtension, choice);
+          const outcome = await ingestRoundTripExport(shown, exportFileName);
+          if (outcome) onRoundTripExported?.(shown, outcome);
+        } catch (e) {
+          setLaunchError(String(e));
+        } finally {
+          setArtBusy(false);
+        }
+        return;
+      }
       try {
         await launchEditor(shown.originalPath, choice, shown.id, shown.fileName);
       } catch (e) {
         setLaunchError(String(e));
       }
     },
-    [applications, shown.originalPath, shown.id, shown.fileName, onOpenApplicationsPreferences],
+    [applications, artRoundTripEnabled, shown, onOpenApplicationsPreferences, onRoundTripExported],
   );
 
   // Same clipboard, same fields, as the grid's Copy/Paste Image Processing/
@@ -251,7 +283,7 @@ export default function Viewer({
       else if (matchesShortcut(e, shortcuts.rate5)) handleEdit(shown.id, { rating: 5 }).catch(() => {});
       else if (matchesShortcut(e, shortcuts.reject)) handleEdit(shown.id, { rating: shown.rating === -1 ? 0 : -1 }).catch(() => {});
       else if (matchesShortcut(e, shortcuts.delete)) setConfirmDelete(true);
-      else if (matchesShortcut(e, shortcuts.openInRawEditor) && isRawAsset(shown)) handleLaunch('rawEditor').catch(() => {});
+      else if (matchesShortcut(e, shortcuts.openInRawEditor) && isRawAsset(shown) && !artBusy) handleLaunch('rawEditor').catch(() => {});
       else if (matchesShortcut(e, shortcuts.openInExternalEditor)) handleLaunch('externalEditor').catch(() => {});
     };
     window.addEventListener('keydown', onKey);
@@ -270,6 +302,7 @@ export default function Viewer({
     onEdit,
     handleEdit,
     handleLaunch,
+    artBusy,
     handleCopyMetadata,
     handlePasteMetadata,
     handleCopyImageProcessing,
@@ -392,8 +425,12 @@ export default function Viewer({
           </div>
         )}
         {isRawAsset(shown) && (
-          <div onClick={() => handleLaunch('rawEditor')} style={headerButtonStyle(false)}>
-            Open in RAW Editor
+          <div
+            onClick={() => !artBusy && handleLaunch('rawEditor')}
+            title={artBusy ? 'Waiting on ART…' : undefined}
+            style={{ ...headerButtonStyle(false), opacity: artBusy ? 0.5 : 1 }}
+          >
+            {artBusy ? 'Working…' : 'Open in RAW Editor'}
           </div>
         )}
         <div onClick={() => handleLaunch('externalEditor')} style={headerButtonStyle(false)}>

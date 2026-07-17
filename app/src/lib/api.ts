@@ -45,6 +45,12 @@ export interface AppChoice {
 export interface ApplicationsConfig {
   rawEditor: AppChoice | null;
   externalEditor: AppChoice | null;
+  // Path to the ART-cli binary - a plain string (no .desktop entry exists for
+  // it, so it needs its own file-browse UI, not the app picker). A non-empty
+  // value is the single signal that switches "Open in RAW Editor"/the new
+  // "Batch RAW Roundtrip" action over to the ART CLI round trip - see
+  // lib/applications.tsx's derived `artRoundTripEnabled`.
+  artCliPath: string;
 }
 
 export type FolderDepth = 'flat' | 'yearMonth';
@@ -417,6 +423,70 @@ export function getProcessingQueueStatus(): Promise<ProcessingQueueStatus> {
 
 export function clearCompletedProcessingJobs(): Promise<void> {
   return invoke('clear_completed_processing_jobs');
+}
+
+// Variant 1 of the ART CLI round trip (see the feature plan): opens ART
+// itself (launchArtRoundTrip awaits ART's own process exit as the "done
+// editing" signal - a long-running invoke, not fire-and-forget like
+// launchEditor), then runs ART-cli to produce the export deterministically
+// and returns its generated filename. Only reachable when
+// applications.artCliPath is non-empty (see useApplications' derived
+// artRoundTripEnabled) - the generic (non-ART) "Open in RAW Editor" flow
+// keeps calling launchEditor unchanged.
+export function launchArtRoundTrip(
+  originalPath: string | null,
+  fileName: string,
+  fileExtension: string,
+  rawEditor: AppChoice,
+): Promise<string> {
+  return invoke('launch_art_round_trip', { originalPath, fileName, fileExtension, rawEditor });
+}
+
+// One Batch RAW Roundtrip target - mirrors MetadataEditTarget plus the
+// fileName/fileExtension the backend's export-naming logic needs.
+export interface ArtRoundTripTarget {
+  id: string;
+  originalPath: string | null;
+  fileName: string;
+  fileExtension: string;
+}
+
+// Enqueues Variant 2 (Batch RAW Roundtrip) onto the backend's background
+// ArtQueue and returns immediately with the assigned job ids - same
+// "enqueue and let the frontend poll" shape as startImport/
+// pasteImageProcessing.
+export function batchArtRoundTrip(targets: ArtRoundTripTarget[]): Promise<number[]> {
+  return invoke('batch_art_round_trip', { targets });
+}
+
+export type ArtJobStatus = 'pending' | 'running' | 'done' | 'failed';
+
+// Mirrors art_queue.rs's ArtJob - one row of Batch RAW Roundtrip's advisory
+// activity panel.
+export interface ArtJob {
+  jobId: number;
+  assetId: string;
+  status: ArtJobStatus;
+  // Set once `done` - the generated export's bare filename, so
+  // useArtJobReconciliation can call ingestRoundTripExport without a second
+  // round trip to discover it.
+  exportFileName: string | null;
+  createdAtMs: number;
+  finishedAtMs: number | null;
+  error: string | null;
+}
+
+export interface ArtQueueStatus {
+  jobs: ArtJob[];
+  pendingCount: number;
+}
+
+export function getArtQueueStatus(): Promise<ArtQueueStatus> {
+  return invoke('get_art_queue_status');
+}
+
+export function clearCompletedArtJobs(): Promise<void> {
+  return invoke('clear_completed_art_jobs');
 }
 
 // Grid cells render at ~160px - "thumbnail" (~30KB) is the right size for that.

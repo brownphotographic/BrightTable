@@ -10,6 +10,7 @@ import { EditQueueProvider } from './lib/editQueue';
 import { ImportQueueProvider } from './lib/importQueue';
 import { ClipboardProvider } from './lib/clipboard';
 import { ProcessingQueueProvider } from './lib/processingQueue';
+import { ArtQueueProvider } from './lib/artQueue';
 import { forceQuit } from './lib/api';
 import TitleBar from './components/TitleBar';
 import MenuBar from './components/MenuBar';
@@ -34,9 +35,11 @@ export default function App() {
               <EditQueueProvider>
                 <ImportQueueProvider>
                   <ProcessingQueueProvider>
-                    <LibraryStatusProvider>
-                      <AppShell />
-                    </LibraryStatusProvider>
+                    <ArtQueueProvider>
+                      <LibraryStatusProvider>
+                        <AppShell />
+                      </LibraryStatusProvider>
+                    </ArtQueueProvider>
                   </ProcessingQueueProvider>
                 </ImportQueueProvider>
               </EditQueueProvider>
