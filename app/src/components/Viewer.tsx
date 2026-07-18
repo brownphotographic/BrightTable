@@ -19,6 +19,7 @@ import { isRawAsset } from '../lib/filters';
 import { useApplications } from '../lib/applications';
 import { useClipboard } from '../lib/clipboard';
 import { ingestRoundTripExport, type RoundTripIngestOutcome } from '../lib/roundTrip';
+import { useArtRoundTripProgress } from '../lib/useArtRoundTripProgress';
 
 const MIN_ZOOM = 25;
 const MAX_ZOOM = 400;
@@ -120,6 +121,10 @@ export default function Viewer({
   // running ART-cli's export - disables/relabels the RAW Editor button so a
   // second click can't overlap a second export for the same asset.
   const [artBusy, setArtBusy] = useState(false);
+  // Live 0-100 percentage while artBusy, parsed backend-side from ART-cli's
+  // own --progress output - null until the first progress line arrives (or
+  // whenever artBusy is false).
+  const artProgress = useArtRoundTripProgress(artBusy);
   const { applications, artRoundTripEnabled } = useApplications();
   const { copiedProcessingSource, setCopiedProcessingSource, copiedMetadata, setCopiedMetadata } = useClipboard();
   // Clicking a non-pick stack member in the info panel "peeks" at it in the
@@ -211,7 +216,14 @@ export default function Viewer({
         try {
           const exportFileName = await launchArtRoundTrip(shown.originalPath, shown.fileName, shown.fileExtension, choice);
           const outcome = await ingestRoundTripExport(shown, exportFileName);
-          if (outcome) onRoundTripExported?.(shown, outcome);
+          if (outcome) {
+            onRoundTripExported?.(shown, outcome);
+          } else {
+            // The export itself succeeded (ART-cli already wrote the file) -
+            // this only means Immich hasn't indexed it yet within the
+            // polling budget, not that anything actually failed.
+            throw new Error(`Exported "${exportFileName}", but it hasn't shown up in Immich yet — try Refresh Timeline in a moment.`);
+          }
         } catch (e) {
           setLaunchError(String(e));
         } finally {
@@ -430,7 +442,7 @@ export default function Viewer({
             title={artBusy ? 'Waiting on ART…' : undefined}
             style={{ ...headerButtonStyle(false), opacity: artBusy ? 0.5 : 1 }}
           >
-            {artBusy ? 'Working…' : 'Open in RAW Editor'}
+            {artBusy ? (artProgress != null ? `Working… ${artProgress}%` : 'Working…') : 'Open in RAW Editor'}
           </div>
         )}
         <div onClick={() => handleLaunch('externalEditor')} style={headerButtonStyle(false)}>

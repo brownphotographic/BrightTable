@@ -1,23 +1,27 @@
 import { useEditQueue } from '../lib/editQueue';
 import { useImportQueue } from '../lib/importQueue';
 import { useProcessingQueue } from '../lib/processingQueue';
+import { useArtQueue } from '../lib/artQueue';
 
-// Combines the edit queue, import queue, and processing queue's independent,
-// already-tested polls (editQueue.tsx/importQueue.tsx untouched;
-// processingQueue.tsx structurally identical) into one TitleBar pill - three
-// simultaneously-spinning pills for what's conceptually the same "background
-// job queue" idea would be redundant chrome. Mounted in place of the old
-// EditQueueIndicator (kept as its own file, just no longer mounted directly).
+// Combines the edit queue, import queue, processing queue, and ART queue's
+// independent, already-tested polls (editQueue.tsx/importQueue.tsx
+// untouched; processingQueue.tsx/artQueue.tsx structurally identical) into
+// one TitleBar pill - four simultaneously-spinning pills for what's
+// conceptually the same "background job queue" idea would be redundant
+// chrome. Mounted in place of the old EditQueueIndicator (kept as its own
+// file, just no longer mounted directly).
 export default function ActivityIndicator({ onClick }: { onClick: () => void }) {
   const { jobs: editJobs, pendingCount: editPending } = useEditQueue();
   const { jobs: importJobs, pendingCount: importPending, nudgeError } = useImportQueue();
   const { jobs: processingJobs, pendingCount: processingPending } = useProcessingQueue();
+  const { jobs: artJobs, pendingCount: artPending } = useArtQueue();
 
-  const pendingCount = editPending + importPending + processingPending;
+  const pendingCount = editPending + importPending + processingPending + artPending;
   const failedCount =
     editJobs.filter((j) => j.status === 'failed').length +
     importJobs.filter((j) => j.status === 'failed').length +
-    processingJobs.filter((j) => j.status === 'failed').length;
+    processingJobs.filter((j) => j.status === 'failed').length +
+    artJobs.filter((j) => j.status === 'failed').length;
 
   if (pendingCount === 0 && failedCount === 0 && !nudgeError) return null;
 

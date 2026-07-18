@@ -59,6 +59,12 @@ pub struct ArtJob {
     /// `ingestRoundTripExport` without needing a second round trip to
     /// discover it.
     pub export_file_name: Option<String>,
+    /// Live 0-100 percentage while `Running`, parsed from `ART-cli`'s own
+    /// `--progress` output (see `art::run_art_cli_with_progress`) - `None`
+    /// until the first progress line arrives, and left at its last value
+    /// (not reset) once the job settles, same "show how far it got" idiom as
+    /// `import::ImportJob::bytes_copied`.
+    pub progress_percent: Option<u8>,
     pub created_at_ms: u64,
     pub finished_at_ms: Option<u64>,
     pub error: Option<String>,
@@ -118,6 +124,7 @@ impl ArtQueue {
                 asset_id: asset_id.clone(),
                 status: ArtJobStatus::Pending,
                 export_file_name: None,
+                progress_percent: None,
                 created_at_ms: now_ms(),
                 finished_at_ms: None,
                 error: None,
@@ -147,6 +154,13 @@ impl ArtQueue {
         let mut board = self.board.lock().unwrap();
         if let Some(job) = board.iter_mut().find(|j| j.job_id == job_id) {
             job.status = status;
+        }
+    }
+
+    fn set_progress(&self, job_id: u64, percent: u8) {
+        let mut board = self.board.lock().unwrap();
+        if let Some(job) = board.iter_mut().find(|j| j.job_id == job_id) {
+            job.progress_percent = Some(percent);
         }
     }
 
@@ -202,8 +216,21 @@ pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedArtWork>)
             queue.set_status(work.job_id, ArtJobStatus::Running);
 
             let args = art::build_art_cli_args(ArtCliMode::DefaultThenSidecarOverride, &work.export_path, &work.raw_path);
-            match art::run_art_cli(&work.art_cli_path, &args).await {
+            let progress_queue = queue.clone();
+            let job_id = work.job_id;
+            let run = art::run_art_cli_with_progress(&work.art_cli_path, &args, move |percent| {
+                progress_queue.set_progress(job_id, percent);
+            });
+            // Same "surface an error instead of hanging forever" reasoning as
+            // Variant 1 (commands::launch_art_round_trip) - see
+            // art::ART_CLI_RUN_TIMEOUT's doc comment for the budget.
+            let result = match tokio::time::timeout(art::ART_CLI_RUN_TIMEOUT, run).await {
+                Ok(r) => r,
+                Err(_) => Err(format!("Timed out after {}s running ART-cli", art::ART_CLI_RUN_TIMEOUT.as_secs())),
+            };
+            match result {
                 Ok(()) => {
+                    queue.set_progress(work.job_id, 100);
                     let export_file_name = work.export_path.file_name().and_then(|n| n.to_str()).map(str::to_string);
                     queue.finish(work.job_id, ArtJobStatus::Done, export_file_name, None);
                 }
@@ -252,6 +279,19 @@ mod tests {
     }
 
     #[test]
+    fn set_progress_updates_the_matching_job_and_survives_finish() {
+        let (queue, _rx) = ArtQueue::new();
+        let ids = queue.enqueue("/usr/bin/ART-cli", vec![("a".into(), PathBuf::from("/x/a.DNG"), PathBuf::from("/x/a_converted-1.jpg"))]);
+        queue.set_progress(ids[0], 42);
+        assert_eq!(queue.snapshot()[0].progress_percent, Some(42));
+
+        // Left at its last value on a failed job, not reset - same "show how
+        // far it got" idiom as import::ImportJob::bytes_copied.
+        queue.finish(ids[0], ArtJobStatus::Failed, None, Some("demosaic failed".into()));
+        assert_eq!(queue.snapshot()[0].progress_percent, Some(42));
+    }
+
+    #[test]
     fn clear_completed_drops_only_done_and_failed() {
         let (queue, _rx) = ArtQueue::new();
         let ids = queue.enqueue(
@@ -268,7 +308,16 @@ mod tests {
     #[test]
     fn trim_completed_never_evicts_pending_or_running() {
         fn job(status: ArtJobStatus) -> ArtJob {
-            ArtJob { job_id: 0, asset_id: "a".into(), status, export_file_name: None, created_at_ms: 0, finished_at_ms: None, error: None }
+            ArtJob {
+                job_id: 0,
+                asset_id: "a".into(),
+                status,
+                export_file_name: None,
+                progress_percent: None,
+                created_at_ms: 0,
+                finished_at_ms: None,
+                error: None,
+            }
         }
         let mut board: VecDeque<ArtJob> = VecDeque::new();
         board.push_back(job(ArtJobStatus::Pending));

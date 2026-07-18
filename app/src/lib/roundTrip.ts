@@ -16,13 +16,15 @@ import {
 // there's no push notification for "a specific file finished indexing", so
 // this just retries the existing get_folder_assets call (already used by the
 // Folders view) until the exact filename shows up or the budget runs out.
-// ~22s total, matching the generosity of this app's other background-job
-// polling (editQueue.tsx/importQueue.tsx poll every 1s indefinitely instead,
-// but those have a visible "still working" UI - this one is silent, so it
-// shouldn't wait indefinitely for a file that, for whatever reason, Immich
-// never picks up).
-const DEFAULT_ATTEMPTS = 15;
-const DEFAULT_INTERVAL_MS = 1500;
+// ~2 minutes total - confirmed live that Immich's own library scan/indexing
+// of a fresh multi-MB JPEG can genuinely take well over the previous ~22s
+// budget (found live: an ART CLI round trip export that took several minutes
+// to write finished successfully on disk, but ImmAture gave up looking for
+// it in Immich before the scan had caught up, so nothing showed up in the
+// grid with no error at all). Still bounded, not indefinite, since this is
+// silent for the generic (non-ART) round trip's own background listener.
+const DEFAULT_ATTEMPTS = 40;
+const DEFAULT_INTERVAL_MS = 3000;
 
 export async function pollForNewAsset(
   folderImmichPath: string,

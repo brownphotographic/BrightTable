@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::apps::{self, AppChoice};
 use crate::art;
@@ -381,6 +381,24 @@ fn resolve_art_export_path(
     Ok((local_path, export_path))
 }
 
+/// Bounds how long resolving an ART round trip's export path (a real disk
+/// scan for the first free collision-numbered filename, see
+/// `export_naming::next_export_path`) will wait before giving up - same
+/// "don't hang forever on an unreachable NFS/network mount" reasoning as
+/// `IMPORT_ENQUEUE_TIMEOUT`, which this mirrors in both budget and shape.
+const ART_EXPORT_PATH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Tauri event emitted with a `u8` (0-100) payload as `ART-cli`'s own
+/// `--progress` output arrives, for Variant 1 only - Variant 2's per-job
+/// progress already has a home on `ArtJob::progress_percent`/`ArtQueueStatus`
+/// (polled, no event needed), but Variant 1 is a single awaited `invoke`
+/// call with no polled job to attach a percentage to, so an event is the only
+/// way to get it to the frontend before the call itself resolves. Only one
+/// Variant 1 export can ever be in flight at a time (its triggering button
+/// disables itself while busy - see Viewer.tsx's `artBusy`/SelectionBar's
+/// `rawEditorBusy`), so this carries no asset id to disambiguate.
+const ART_ROUND_TRIP_PROGRESS_EVENT: &str = "art-round-trip-progress";
+
 /// Variant 1 of the ART CLI round trip (see the feature plan): hooks into the
 /// existing "Open in RAW Editor" action when ART round-trip is configured
 /// (`applications.art_cli_path` non-empty). Opens ART itself as its own
@@ -398,6 +416,7 @@ fn resolve_art_export_path(
 /// new file to disk itself.
 #[tauri::command]
 pub async fn launch_art_round_trip(
+    app: AppHandle,
     state: State<'_, AppState>,
     original_path: Option<String>,
     file_name: String,
@@ -433,10 +452,30 @@ pub async fn launch_art_round_trip(
     }) else {
         return Err("Skipped: system is about to suspend, try again after it wakes".to_string());
     };
-    let (raw_path, export_path) = handle.await.map_err(|e| e.to_string())??;
+    let (raw_path, export_path) = match tokio::time::timeout(ART_EXPORT_PATH_TIMEOUT, handle).await {
+        Ok(join_result) => join_result.map_err(|e| e.to_string())??,
+        Err(_) => {
+            return Err(format!(
+                "Timed out after {}s resolving the export path — check your library's local mount is actually connected/reachable",
+                ART_EXPORT_PATH_TIMEOUT.as_secs()
+            ))
+        }
+    };
 
     let args = art::build_art_cli_args(art::ArtCliMode::ApplySidecar, &export_path, &raw_path);
-    art::run_art_cli(&art_cli_path, &args).await?;
+    let progress_app = app.clone();
+    let run = art::run_art_cli_with_progress(&art_cli_path, &args, move |percent| {
+        let _ = progress_app.emit(ART_ROUND_TRIP_PROGRESS_EVENT, percent);
+    });
+    match tokio::time::timeout(art::ART_CLI_RUN_TIMEOUT, run).await {
+        Ok(result) => result?,
+        Err(_) => {
+            return Err(format!(
+                "Timed out after {}s running ART-cli — it may still be processing in the background",
+                art::ART_CLI_RUN_TIMEOUT.as_secs()
+            ))
+        }
+    }
 
     export_path
         .file_name()
@@ -501,7 +540,13 @@ pub async fn batch_art_round_trip(state: State<'_, AppState>, targets: Vec<ArtRo
     }) else {
         return Err("Skipped: system is about to suspend, try again after it wakes".to_string());
     };
-    handle.await.map_err(|e| e.to_string())?
+    match tokio::time::timeout(ART_EXPORT_PATH_TIMEOUT, handle).await {
+        Ok(join_result) => join_result.map_err(|e| e.to_string())?,
+        Err(_) => Err(format!(
+            "Timed out after {}s resolving export paths — check your library's local mount is actually connected/reachable",
+            ART_EXPORT_PATH_TIMEOUT.as_secs()
+        )),
+    }
 }
 
 /// Poll target for the ART queue's advisory activity panel, same shape as

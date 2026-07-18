@@ -265,6 +265,13 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
           ) : (
             sortedArt.map((job) => {
               const pill = artStatusPill(job.status);
+              // Real percentage (parsed backend-side from ART-cli's own
+              // --progress output), not just a "Exporting…" pill that looks
+              // identical whether it's genuinely advancing or stuck -
+              // matching the Imports section's real-byte-count treatment.
+              if (job.status === 'running' && job.progressPercent != null) {
+                pill.label = `${job.progressPercent}%`;
+              }
               return (
                 <div key={job.jobId} style={rowStyle}>
                   <img

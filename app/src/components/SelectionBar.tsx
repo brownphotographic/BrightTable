@@ -28,6 +28,8 @@ export default function SelectionBar({
   onPasteMetadata,
   rawSelectedCount,
   onBatchArtRoundTrip,
+  rawEditorBusy,
+  rawEditorProgress,
 }: {
   count: number;
   onCancel: () => void;
@@ -59,6 +61,13 @@ export default function SelectionBar({
   // selected, same "2+ selected" gating shape as Stack/Smart Stack.
   rawSelectedCount?: number;
   onBatchArtRoundTrip?: () => void;
+  // True while the ART CLI round trip (Variant 1) is running for the
+  // selected asset - disables/relabels "Open in RAW Editor" so a second
+  // click can't overlap a second export, same as Viewer.tsx's own artBusy.
+  rawEditorBusy?: boolean;
+  // Live 0-100 percentage while rawEditorBusy - see Viewer.tsx's identical
+  // artProgress for where this comes from.
+  rawEditorProgress?: number | null;
 }) {
   const canStack = count >= 2;
   // Both editors are a single-file launch (see Viewer.tsx's handleLaunch) -
@@ -120,7 +129,9 @@ export default function SelectionBar({
         Smart Stack
       </BarButton>
       {singleSelected && canOpenInRawEditor && (
-        <BarButton onClick={onOpenInRawEditor}>Open in RAW Editor</BarButton>
+        <BarButton onClick={onOpenInRawEditor} disabled={rawEditorBusy} title={rawEditorBusy ? 'Waiting on ART…' : undefined}>
+          {rawEditorBusy ? (rawEditorProgress != null ? `Working… ${rawEditorProgress}%` : 'Working…') : 'Open in RAW Editor'}
+        </BarButton>
       )}
       <BarButton onClick={onOpenInExternalEditor} disabled={!singleSelected} title={singleSelected ? undefined : 'Select a single photo to open it in an editor'}>
         Open in Ext. Editor

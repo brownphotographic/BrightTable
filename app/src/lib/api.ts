@@ -471,6 +471,10 @@ export interface ArtJob {
   // useArtJobReconciliation can call ingestRoundTripExport without a second
   // round trip to discover it.
   exportFileName: string | null;
+  // Live 0-100 percentage while `running`, parsed backend-side from
+  // ART-cli's own `--progress` output - null until the first progress line
+  // arrives, and left at its last value (not reset) once the job settles.
+  progressPercent: number | null;
   createdAtMs: number;
   finishedAtMs: number | null;
   error: string | null;

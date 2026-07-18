@@ -51,6 +51,7 @@ import { useArtQueue } from '../lib/artQueue';
 import { useArtJobReconciliation } from '../lib/useArtJobReconciliation';
 import { useBucketMemo } from '../lib/bucketMemo';
 import { ingestRoundTripExport, type RoundTripIngestOutcome } from '../lib/roundTrip';
+import { useArtRoundTripProgress } from '../lib/useArtRoundTripProgress';
 
 // Snapshots whichever AssetSummary fields a patch is about to touch, so a
 // job that later fails (the sidecar write, the authoritative mechanism -
@@ -596,6 +597,11 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // round-trip branch), just sourced from the selection bar's one selected
   // asset instead of the open asset.
   const { applications, artRoundTripEnabled } = useApplications();
+  // True while the ART CLI round trip (Variant 1) is running for the
+  // selection bar's single selected asset - see SelectionBar.tsx's
+  // rawEditorBusy prop.
+  const [artLaunchBusy, setArtLaunchBusy] = useState(false);
+  const artLaunchProgress = useArtRoundTripProgress(artLaunchBusy);
   const launchEditorForSelection = useCallback(
     async (role: 'rawEditor' | 'externalEditor') => {
       if (selectedAssets.length !== 1) return;
@@ -606,9 +612,21 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       }
       const asset = selectedAssets[0];
       if (role === 'rawEditor' && artRoundTripEnabled) {
-        const exportFileName = await launchArtRoundTrip(asset.originalPath, asset.fileName, asset.fileExtension, choice);
-        const outcome = await ingestRoundTripExport(asset, exportFileName);
-        if (outcome) applyRoundTripOutcome(outcome);
+        setArtLaunchBusy(true);
+        try {
+          const exportFileName = await launchArtRoundTrip(asset.originalPath, asset.fileName, asset.fileExtension, choice);
+          const outcome = await ingestRoundTripExport(asset, exportFileName);
+          if (outcome) {
+            applyRoundTripOutcome(outcome);
+          } else {
+            // The export itself succeeded (ART-cli already wrote the file) -
+            // this only means Immich hasn't indexed it yet within the
+            // polling budget, not that anything actually failed.
+            throw new Error(`Exported "${exportFileName}", but it hasn't shown up in Immich yet — try Refresh Timeline in a moment.`);
+          }
+        } finally {
+          setArtLaunchBusy(false);
+        }
         return;
       }
       await launchEditor(asset.originalPath, choice, asset.id, asset.fileName);
@@ -723,8 +741,16 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       if (!job.exportFileName) return;
       const original = assetByIdAll.get(job.assetId);
       if (!original) return;
-      ingestRoundTripExport(original, job.exportFileName).then((outcome) => {
-        if (outcome) applyRoundTripOutcome(outcome);
+      const exportFileName = job.exportFileName;
+      ingestRoundTripExport(original, exportFileName).then((outcome) => {
+        if (outcome) {
+          applyRoundTripOutcome(outcome);
+        } else {
+          // The export itself succeeded (ART-cli already wrote the file) -
+          // this only means Immich hasn't indexed it yet within the polling
+          // budget, not that the export actually failed.
+          setEnqueueError(`Exported "${exportFileName}", but it hasn't shown up in Immich yet — try Refresh Timeline in a moment.`);
+        }
       });
     },
     [assetByIdAll, applyRoundTripOutcome],
@@ -1163,8 +1189,10 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           onSyncMetadata={() => syncMetadata([...selected].filter((id) => unsyncedMetadata.has(id))).catch(() => {})}
           onDelete={() => setConfirmDeleteSelection(true)}
           canOpenInRawEditor={selectedAssets.length === 1 && isRawAsset(selectedAssets[0])}
-          onOpenInRawEditor={() => launchEditorForSelection('rawEditor').catch(() => {})}
-          onOpenInExternalEditor={() => launchEditorForSelection('externalEditor').catch(() => {})}
+          onOpenInRawEditor={() => launchEditorForSelection('rawEditor').catch((e) => setEnqueueError(String(e)))}
+          onOpenInExternalEditor={() => launchEditorForSelection('externalEditor').catch((e) => setEnqueueError(String(e)))}
+          rawEditorBusy={artLaunchBusy}
+          rawEditorProgress={artLaunchProgress}
           canPasteImageProcessing={
             !!copiedProcessingSource &&
             [...selected].some((id) => {
@@ -1343,27 +1371,6 @@ function StatusBar({
       <span>{totalCount} assets</span>
       {selectedCount > 0 && <span>· {selectedCount} selected</span>}
       <div style={{ flex: 1 }} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 20, padding: '0 8px', borderRadius: 6 }}>
-        <div style={{ position: 'relative', width: 12, height: 12, flexShrink: 0 }}>
-          <div style={{ position: 'absolute', inset: 0, border: '1.5px solid currentColor', borderRadius: '50%' }} />
-          <div style={{ position: 'absolute', left: 5.3, top: 2.5, width: 1.4, height: 4, background: 'currentColor', borderRadius: 1 }} />
-          <div
-            style={{
-              position: 'absolute',
-              left: 5.7,
-              top: 5.4,
-              width: 3.3,
-              height: 1.4,
-              background: 'currentColor',
-              borderRadius: 1,
-              transformOrigin: 'left center',
-              transform: 'rotate(28deg)',
-            }}
-          />
-        </div>
-        Activity
-      </div>
-      <div style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.12)' }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'rgba(255,255,255,0.55)' }}>
         <span style={{ fontSize: 11.5 }}>Thumbnails</span>
         <div style={{ position: 'relative', width: 12, height: 12, flexShrink: 0 }}>
