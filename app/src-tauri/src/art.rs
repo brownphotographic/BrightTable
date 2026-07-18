@@ -135,7 +135,24 @@ where
 fn classify_exit(status: std::process::ExitStatus, stderr_bytes: &[u8]) -> Result<(), String> {
     if !status.success() {
         let stderr = String::from_utf8_lossy(stderr_bytes).trim().to_string();
-        return Err(if stderr.is_empty() { format!("ART-cli exited with status {status}") } else { stderr });
+        if stderr.is_empty() {
+            return Err(format!("ART-cli exited with status {status}"));
+        }
+        // `ART-cli` links a bundled Exiv2 that can `std::terminate` (an
+        // uncaught C++ exception, not a normal error return) while reading a
+        // specific RAW file's embedded metadata - confirmed live against a
+        // real Leica M10-R DNG that a plain manual `ART-cli` invocation
+        // crashes on identically, with no ImmAture involvement at all (same
+        // crash with no sidecar present, and the file reads cleanly under a
+        // separate, newer system Exiv2 - so it's not disk/network corruption
+        // either). Framed explicitly as ART-cli's own crash rather than
+        // leaving the bare C++ exception text looking like an ImmAture bug.
+        if stderr.contains("terminate called after throwing an instance of") {
+            return Err(format!(
+                "ART-cli crashed reading this RAW file's metadata (an ART/Exiv2 bug or format incompatibility, not an ImmAture issue) — {stderr}"
+            ));
+        }
+        return Err(stderr);
     }
     Ok(())
 }
@@ -268,6 +285,26 @@ mod tests {
         let script = write_stub_script(&dir, "art-cli-progress-fail.sh", "#!/bin/sh\necho '10'\necho 'demosaic failed' >&2\nexit 1\n");
         let result = retrying_on_text_file_busy(|| run_art_cli_with_progress(script.to_str().unwrap(), &[], |_| {})).await;
         assert_eq!(result, Err("demosaic failed".to_string()));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Confirmed live: a real Leica M10-R DNG makes a plain manual `ART-cli`
+    /// invocation abort with exactly this "terminate called..." text - an
+    /// uncaught C++ exception in ART's bundled Exiv2, reproducible with no
+    /// ImmAture involvement at all. This should read as ART-cli's own crash,
+    /// not a bare, unattributed C++ exception dump.
+    #[tokio::test]
+    async fn run_art_cli_with_progress_attributes_exiv2_terminate_crashes_to_art_cli() {
+        let dir = tmp_dir("progress-exiv2-crash");
+        let script = write_stub_script(
+            &dir,
+            "art-cli-exiv2-crash.sh",
+            "#!/bin/sh\necho '85'\necho \"terminate called after throwing an instance of 'Exiv2::Error'\" >&2\necho '  what():  Failed to read input data' >&2\nexit 134\n",
+        );
+        let result = retrying_on_text_file_busy(|| run_art_cli_with_progress(script.to_str().unwrap(), &[], |_| {})).await;
+        let err = result.unwrap_err();
+        assert!(err.starts_with("ART-cli crashed reading this RAW file's metadata"), "{err}");
+        assert!(err.contains("Failed to read input data"), "{err}");
         let _ = fs::remove_dir_all(&dir);
     }
 }

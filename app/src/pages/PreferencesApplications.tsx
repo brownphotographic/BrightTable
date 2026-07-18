@@ -37,7 +37,7 @@ export default function PreferencesApplications() {
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '24px 0' }}>
       <div style={{ fontSize: 14, fontWeight: 700, margin: '0 4px 12px' }}>Applications</div>
       <div style={{ fontSize: 12.5, color: 'var(--text-dimmer)', margin: '0 4px 16px', lineHeight: 1.5 }}>
-        Choose which application opens when you click "Open in RAW Editor"/"Open in Ext. Editor" in the
+        Choose which application opens when you click "Tweak RAW Roundtrip"/"Open in Ext. Editor" in the
         photo viewer.
       </div>
       <div style={panel}>
@@ -76,10 +76,10 @@ export default function PreferencesApplications() {
         <a href="https://bitbucket.org/agriggio/art/" target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>
           ART
         </a>{' '}
-        (the RawTherapee fork). When its <code>ART-cli</code> binary is configured here, "Open in RAW Editor" opens
+        (the RawTherapee fork). When its <code>ART-cli</code> binary is configured here, "Tweak RAW Roundtrip" opens
         ART itself, waits for you to finish, then runs <code>ART-cli</code> to produce the export deterministically -
-        no more manually exporting inside ART's own UI. A "Batch RAW Roundtrip" action also becomes available for
-        exporting several RAW photos headlessly at once.
+        no more manually exporting inside ART's own UI. A "Headless RAW Roundtrip" action also becomes available for
+        exporting one or more RAW photos straight through <code>ART-cli</code>, with no ART UI involved at all.
       </div>
       <div style={panel}>
         <div style={row}>

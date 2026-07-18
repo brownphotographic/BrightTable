@@ -1,6 +1,6 @@
-//! Background queue for **Batch RAW Roundtrip** (Variant 2 of the ART CLI
-//! round trip) - fully headless `ART-cli` exports of N assets at once, with
-//! visible per-asset progress. Modeled directly on `processing_queue.rs`
+//! Background queue for **Headless RAW Roundtrip** (Variant 2 of the ART CLI
+//! round trip) - fully headless `ART-cli` exports of one or more assets at
+//! once, with visible per-asset progress. Modeled directly on `processing_queue.rs`
 //! (closest sibling: local-I/O-only worker per job, no Immich API call
 //! inside the job itself), same `Pending -> Running -> Done|Failed` board, a
 //! bounded `Semaphore`, and a capped completed-history trim.
@@ -150,21 +150,44 @@ impl ArtQueue {
         board.retain(|j| matches!(j.status, ArtJobStatus::Pending | ArtJobStatus::Running));
     }
 
-    fn set_status(&self, job_id: u64, status: ArtJobStatus) {
+    /// Starts tracking a Variant 1 (single-image "Tweak RAW Roundtrip") export
+    /// as a `Pending` row on the same board Variant 2 uses, purely so
+    /// `ActivityIndicator`/`ActivityPanel` show it too - unlike `enqueue`,
+    /// this sends nothing through `tx`/the drain worker, since Variant 1
+    /// always runs inside its own awaited command body
+    /// (`commands::launch_art_round_trip`) rather than this queue's worker
+    /// loop. The caller drives the job's status/progress/completion directly
+    /// via `set_status`/`set_progress`/`finish` below.
+    pub fn start_manual(&self, asset_id: String) -> u64 {
+        let job_id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.board.lock().unwrap().push_back(ArtJob {
+            job_id,
+            asset_id,
+            status: ArtJobStatus::Pending,
+            export_file_name: None,
+            progress_percent: None,
+            created_at_ms: now_ms(),
+            finished_at_ms: None,
+            error: None,
+        });
+        job_id
+    }
+
+    pub fn set_status(&self, job_id: u64, status: ArtJobStatus) {
         let mut board = self.board.lock().unwrap();
         if let Some(job) = board.iter_mut().find(|j| j.job_id == job_id) {
             job.status = status;
         }
     }
 
-    fn set_progress(&self, job_id: u64, percent: u8) {
+    pub fn set_progress(&self, job_id: u64, percent: u8) {
         let mut board = self.board.lock().unwrap();
         if let Some(job) = board.iter_mut().find(|j| j.job_id == job_id) {
             job.progress_percent = Some(percent);
         }
     }
 
-    fn finish(&self, job_id: u64, status: ArtJobStatus, export_file_name: Option<String>, error: Option<String>) {
+    pub fn finish(&self, job_id: u64, status: ArtJobStatus, export_file_name: Option<String>, error: Option<String>) {
         let mut board = self.board.lock().unwrap();
         if let Some(job) = board.iter_mut().find(|j| j.job_id == job_id) {
             job.status = status;
@@ -234,7 +257,18 @@ pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedArtWork>)
                     let export_file_name = work.export_path.file_name().and_then(|n| n.to_str()).map(str::to_string);
                     queue.finish(work.job_id, ArtJobStatus::Done, export_file_name, None);
                 }
-                Err(e) => queue.finish(work.job_id, ArtJobStatus::Failed, None, Some(e)),
+                Err(e) => {
+                    // Release the filename this job claimed (see
+                    // export_naming::next_export_path's atomic `create_new`)
+                    // so a failed export doesn't leave an empty placeholder
+                    // for Immich to later pick up as a new, broken asset -
+                    // safe even on the timeout path above, since a
+                    // still-running `ART-cli` process just recreates the file
+                    // (`-Y`, overwrite without prompt) when it eventually
+                    // finishes.
+                    let _ = std::fs::remove_file(&work.export_path);
+                    queue.finish(work.job_id, ArtJobStatus::Failed, None, Some(e));
+                }
             }
         });
     }
@@ -257,6 +291,35 @@ mod tests {
         assert_eq!(snap.len(), 2);
         assert!(snap.iter().all(|j| j.status == ArtJobStatus::Pending));
         assert_eq!(queue.pending_count(), 2);
+    }
+
+    #[test]
+    fn start_manual_tracks_a_variant_1_job_through_running_to_done() {
+        let (queue, _rx) = ArtQueue::new();
+        let job_id = queue.start_manual("a".into());
+        assert_eq!(queue.pending_count(), 1);
+        assert_eq!(queue.snapshot()[0].status, ArtJobStatus::Pending);
+
+        queue.set_status(job_id, ArtJobStatus::Running);
+        queue.set_progress(job_id, 55);
+        assert_eq!(queue.pending_count(), 1);
+        assert_eq!(queue.snapshot()[0].status, ArtJobStatus::Running);
+        assert_eq!(queue.snapshot()[0].progress_percent, Some(55));
+
+        queue.finish(job_id, ArtJobStatus::Done, Some("a_converted-1.jpg".into()), None);
+        assert_eq!(queue.pending_count(), 0);
+        let snap = queue.snapshot();
+        assert_eq!(snap[0].status, ArtJobStatus::Done);
+        assert_eq!(snap[0].export_file_name.as_deref(), Some("a_converted-1.jpg"));
+    }
+
+    #[test]
+    fn start_manual_ids_share_the_same_sequence_as_enqueue() {
+        let (queue, _rx) = ArtQueue::new();
+        let enqueued = queue.enqueue("/usr/bin/ART-cli", vec![("a".into(), PathBuf::from("/x/a.DNG"), PathBuf::from("/x/a_converted-1.jpg"))]);
+        let manual_id = queue.start_manual("b".into());
+        assert_eq!(enqueued, vec![1]);
+        assert_eq!(manual_id, 2);
     }
 
     #[test]

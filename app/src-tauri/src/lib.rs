@@ -138,6 +138,7 @@ pub fn run() {
             commands::list_stacks,
             commands::set_stack_pick,
             commands::set_asset_capture_date,
+            commands::regenerate_asset_thumbnail,
             commands::delete_stack,
             commands::check_sidecar_metadata,
             commands::get_folder_paths,

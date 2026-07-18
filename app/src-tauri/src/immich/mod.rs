@@ -319,6 +319,36 @@ impl ImmichClient {
         Ok(())
     }
 
+    /// POST /assets/jobs {name: "regenerate-thumbnail"} - best-effort nudge
+    /// after a round-trip export lands (`roundTrip.ts`'s `ingestRoundTripExport`).
+    /// Confirmed live: an asset discovered via `scan_library` above (as every
+    /// round-trip export is) doesn't reliably get Immich's own
+    /// `thumbnailGeneration` job auto-queued the way a normal upload does -
+    /// `thumbhash` stays `null` and its `/thumbnail` endpoint 404s
+    /// indefinitely (no backlog, nothing queued - not just slow) until
+    /// something else happens to trigger it. `refresh_metadata` above does
+    /// *not* fix this on its own (confirmed live) - thumbnail generation
+    /// needs its own explicit job. Callers treat failure here as non-fatal,
+    /// same reasoning as `refresh_metadata`: the export already durably
+    /// landed on disk and in Immich's DB either way.
+    pub async fn regenerate_thumbnail(&self, id: &str) -> Result<(), String> {
+        let body = serde_json::json!({ "assetIds": [id], "name": "regenerate-thumbnail" });
+        let resp = self
+            .http
+            .post(self.url("/assets/jobs"))
+            .header("x-api-key", &self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Regenerate-thumbnail request failed: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("Regenerate-thumbnail returned {status}: {text}"));
+        }
+        Ok(())
+    }
+
     /// PUT /assets/{id} - only the fields actually passed as `Some` are sent,
     /// so this never clobbers fields the caller didn't mean to touch.
     pub async fn update_asset(

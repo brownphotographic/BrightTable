@@ -280,7 +280,7 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
                     style={{ width: 40, height: 40, borderRadius: 6, objectFit: 'cover', flexShrink: 0, background: '#333' }}
                   />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={rowTitle}>{job.exportFileName ?? 'Batch RAW Roundtrip'}</div>
+                    <div style={rowTitle}>{job.exportFileName ?? 'RAW Roundtrip'}</div>
                     {job.error && <div style={rowError}>{job.error}</div>}
                   </div>
                   <StatusPill pill={pill} />

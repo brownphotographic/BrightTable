@@ -47,8 +47,8 @@ export interface ApplicationsConfig {
   externalEditor: AppChoice | null;
   // Path to the ART-cli binary - a plain string (no .desktop entry exists for
   // it, so it needs its own file-browse UI, not the app picker). A non-empty
-  // value is the single signal that switches "Open in RAW Editor"/the new
-  // "Batch RAW Roundtrip" action over to the ART CLI round trip - see
+  // value is the single signal that switches "Tweak RAW Roundtrip"/the new
+  // "Headless RAW Roundtrip" action over to the ART CLI round trip - see
   // lib/applications.tsx's derived `artRoundTripEnabled`.
   artCliPath: string;
 }
@@ -355,6 +355,14 @@ export function setAssetCaptureDate(assetId: string, dateTimeOriginal: string): 
   return invoke('set_asset_capture_date', { assetId, dateTimeOriginal });
 }
 
+// Nudges Immich into generating a thumbnail for an asset right away - see
+// commands::regenerate_asset_thumbnail's doc comment for why round-trip
+// exports need this (Immich doesn't reliably auto-queue it for assets
+// discovered via a Library scan the way it does for a normal upload).
+export function regenerateAssetThumbnail(assetId: string): Promise<void> {
+  return invoke('regenerate_asset_thumbnail', { assetId });
+}
+
 export function deleteStack(stackId: string): Promise<void> {
   return invoke('delete_stack', { stackId });
 }
@@ -431,18 +439,22 @@ export function clearCompletedProcessingJobs(): Promise<void> {
 // launchEditor), then runs ART-cli to produce the export deterministically
 // and returns its generated filename. Only reachable when
 // applications.artCliPath is non-empty (see useApplications' derived
-// artRoundTripEnabled) - the generic (non-ART) "Open in RAW Editor" flow
-// keeps calling launchEditor unchanged.
+// artRoundTripEnabled) - the generic (non-ART) "Tweak RAW Roundtrip" flow
+// keeps calling launchEditor unchanged. `id` is only used backend-side to
+// label/thumbnail this export's row in the shared ArtQueue board (see
+// art_queue.rs's `start_manual`), so it shows up in ActivityIndicator/
+// ActivityPanel alongside Headless RAW Roundtrip jobs.
 export function launchArtRoundTrip(
+  id: string,
   originalPath: string | null,
   fileName: string,
   fileExtension: string,
   rawEditor: AppChoice,
 ): Promise<string> {
-  return invoke('launch_art_round_trip', { originalPath, fileName, fileExtension, rawEditor });
+  return invoke('launch_art_round_trip', { id, originalPath, fileName, fileExtension, rawEditor });
 }
 
-// One Batch RAW Roundtrip target - mirrors MetadataEditTarget plus the
+// One Headless RAW Roundtrip target - mirrors MetadataEditTarget plus the
 // fileName/fileExtension the backend's export-naming logic needs.
 export interface ArtRoundTripTarget {
   id: string;
@@ -451,18 +463,19 @@ export interface ArtRoundTripTarget {
   fileExtension: string;
 }
 
-// Enqueues Variant 2 (Batch RAW Roundtrip) onto the backend's background
+// Enqueues Variant 2 (Headless RAW Roundtrip) onto the backend's background
 // ArtQueue and returns immediately with the assigned job ids - same
 // "enqueue and let the frontend poll" shape as startImport/
-// pasteImageProcessing.
+// pasteImageProcessing. Accepts one target or many; the CLI renders each in
+// turn.
 export function batchArtRoundTrip(targets: ArtRoundTripTarget[]): Promise<number[]> {
   return invoke('batch_art_round_trip', { targets });
 }
 
 export type ArtJobStatus = 'pending' | 'running' | 'done' | 'failed';
 
-// Mirrors art_queue.rs's ArtJob - one row of Batch RAW Roundtrip's advisory
-// activity panel.
+// Mirrors art_queue.rs's ArtJob - one row of Headless RAW Roundtrip's
+// advisory activity panel.
 export interface ArtJob {
   jobId: number;
   assetId: string;

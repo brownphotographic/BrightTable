@@ -36,7 +36,7 @@ pub struct AppState {
     /// `processing_queue.rs`. Same "spawned once from `.setup()`" pattern as
     /// `edit_queue`/`import_queue`.
     pub processing_queue: Arc<ProcessingQueue>,
-    /// Background Batch RAW Roundtrip queue (ART CLI round trip Variant 2) -
+    /// Background Headless RAW Roundtrip queue (ART CLI round trip Variant 2) -
     /// see `art_queue.rs`. Same "spawned once from `.setup()`" pattern as
     /// the other background queues.
     pub art_queue: Arc<ArtQueue>,

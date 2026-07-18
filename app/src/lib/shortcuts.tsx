@@ -50,7 +50,7 @@ export const SHORTCUT_DEFS: { id: ShortcutId; label: string }[] = [
   { id: 'stack', label: 'Stack selected' },
   { id: 'refreshTimeline', label: 'Refresh timeline' },
   { id: 'openPreferences', label: 'Open preferences' },
-  { id: 'openInRawEditor', label: 'Open in RAW Editor' },
+  { id: 'openInRawEditor', label: 'Tweak RAW Roundtrip' },
   { id: 'openInExternalEditor', label: 'Open in Ext. Editor' },
   { id: 'copyMetadata', label: 'Copy Metadata' },
   { id: 'pasteMetadata', label: 'Paste Metadata' },

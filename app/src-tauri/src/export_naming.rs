@@ -13,6 +13,8 @@
 //! should be cross-checked by hand against `smartStack.ts` during manual
 //! testing.
 
+use std::fs::OpenOptions;
+use std::io;
 use std::path::{Path, PathBuf};
 
 /// Strips `*` wildcards from a Smart Stack suffix pattern (e.g.
@@ -48,17 +50,36 @@ pub fn base_name<'a>(file_name: &'a str, file_extension: &str) -> &'a str {
 }
 
 /// Builds `"{dir}/{base}_{core}-{n}.{ext}"`, scanning disk for the first free
-/// `n` starting at 1 - always numbered, never a bare filename, so
+/// `n` starting at 1 and atomically *claiming* it (`create_new`, not just an
+/// existence check) - always numbered, never a bare filename, so
 /// round-tripping the same original twice never silently overwrites the
 /// first export.
-pub fn next_export_path(dir: &Path, base: &str, core: &str, ext: &str) -> PathBuf {
+///
+/// The atomic claim matters: `ART-cli` itself doesn't run until well after
+/// this returns (for Variant 2, every target in a batch is resolved up front,
+/// before any export starts; even for Variant 1 the export can take minutes -
+/// see `art::ART_CLI_RUN_TIMEOUT`'s doc comment), so a plain `.exists()`
+/// check leaves a wide window where two round trips resolved around the same
+/// time - most commonly two assets in one batch that share a source
+/// directory/filename - could both compute the *same* "first free" number and
+/// then have two `ART-cli` processes write that same path concurrently,
+/// corrupting whichever file lands there. Claiming the name here (as an empty
+/// file) the instant it's chosen closes that window - `ART-cli` is always run
+/// with `-Y` (overwrite without prompt, see `art::build_art_cli_args`), so
+/// writing into an already-claimed empty file is expected, not a conflict.
+/// Callers that end up not writing anything to a claimed path (a later error,
+/// a timeout) are expected to remove the leftover empty file themselves - see
+/// `art_queue.rs`'s worker and `commands::launch_art_round_trip`'s cleanup on
+/// their own error paths.
+pub fn next_export_path(dir: &Path, base: &str, core: &str, ext: &str) -> io::Result<PathBuf> {
     let mut n: u32 = 1;
     loop {
         let candidate = dir.join(format!("{base}_{core}-{n}.{ext}"));
-        if !candidate.exists() {
-            return candidate;
+        match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+            Ok(_) => return Ok(candidate),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
+            Err(e) => return Err(e),
         }
-        n += 1;
     }
 }
 
@@ -113,7 +134,7 @@ mod tests {
         let base = base_name("IMG_0001.DNG", "DNG");
         let core = suffix_core("*converted*");
         let dir = tmp_dir("default-case");
-        let path = next_export_path(&dir, base, &core, "jpg");
+        let path = next_export_path(&dir, base, &core, "jpg").unwrap();
         assert_eq!(path.file_name().and_then(|n| n.to_str()), Some("IMG_0001_converted-1.jpg"));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -121,7 +142,7 @@ mod tests {
     #[test]
     fn next_export_path_starts_at_one_and_is_always_numbered() {
         let dir = tmp_dir("numbered");
-        let path = next_export_path(&dir, "IMG_1", "converted", "jpg");
+        let path = next_export_path(&dir, "IMG_1", "converted", "jpg").unwrap();
         assert_eq!(path, dir.join("IMG_1_converted-1.jpg"));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -131,8 +152,23 @@ mod tests {
         let dir = tmp_dir("collision");
         std::fs::write(dir.join("IMG_1_converted-1.jpg"), b"x").unwrap();
         std::fs::write(dir.join("IMG_1_converted-2.jpg"), b"x").unwrap();
-        let path = next_export_path(&dir, "IMG_1", "converted", "jpg");
+        let path = next_export_path(&dir, "IMG_1", "converted", "jpg").unwrap();
         assert_eq!(path, dir.join("IMG_1_converted-3.jpg"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn next_export_path_actually_claims_the_name_it_returns() {
+        // The regression case for the "blank export" bug: without an atomic
+        // claim, two calls resolved before either file is actually written
+        // would both return "-1" - claiming it here means a second,
+        // concurrent call sees it as taken and moves on to "-2".
+        let dir = tmp_dir("claims");
+        let first = next_export_path(&dir, "IMG_1", "converted", "jpg").unwrap();
+        assert_eq!(first, dir.join("IMG_1_converted-1.jpg"));
+        assert!(first.exists());
+        let second = next_export_path(&dir, "IMG_1", "converted", "jpg").unwrap();
+        assert_eq!(second, dir.join("IMG_1_converted-2.jpg"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

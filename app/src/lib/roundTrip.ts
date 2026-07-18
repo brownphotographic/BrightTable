@@ -3,6 +3,7 @@ import {
   deleteStack,
   getFolderAssets,
   getStack,
+  regenerateAssetThumbnail,
   scanImmichLibrary,
   setAssetCaptureDate,
   updateAssetMetadata,
@@ -49,6 +50,22 @@ export interface RoundTripIngestOutcome {
   stack: { memberIds: string[]; info: AssetStackInfo } | null;
 }
 
+// Serializes every call app-wide (Viewer.tsx's Variant 1, PhotosBrowser/
+// FoldersBrowser's Variant 2 batch reconciliation, and the generic round-trip
+// file-watcher listener all funnel through this one function). Found live:
+// running Headless RAW Roundtrip across 2+ RAW assets that were already
+// stacked together produced overlapping createStack/deleteStack calls for
+// the *same* underlying stack, corrupting it (Immich's own "trashing one
+// stacked asset takes its siblings with it" behavior then made this look
+// like a mass delete) - each ingestion's "does this original already have a
+// stack, and who else is in it" read raced every sibling's still-in-flight
+// dissolve-then-recreate of that exact stack. Serializing so each ingestion
+// only ever starts once the previous one has fully landed - combined with
+// re-reading `original`'s stack membership fresh (see below) instead of
+// trusting a snapshot that may already be stale by the time this runs -
+// closes the race.
+let ingestChain: Promise<unknown> = Promise.resolve();
+
 // The shared "a round-trip output file now exists in Immich" ingestion tail:
 // polls for the new asset, corrects its capture date, carries the original's
 // rating/favorite/description onto it, and creates (or merges into an
@@ -62,10 +79,16 @@ export interface RoundTripIngestOutcome {
 // Returns `null` if the export never actually showed up in Immich within the
 // polling budget, or if `original` has no server-side path to derive its
 // containing folder from.
-export async function ingestRoundTripExport(
-  original: AssetSummary,
-  newFileName: string,
-): Promise<RoundTripIngestOutcome | null> {
+export function ingestRoundTripExport(original: AssetSummary, newFileName: string): Promise<RoundTripIngestOutcome | null> {
+  const run = ingestChain.then(() => ingestRoundTripExportInner(original, newFileName));
+  // Swallow here so one caller's rejection/`null` doesn't wedge the shared
+  // chain for every later caller - `run` (returned below, unswallowed) is
+  // still each individual caller's own real result.
+  ingestChain = run.catch(() => {});
+  return run;
+}
+
+async function ingestRoundTripExportInner(original: AssetSummary, newFileName: string): Promise<RoundTripIngestOutcome | null> {
   if (!original.originalPath) return null;
   const slash = original.originalPath.lastIndexOf('/');
   const folderImmichPath = slash === -1 ? '' : original.originalPath.slice(0, slash);
@@ -73,6 +96,25 @@ export async function ingestRoundTripExport(
   await scanImmichLibrary().catch(() => {});
   let found = await pollForNewAsset(folderImmichPath, newFileName);
   if (!found) return null;
+
+  // Confirmed live: an asset discovered via scanImmichLibrary (every
+  // round-trip export) doesn't reliably get Immich's own thumbnailGeneration
+  // job auto-queued the way a normal upload does - left alone, it shows up
+  // blank (its own /thumbnail endpoint 404s indefinitely, not just slowly)
+  // until something else happens to trigger regeneration. Fire-and-forget,
+  // same "best-effort, doesn't block the outcome" treatment as
+  // setAssetCaptureDate/updateAssetMetadata below.
+  regenerateAssetThumbnail(found.id).catch(() => {});
+
+  // Re-fetch `original`'s own current server-side stack membership rather
+  // than trusting `original.stack` - that's a snapshot the caller captured
+  // before this export (or a just-settled sibling export sharing the same
+  // stack, now serialized ahead of this one - see `ingestChain` above) ran,
+  // and may already point at a stack id Immich has since dissolved/replaced.
+  // Folder listing was just fetched by pollForNewAsset anyway, so this is one
+  // more of the same call, not a new kind of request.
+  const freshSiblings = await getFolderAssets(folderImmichPath).catch(() => [] as AssetSummary[]);
+  const freshOriginal = freshSiblings.find((a) => a.id === original.id) ?? original;
 
   // RAW editors' exported JPEGs frequently carry no EXIF DateTimeOriginal of
   // their own, so Immich indexes them under "now" instead of the original's
@@ -96,7 +138,7 @@ export async function ingestRoundTripExport(
   }
 
   let memberIds = [found.id, original.id];
-  const existingStackId = original.stack?.id;
+  const existingStackId = freshOriginal.stack?.id;
   if (existingStackId) {
     const existing = await getStack(existingStackId).catch(() => null);
     if (existing) {

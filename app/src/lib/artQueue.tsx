@@ -11,9 +11,9 @@ const ArtQueueContext = createContext<ArtQueueContextValue | null>(null);
 
 const POLL_MS = 1000;
 
-// Mirrors processingQueue.tsx exactly - Batch RAW Roundtrip's own background
-// queue (art_queue.rs) is fully decoupled the same way, so the same "poll on
-// a plain interval, share via context" shape applies unchanged.
+// Mirrors processingQueue.tsx exactly - Headless RAW Roundtrip's own
+// background queue (art_queue.rs) is fully decoupled the same way, so the
+// same "poll on a plain interval, share via context" shape applies unchanged.
 export function ArtQueueProvider({ children }: { children: ReactNode }) {
   const [jobs, setJobs] = useState<ArtJob[]>([]);
   const [pendingCount, setPendingCount] = useState(0);

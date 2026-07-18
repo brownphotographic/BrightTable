@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { ArtJob } from './api';
 
-// Mirrors useEditJobReconciliation.ts exactly, for Batch RAW Roundtrip's
+// Mirrors useEditJobReconciliation.ts exactly, for Headless RAW Roundtrip's
 // ArtQueue instead of EditQueue - lets a page track a set of job ids it just
 // enqueued (trackJobs) and get a one-shot callback the moment each one
 // settles to done/failed, however many polls that takes. Drives Variant 2's

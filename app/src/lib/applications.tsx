@@ -8,8 +8,8 @@ interface ApplicationsContextValue {
   setEditor: (role: 'rawEditor' | 'externalEditor', choice: AppChoice) => void;
   setArtCliPath: (path: string) => void;
   // Whether the ART CLI round trip is configured - the single signal that
-  // switches "Open in RAW Editor"/adds "Batch RAW Roundtrip" over to the new
-  // flow (see the feature plan's decision on this). Derived rather than
+  // switches "Tweak RAW Roundtrip"/adds "Headless RAW Roundtrip" over to the
+  // new flow (see the feature plan's decision on this). Derived rather than
   // stored separately so it can never drift from applications.artCliPath.
   artRoundTripEnabled: boolean;
 }

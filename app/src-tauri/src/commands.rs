@@ -5,7 +5,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::apps::{self, AppChoice};
 use crate::art;
-use crate::art_queue::ArtJob;
+use crate::art_queue::{ArtJob, ArtJobStatus};
 use crate::config::{self, AppConfig, ApplicationsConfig, ImportSettings, LibraryConfig, SmartStackSettings};
 use crate::edit_queue::EditJob;
 use crate::export_naming;
@@ -377,7 +377,8 @@ fn resolve_art_export_path(
     let dir = local_path.parent().ok_or_else(|| format!("{file_name} has no parent directory"))?.to_path_buf();
     let base = export_naming::base_name(file_name, file_extension);
     let core = export_naming::suffix_core(suffix_pattern);
-    let export_path = export_naming::next_export_path(&dir, base, &core, "jpg");
+    let export_path = export_naming::next_export_path(&dir, base, &core, "jpg")
+        .map_err(|e| format!("Couldn't claim an export filename for {file_name}: {e}"))?;
     Ok((local_path, export_path))
 }
 
@@ -389,18 +390,19 @@ fn resolve_art_export_path(
 const ART_EXPORT_PATH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// Tauri event emitted with a `u8` (0-100) payload as `ART-cli`'s own
-/// `--progress` output arrives, for Variant 1 only - Variant 2's per-job
-/// progress already has a home on `ArtJob::progress_percent`/`ArtQueueStatus`
-/// (polled, no event needed), but Variant 1 is a single awaited `invoke`
-/// call with no polled job to attach a percentage to, so an event is the only
-/// way to get it to the frontend before the call itself resolves. Only one
-/// Variant 1 export can ever be in flight at a time (its triggering button
-/// disables itself while busy - see Viewer.tsx's `artBusy`/SelectionBar's
+/// `--progress` output arrives, for Variant 1's own local button label
+/// (Viewer.tsx's `artBusy`/`useArtRoundTripProgress`) - `launch_art_round_trip`
+/// also mirrors each percentage onto a manual `ArtJob` (see `start_manual`)
+/// for `ActivityIndicator`/`ActivityPanel`, but that's only polled once a
+/// second, so this event remains the way the triggering button itself gets
+/// instant feedback without waiting on the next poll tick. Only one Variant 1
+/// export can ever be in flight at a time (its triggering button disables
+/// itself while busy - see Viewer.tsx's `artBusy`/SelectionBar's
 /// `rawEditorBusy`), so this carries no asset id to disambiguate.
 const ART_ROUND_TRIP_PROGRESS_EVENT: &str = "art-round-trip-progress";
 
 /// Variant 1 of the ART CLI round trip (see the feature plan): hooks into the
-/// existing "Open in RAW Editor" action when ART round-trip is configured
+/// existing "Tweak RAW Roundtrip" action when ART round-trip is configured
 /// (`applications.art_cli_path` non-empty). Opens ART itself as its own
 /// dedicated process (`apps::launch_app_and_wait` - see its own doc comment
 /// for why a shared `-R` instance isn't used) and awaits the user finishing
@@ -414,10 +416,18 @@ const ART_ROUND_TRIP_PROGRESS_EVENT: &str = "art-round-trip-progress";
 /// command entirely rather than just failing at the final export step, since
 /// unlike the generic (non-ART) editor flow, this one really does write a
 /// new file to disk itself.
+///
+/// Also tracked on the same `ArtQueue` board Variant 2 uses (`start_manual`/
+/// `set_status`/`set_progress`/`finish`) purely for
+/// `ActivityIndicator`/`ActivityPanel` visibility - the actual work below is
+/// unchanged from before this was added (still one directly-awaited call, not
+/// routed through the queue's own worker/channel), so `id` only needs to be
+/// good enough to label/thumbnail the row.
 #[tauri::command]
 pub async fn launch_art_round_trip(
     app: AppHandle,
     state: State<'_, AppState>,
+    id: String,
     original_path: Option<String>,
     file_name: String,
     file_extension: String,
@@ -441,50 +451,80 @@ pub async fn launch_art_round_trip(
         "No local path mapping configured for this asset — set up External Library mapping in Preferences → Library",
     )?;
 
-    apps::launch_app_and_wait(&raw_editor, &local_path).await?;
+    let art_queue = state.art_queue.clone();
+    let job_id = art_queue.start_manual(id);
+    // Set once path resolution below claims a filename (see
+    // export_naming::next_export_path's atomic `create_new`) - used to clean
+    // up that claim if anything after it fails, so a failed export doesn't
+    // leave an empty placeholder for Immich to later pick up as a new,
+    // broken asset.
+    let mut reserved_export_path: Option<PathBuf> = None;
 
-    let cfg_for_scan = cfg.clone();
-    let file_name_for_scan = file_name.clone();
-    let file_extension_for_scan = file_extension.clone();
-    let suffix_for_scan = suffix_pattern.clone();
-    let Some(handle) = io_guard::guarded_spawn_blocking(&state.io_guard, move || {
-        resolve_art_export_path(&original_path, &file_name_for_scan, &file_extension_for_scan, &cfg_for_scan, &suffix_for_scan)
-    }) else {
-        return Err("Skipped: system is about to suspend, try again after it wakes".to_string());
-    };
-    let (raw_path, export_path) = match tokio::time::timeout(ART_EXPORT_PATH_TIMEOUT, handle).await {
-        Ok(join_result) => join_result.map_err(|e| e.to_string())??,
-        Err(_) => {
-            return Err(format!(
-                "Timed out after {}s resolving the export path — check your library's local mount is actually connected/reachable",
-                ART_EXPORT_PATH_TIMEOUT.as_secs()
-            ))
+    let outcome: Result<String, String> = async {
+        apps::launch_app_and_wait(&raw_editor, &local_path).await?;
+
+        let cfg_for_scan = cfg.clone();
+        let file_name_for_scan = file_name.clone();
+        let file_extension_for_scan = file_extension.clone();
+        let suffix_for_scan = suffix_pattern.clone();
+        let Some(handle) = io_guard::guarded_spawn_blocking(&state.io_guard, move || {
+            resolve_art_export_path(&original_path, &file_name_for_scan, &file_extension_for_scan, &cfg_for_scan, &suffix_for_scan)
+        }) else {
+            return Err("Skipped: system is about to suspend, try again after it wakes".to_string());
+        };
+        let (raw_path, export_path) = match tokio::time::timeout(ART_EXPORT_PATH_TIMEOUT, handle).await {
+            Ok(join_result) => join_result.map_err(|e| e.to_string())??,
+            Err(_) => {
+                return Err(format!(
+                    "Timed out after {}s resolving the export path — check your library's local mount is actually connected/reachable",
+                    ART_EXPORT_PATH_TIMEOUT.as_secs()
+                ))
+            }
+        };
+        reserved_export_path = Some(export_path.clone());
+
+        // Matches Variant 2's worker: Pending until the export itself starts,
+        // Running (with a live percentage) once ART-cli is actually running.
+        art_queue.set_status(job_id, ArtJobStatus::Running);
+
+        let args = art::build_art_cli_args(art::ArtCliMode::ApplySidecar, &export_path, &raw_path);
+        let progress_app = app.clone();
+        let progress_queue = art_queue.clone();
+        let run = art::run_art_cli_with_progress(&art_cli_path, &args, move |percent| {
+            let _ = progress_app.emit(ART_ROUND_TRIP_PROGRESS_EVENT, percent);
+            progress_queue.set_progress(job_id, percent);
+        });
+        match tokio::time::timeout(art::ART_CLI_RUN_TIMEOUT, run).await {
+            Ok(result) => result?,
+            Err(_) => {
+                return Err(format!(
+                    "Timed out after {}s running ART-cli — it may still be processing in the background",
+                    art::ART_CLI_RUN_TIMEOUT.as_secs()
+                ))
+            }
         }
-    };
 
-    let args = art::build_art_cli_args(art::ArtCliMode::ApplySidecar, &export_path, &raw_path);
-    let progress_app = app.clone();
-    let run = art::run_art_cli_with_progress(&art_cli_path, &args, move |percent| {
-        let _ = progress_app.emit(ART_ROUND_TRIP_PROGRESS_EVENT, percent);
-    });
-    match tokio::time::timeout(art::ART_CLI_RUN_TIMEOUT, run).await {
-        Ok(result) => result?,
-        Err(_) => {
-            return Err(format!(
-                "Timed out after {}s running ART-cli — it may still be processing in the background",
-                art::ART_CLI_RUN_TIMEOUT.as_secs()
-            ))
+        export_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(str::to_string)
+            .ok_or_else(|| "Couldn't determine the export file's name".to_string())
+    }
+    .await;
+
+    match &outcome {
+        Ok(export_file_name) => art_queue.finish(job_id, ArtJobStatus::Done, Some(export_file_name.clone()), None),
+        Err(e) => {
+            if let Some(path) = &reserved_export_path {
+                let _ = std::fs::remove_file(path);
+            }
+            art_queue.finish(job_id, ArtJobStatus::Failed, None, Some(e.clone()));
         }
     }
-
-    export_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map(str::to_string)
-        .ok_or_else(|| "Couldn't determine the export file's name".to_string())
+    outcome
 }
 
-/// One Batch RAW Roundtrip target - mirrors `MetadataEditTarget` plus the
+/// One Headless RAW Roundtrip target - mirrors `MetadataEditTarget` plus the
 /// `file_name`/`file_extension` `export_naming::base_name` needs (which
 /// `MetadataEditTarget` has no use for).
 #[derive(Debug, Deserialize)]
@@ -514,7 +554,7 @@ pub async fn batch_art_round_trip(state: State<'_, AppState>, targets: Vec<ArtRo
         (guard.library.clone(), guard.applications.art_cli_path.clone(), guard.smart_stack.suffix.clone())
     };
     if cfg.read_only {
-        return Err("Read-only mode is on — turn it off in Preferences → Library to use Batch RAW Roundtrip".into());
+        return Err("Read-only mode is on — turn it off in Preferences → Library to use Headless RAW Roundtrip".into());
     }
     if art_cli_path.trim().is_empty() {
         return Err("No ART-cli path configured — set one in Preferences → Applications".into());
@@ -530,11 +570,25 @@ pub async fn batch_art_round_trip(state: State<'_, AppState>, targets: Vec<ArtRo
     let art_queue = state.art_queue.clone();
     let art_cli_path_for_worker = art_cli_path.clone();
     let Some(handle) = io_guard::guarded_spawn_blocking(&state.io_guard, move || -> Result<Vec<u64>, String> {
-        let mut resolved = Vec::with_capacity(targets.len());
-        for t in &targets {
-            let original_path = t.original_path.as_deref().ok_or_else(|| format!("{} has no server-side path to resolve", t.file_name))?;
-            let (raw_path, export_path) = resolve_art_export_path(original_path, &t.file_name, &t.file_extension, &cfg, &suffix_pattern)?;
-            resolved.push((t.id.clone(), raw_path, export_path));
+        let mut resolved: Vec<(String, PathBuf, PathBuf)> = Vec::with_capacity(targets.len());
+        let resolve_result: Result<(), String> = (|| {
+            for t in &targets {
+                let original_path = t.original_path.as_deref().ok_or_else(|| format!("{} has no server-side path to resolve", t.file_name))?;
+                let (raw_path, export_path) = resolve_art_export_path(original_path, &t.file_name, &t.file_extension, &cfg, &suffix_pattern)?;
+                resolved.push((t.id.clone(), raw_path, export_path));
+            }
+            Ok(())
+        })();
+        if let Err(e) = resolve_result {
+            // Release every filename this batch already claimed (see
+            // export_naming::next_export_path's atomic `create_new`) before
+            // bailing on a later target's failure, so those earlier targets
+            // don't leave empty placeholder files in the library for Immich
+            // to later pick up as new (blank) assets.
+            for (_, _, export_path) in &resolved {
+                let _ = std::fs::remove_file(export_path);
+            }
+            return Err(e);
         }
         Ok(art_queue.enqueue(&art_cli_path_for_worker, resolved))
     }) else {
@@ -632,6 +686,21 @@ pub async fn set_stack_pick(
 
     let client = ImmichClient::from_config(&cfg, state.http.clone())?;
     client.update_stack_primary(&stack_id, &asset_id).await
+}
+
+/// Nudges Immich into generating a thumbnail for an asset right away - see
+/// `ImmichClient::regenerate_thumbnail`'s doc comment for why this is needed
+/// at all (assets discovered via a Library scan, which every round-trip
+/// export is, don't reliably get this job auto-queued the way a normal
+/// upload does). Called from `roundTrip.ts`'s `ingestRoundTripExport` right
+/// after a round-trip export's asset is found; not gated on read-only mode
+/// since it doesn't touch anything on disk or any user-visible field, just
+/// asks Immich to do work it should already be doing on its own.
+#[tauri::command]
+pub async fn regenerate_asset_thumbnail(state: State<'_, AppState>, asset_id: String) -> Result<(), String> {
+    let cfg = state.library_config();
+    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    client.regenerate_thumbnail(&asset_id).await
 }
 
 /// Corrects an asset's indexed capture date - used by the round-trip watcher

@@ -45,7 +45,8 @@ export default function SelectionBar({
   onSyncMetadata: () => void;
   onDelete: () => void;
   // Whether the single selected asset (if any) is RAW - mirrors Viewer.tsx's
-  // header, which likewise only shows the RAW Editor button for RAW assets.
+  // header, which likewise only shows the Tweak RAW Roundtrip button for RAW
+  // assets.
   canOpenInRawEditor: boolean;
   onOpenInRawEditor: () => void;
   onOpenInExternalEditor: () => void;
@@ -56,13 +57,13 @@ export default function SelectionBar({
   onPasteImageProcessing: () => void;
   canPasteMetadata: boolean;
   onPasteMetadata: () => void;
-  // How many of the current selection are RAW - "Batch RAW Roundtrip" (only
-  // shown when artRoundTripEnabled, gated by the caller) needs 2+ RAW assets
-  // selected, same "2+ selected" gating shape as Stack/Smart Stack.
+  // How many of the current selection are RAW - "Headless RAW Roundtrip"
+  // (only shown when artRoundTripEnabled, gated by the caller) needs 1+ RAW
+  // assets selected, whether that's a single photo or a batch.
   rawSelectedCount?: number;
   onBatchArtRoundTrip?: () => void;
   // True while the ART CLI round trip (Variant 1) is running for the
-  // selected asset - disables/relabels "Open in RAW Editor" so a second
+  // selected asset - disables/relabels "Tweak RAW Roundtrip" so a second
   // click can't overlap a second export, same as Viewer.tsx's own artBusy.
   rawEditorBusy?: boolean;
   // Live 0-100 percentage while rawEditorBusy - see Viewer.tsx's identical
@@ -130,21 +131,21 @@ export default function SelectionBar({
       </BarButton>
       {singleSelected && canOpenInRawEditor && (
         <BarButton onClick={onOpenInRawEditor} disabled={rawEditorBusy} title={rawEditorBusy ? 'Waiting on ART…' : undefined}>
-          {rawEditorBusy ? (rawEditorProgress != null ? `Working… ${rawEditorProgress}%` : 'Working…') : 'Open in RAW Editor'}
+          {rawEditorBusy ? (rawEditorProgress != null ? `Working… ${rawEditorProgress}%` : 'Working…') : 'Tweak RAW Roundtrip'}
+        </BarButton>
+      )}
+      {onBatchArtRoundTrip && (
+        <BarButton
+          onClick={onBatchArtRoundTrip}
+          disabled={(rawSelectedCount ?? 0) < 1}
+          title={(rawSelectedCount ?? 0) < 1 ? 'Select a RAW photo to roundtrip' : undefined}
+        >
+          Headless RAW Roundtrip
         </BarButton>
       )}
       <BarButton onClick={onOpenInExternalEditor} disabled={!singleSelected} title={singleSelected ? undefined : 'Select a single photo to open it in an editor'}>
         Open in Ext. Editor
       </BarButton>
-      {onBatchArtRoundTrip && (
-        <BarButton
-          onClick={onBatchArtRoundTrip}
-          disabled={(rawSelectedCount ?? 0) < 2}
-          title={(rawSelectedCount ?? 0) < 2 ? 'Select 2 or more RAW photos to batch roundtrip' : undefined}
-        >
-          Batch RAW Roundtrip
-        </BarButton>
-      )}
       <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)' }} />
       <BarButton onClick={onPasteImageProcessing} disabled={!canPasteImageProcessing} title="Paste image processing onto the RAW photos in this selection">
         Paste Image Processing

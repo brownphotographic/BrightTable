@@ -280,7 +280,9 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   );
 
   // Applies an ingestRoundTripExport outcome (lib/roundTrip.ts) to local
-  // state - see PhotosBrowser.tsx's identical helper.
+  // state - see PhotosBrowser.tsx's identical helper (including the
+  // checkSidecarMetadata re-check below - same "Copy Image Processing stayed
+  // hidden after a mid-session Tweak/Headless Roundtrip" fix).
   const applyRoundTripOutcome = useCallback(
     (outcome: RoundTripIngestOutcome) => {
       addAssetLocal(outcome.asset, outcome.originalAssetId);
@@ -292,8 +294,33 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           return next;
         });
       }
+      const original = assetByIdAll.get(outcome.originalAssetId);
+      if (original?.originalPath) {
+        checkSidecarMetadata([
+          {
+            assetId: original.id,
+            originalPath: original.originalPath,
+            currentRating: original.rating,
+            currentDescription: original.description,
+          },
+        ])
+          .then(([result]) => {
+            if (!result) return;
+            if (result.rating !== null || result.description !== null) {
+              setUnsyncedMetadata((m) => {
+                const next = new Map(m);
+                next.set(result.assetId, { rating: result.rating ?? undefined, description: result.description ?? undefined });
+                return next;
+              });
+            }
+            if (result.hasProcessingSidecar) {
+              setProcessingSidecarAssets((s) => new Set(s).add(result.assetId));
+            }
+          })
+          .catch(() => {});
+      }
     },
-    [addAssetLocal],
+    [addAssetLocal, assetByIdAll],
   );
 
   // See PhotosBrowser.tsx's identical setup for the full explanation.
@@ -374,52 +401,93 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     setOpenId((cur) => (cur && idSet.has(cur) ? null : cur));
   }, []);
 
+  // Dissolves a stack server-side and purges *every* one of its members from
+  // the local stackByAssetId cache - not just whichever subset the caller
+  // already knows about. Callers that only re-add a subset of those members
+  // to a new stack (a partial merge, or a delete that drops one member) need
+  // every other member's stale entry cleared too, or a later action on one of
+  // them tries to operate on a stack id Immich has already forgotten about.
+  // Also tolerates the stack already being gone server-side (e.g. an earlier
+  // merge left another member's cache entry stale) instead of throwing -
+  // there's nothing to dissolve, so it just clears whatever's cached for it.
+  const dissolveStack = useCallback(
+    async (stackId: string): Promise<string[]> => {
+      let memberIds: string[] | null = null;
+      try {
+        const full = await getStack(stackId);
+        memberIds = full.assets.map((a) => a.id);
+      } catch {
+        // Not found - already dissolved server-side under a prior mutation
+        // this cache never heard about.
+      }
+      if (memberIds) {
+        await deleteStack(stackId);
+      } else {
+        memberIds = [...stackByAssetId.entries()].filter(([, i]) => i.id === stackId).map(([id]) => id);
+      }
+      setStackByAssetId((m) => {
+        const next = new Map(m);
+        for (const id of memberIds!) next.delete(id);
+        return next;
+      });
+      setExpandedStacks((s) => {
+        if (!s.has(stackId)) return s;
+        const next = new Set(s);
+        next.delete(stackId);
+        return next;
+      });
+      return memberIds;
+    },
+    [stackByAssetId],
+  );
+
+  // Immich trashes a stack as one atomic unit, so trashing an id that's still
+  // part of a stack would take its siblings down too - pull each affected
+  // stack apart first and re-stack whatever's left over, so only the
+  // requested id(s) actually go.
   const removeAssets = useCallback(
     async (ids: string[]) => {
+      const idSet = new Set(ids);
+      const stackIdsTouched = new Set<string>();
+      for (const id of ids) {
+        const info = stackByAssetId.get(id);
+        if (info) stackIdsTouched.add(info.id);
+      }
+      for (const stackId of stackIdsTouched) {
+        const memberIds = await dissolveStack(stackId);
+        const remaining = memberIds.filter((id) => !idSet.has(id));
+        if (remaining.length >= 2) {
+          const newStack = await createStack(remaining);
+          const newInfo: AssetStackInfo = {
+            id: newStack.id,
+            primaryAssetId: newStack.primaryAssetId,
+            assetCount: remaining.length,
+          };
+          setStackByAssetId((m) => {
+            const next = new Map(m);
+            for (const id of remaining) next.set(id, newInfo);
+            return next;
+          });
+        }
+      }
       await deleteAssets(ids, false);
       removeAssetsLocal(ids);
     },
-    [removeAssetsLocal],
+    [removeAssetsLocal, stackByAssetId, dissolveStack],
   );
 
   // Creates a real stack (first id = pick, matching the prototype's
   // "first selected" default), then updates the local stackByAssetId map so
   // the non-primary members immediately hide from the grid without needing
-  // to refetch anything.
-  const createStackForSelection = useCallback(async (ids: string[]) => {
-    if (ids.length < 2) return;
-    const stack = await createStack(ids);
-    const info: AssetStackInfo = { id: stack.id, primaryAssetId: stack.primaryAssetId, assetCount: ids.length };
-    setStackByAssetId((m) => {
-      const next = new Map(m);
-      for (const id of ids) next.set(id, info);
-      return next;
-    });
-    setSelected(new Set());
-  }, []);
-
-  // Smart Stack applies one createStack call per proposed group (pick first,
-  // same "first id = primary" convention createStackForSelection already
-  // uses) - sequential rather than Promise.all so a mid-batch failure stops
-  // cleanly and the dialog can report which point it got to via the thrown
-  // error, instead of an unordered pile of concurrent server requests.
-  const applySmartStackGroups = useCallback(async (groups: SmartStackGroup[]) => {
-    for (const g of groups) {
-      // A group can include members merged in from an already-existing stack
-      // (SmartStackDialog's mergeExistingStacks) rather than skipping them -
-      // dissolve any such old stack(s) first so their members are free to
-      // join the new, unified one.
-      const oldStackIds = new Set(g.members.map((m) => m.stack?.id).filter((id): id is string => !!id));
-      for (const oldId of oldStackIds) {
-        await deleteStack(oldId);
-        setExpandedStacks((s) => {
-          if (!s.has(oldId)) return s;
-          const next = new Set(s);
-          next.delete(oldId);
-          return next;
-        });
-      }
-      const ids = [g.pickId, ...g.members.map((m) => m.id).filter((id) => id !== g.pickId)];
+  // to refetch anything. Any id already belonging to a different stack (e.g.
+  // merging two existing stacks' picks together) has its old stack dissolved
+  // first, so members left behind by the merge don't keep a stale reference
+  // to a stack that's about to disappear.
+  const createStackForSelection = useCallback(
+    async (ids: string[]) => {
+      if (ids.length < 2) return;
+      const oldStackIds = new Set(ids.map((id) => stackByAssetId.get(id)?.id).filter((id): id is string => !!id));
+      for (const oldId of oldStackIds) await dissolveStack(oldId);
       const stack = await createStack(ids);
       const info: AssetStackInfo = { id: stack.id, primaryAssetId: stack.primaryAssetId, assetCount: ids.length };
       setStackByAssetId((m) => {
@@ -427,9 +495,38 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         for (const id of ids) next.set(id, info);
         return next;
       });
-    }
-    setSelected(new Set());
-  }, []);
+      setSelected(new Set());
+    },
+    [stackByAssetId, dissolveStack],
+  );
+
+  // Smart Stack applies one createStack call per proposed group (pick first,
+  // same "first id = primary" convention createStackForSelection already
+  // uses) - sequential rather than Promise.all so a mid-batch failure stops
+  // cleanly and the dialog can report which point it got to via the thrown
+  // error, instead of an unordered pile of concurrent server requests.
+  const applySmartStackGroups = useCallback(
+    async (groups: SmartStackGroup[]) => {
+      for (const g of groups) {
+        // A group can include members merged in from an already-existing stack
+        // (SmartStackDialog's mergeExistingStacks) rather than skipping them -
+        // dissolve any such old stack(s) first so their members are free to
+        // join the new, unified one.
+        const oldStackIds = new Set(g.members.map((m) => m.stack?.id).filter((id): id is string => !!id));
+        for (const oldId of oldStackIds) await dissolveStack(oldId);
+        const ids = [g.pickId, ...g.members.map((m) => m.id).filter((id) => id !== g.pickId)];
+        const stack = await createStack(ids);
+        const info: AssetStackInfo = { id: stack.id, primaryAssetId: stack.primaryAssetId, assetCount: ids.length };
+        setStackByAssetId((m) => {
+          const next = new Map(m);
+          for (const id of ids) next.set(id, info);
+          return next;
+        });
+      }
+      setSelected(new Set());
+    },
+    [dissolveStack],
+  );
 
   const setStackPickAction = useCallback(async (stackId: string, assetId: string, memberIds: string[]) => {
     await setStackPick(stackId, assetId);
@@ -533,7 +630,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       if (role === 'rawEditor' && artRoundTripEnabled) {
         setArtLaunchBusy(true);
         try {
-          const exportFileName = await launchArtRoundTrip(asset.originalPath, asset.fileName, asset.fileExtension, choice);
+          const exportFileName = await launchArtRoundTrip(asset.id, asset.originalPath, asset.fileName, asset.fileExtension, choice);
           const outcome = await ingestRoundTripExport(asset, exportFileName);
           if (outcome) {
             applyRoundTripOutcome(outcome);
@@ -622,7 +719,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     await pasteImageProcessing(copiedProcessingSource.originalPath, targets);
   }, [copiedProcessingSource, pasteProcessingTargets, assetByIdAll]);
 
-  // Batch RAW Roundtrip (ART CLI round trip Variant 2) - see
+  // Headless RAW Roundtrip (ART CLI round trip Variant 2) - see
   // PhotosBrowser.tsx's identical setup for the full explanation.
   const { jobs: artJobs } = useArtQueue();
   const [batchArtTargets, setBatchArtTargets] = useState<string[] | null>(null);
@@ -632,7 +729,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         const a = assetByIdAll.get(id);
         return !!a && isRawAsset(a);
       });
-      if (rawIds.length < 2) return;
+      if (rawIds.length < 1) return;
       setBatchArtTargets(rawIds);
     },
     [assetByIdAll],
@@ -641,7 +738,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   const reconcileArtJob = useCallback(
     (job: ArtJob) => {
       if (job.status === 'failed') {
-        setEnqueueError(job.error ?? "Couldn't complete a Batch RAW Roundtrip export.");
+        setEnqueueError(job.error ?? "Couldn't complete a Headless RAW Roundtrip export.");
         return;
       }
       if (!job.exportFileName) return;
@@ -736,9 +833,9 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         const a = assetByIdAll.get(id);
         return !!a && isRawAsset(a);
       });
-      if (rawTargetIds.length >= 2) {
+      if (rawTargetIds.length >= 1) {
         items.push({
-          label: `Batch RAW Roundtrip (${rawTargetIds.length})`,
+          label: `Headless RAW Roundtrip (${rawTargetIds.length})`,
           onClick: () => requestBatchArtRoundTrip(rawTargetIds),
         });
       }
@@ -1246,8 +1343,8 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       )}
       {batchArtTargets && (
         <ConfirmDialog
-          title="Batch RAW Roundtrip?"
-          message={`Export ${batchArtTargets.length} RAW photos through ART-cli in the background, applying each one's own sidecar (if any) over your ART default profile?`}
+          title="Headless RAW Roundtrip?"
+          message={`Export ${batchArtTargets.length} RAW photo${batchArtTargets.length === 1 ? '' : 's'} through ART-cli in the background, applying each one's own sidecar (if any) over your ART default profile?`}
           confirmLabel="Roundtrip"
           danger={false}
           onConfirm={confirmBatchArtRoundTrip}

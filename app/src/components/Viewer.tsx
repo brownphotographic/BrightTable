@@ -118,8 +118,9 @@ export default function Viewer({
   const [stackMembers, setStackMembers] = useState<AssetSummary[] | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
   // True while the ART CLI round trip (Variant 1) is open in ART and/or
-  // running ART-cli's export - disables/relabels the RAW Editor button so a
-  // second click can't overlap a second export for the same asset.
+  // running ART-cli's export - disables/relabels the Tweak RAW Roundtrip
+  // button so a second click can't overlap a second export for the same
+  // asset.
   const [artBusy, setArtBusy] = useState(false);
   // Live 0-100 percentage while artBusy, parsed backend-side from ART-cli's
   // own --progress output - null until the first progress line arrives (or
@@ -198,11 +199,12 @@ export default function Viewer({
   // instead of launching when that role has no app chosen yet, rather than
   // just disabling the button with no way to fix it from here.
   //
-  // When ART round trip is configured (artRoundTripEnabled), the RAW Editor
-  // role branches to the ART CLI flow instead: awaits ART's own process exit
-  // (launchArtRoundTrip), then ingests the deterministic export it produced
-  // and hands the outcome to the parent via onRoundTripExported - no
-  // dependency on round_trip.rs's passive file watcher for this path.
+  // When ART round trip is configured (artRoundTripEnabled), the rawEditor
+  // role becomes "Tweak RAW Roundtrip" and branches to the ART CLI flow
+  // instead: awaits ART's own process exit (launchArtRoundTrip), then ingests
+  // the deterministic export it produced and hands the outcome to the parent
+  // via onRoundTripExported - no dependency on round_trip.rs's passive file
+  // watcher for this path.
   const handleLaunch = useCallback(
     async (role: 'rawEditor' | 'externalEditor') => {
       const choice = applications[role];
@@ -214,7 +216,7 @@ export default function Viewer({
       if (role === 'rawEditor' && artRoundTripEnabled) {
         setArtBusy(true);
         try {
-          const exportFileName = await launchArtRoundTrip(shown.originalPath, shown.fileName, shown.fileExtension, choice);
+          const exportFileName = await launchArtRoundTrip(shown.id, shown.originalPath, shown.fileName, shown.fileExtension, choice);
           const outcome = await ingestRoundTripExport(shown, exportFileName);
           if (outcome) {
             onRoundTripExported?.(shown, outcome);
@@ -442,7 +444,7 @@ export default function Viewer({
             title={artBusy ? 'Waiting on ART…' : undefined}
             style={{ ...headerButtonStyle(false), opacity: artBusy ? 0.5 : 1 }}
           >
-            {artBusy ? (artProgress != null ? `Working… ${artProgress}%` : 'Working…') : 'Open in RAW Editor'}
+            {artBusy ? (artProgress != null ? `Working… ${artProgress}%` : 'Working…') : 'Tweak RAW Roundtrip'}
           </div>
         )}
         <div onClick={() => handleLaunch('externalEditor')} style={headerButtonStyle(false)}>
