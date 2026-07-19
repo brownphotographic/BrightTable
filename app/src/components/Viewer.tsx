@@ -4,6 +4,7 @@ import {
   launchArtRoundTrip,
   launchEditor,
   pasteImageProcessing,
+  revealInFileManager,
   thumbnailSrc,
   type AssetMetadataPatch,
   type AssetSummary,
@@ -20,6 +21,7 @@ import { useApplications } from '../lib/applications';
 import { useClipboard } from '../lib/clipboard';
 import { ingestRoundTripExport, type RoundTripIngestOutcome } from '../lib/roundTrip';
 import { useArtRoundTripProgress } from '../lib/useArtRoundTripProgress';
+import { useNoSidecarChoice } from '../lib/useNoSidecarChoice';
 
 const MIN_ZOOM = 25;
 const MAX_ZOOM = 400;
@@ -117,6 +119,7 @@ export default function Viewer({
   const [confirmPasteProcessing, setConfirmPasteProcessing] = useState(false);
   const [stackMembers, setStackMembers] = useState<AssetSummary[] | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const { resolve: resolveArtRoundTripOutcome, dialog: noSidecarDialog } = useNoSidecarChoice();
   // True while the ART CLI round trip (Variant 1) is open in ART and/or
   // running ART-cli's export - disables/relabels the Tweak RAW Roundtrip
   // button so a second click can't overlap a second export for the same
@@ -216,7 +219,8 @@ export default function Viewer({
       if (role === 'rawEditor' && artRoundTripEnabled) {
         setArtBusy(true);
         try {
-          const exportFileName = await launchArtRoundTrip(shown.id, shown.originalPath, shown.fileName, shown.fileExtension, choice);
+          const rtOutcome = await launchArtRoundTrip(shown.id, shown.originalPath, shown.fileName, shown.fileExtension, choice);
+          const exportFileName = await resolveArtRoundTripOutcome(rtOutcome);
           const outcome = await ingestRoundTripExport(shown, exportFileName);
           if (outcome) {
             onRoundTripExported?.(shown, outcome);
@@ -239,7 +243,7 @@ export default function Viewer({
         setLaunchError(String(e));
       }
     },
-    [applications, artRoundTripEnabled, shown, onOpenApplicationsPreferences, onRoundTripExported],
+    [applications, artRoundTripEnabled, shown, onOpenApplicationsPreferences, onRoundTripExported, resolveArtRoundTripOutcome],
   );
 
   // Same clipboard, same fields, as the grid's Copy/Paste Image Processing/
@@ -254,6 +258,11 @@ export default function Viewer({
   const handleCopyMetadata = useCallback(() => {
     setCopiedMetadata({ rating: shown.rating ?? undefined, isFavorite: shown.isFavorite, description: shown.description ?? undefined });
   }, [shown, setCopiedMetadata]);
+
+  const handleShowInFileManager = useCallback(() => {
+    if (!shown.originalPath) return;
+    revealInFileManager(shown.originalPath).catch((e) => setLaunchError(String(e)));
+  }, [shown]);
 
   const handlePasteMetadata = useCallback(() => {
     if (!copiedMetadata) return;
@@ -450,6 +459,11 @@ export default function Viewer({
         <div onClick={() => handleLaunch('externalEditor')} style={headerButtonStyle(false)}>
           Open in Ext. Editor
         </div>
+        {shown.originalPath && (
+          <div onClick={handleShowInFileManager} style={headerButtonStyle(false)}>
+            Show in File Manager
+          </div>
+        )}
         <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)', margin: '0 2px' }} />
         {isRawAsset(shown) && shown.hasProcessingSidecar && (
           <div onClick={handleCopyImageProcessing} style={headerButtonStyle(false)}>
@@ -816,6 +830,7 @@ export default function Viewer({
           onClose={() => setConfirmPasteProcessing(false)}
         />
       )}
+      {noSidecarDialog}
     </div>
   );
 }

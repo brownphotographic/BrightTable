@@ -64,6 +64,29 @@ export interface ImportSettings {
   maxConcurrentJobs: number;
 }
 
+// Flickr OAuth 1.0a credentials/tokens - stored in plaintext in config.json,
+// same precedent as LibraryConfig.apiKey (no OS keychain integration exists
+// anywhere in this app).
+export interface FlickrConfig {
+  apiKey: string;
+  apiSecret: string;
+  oauthToken: string;
+  oauthTokenSecret: string;
+  username: string;
+  userNsid: string;
+  connected: boolean;
+}
+
+// Preferences → Sharing. Only Flickr has a real, working connection today -
+// Mastodon/PixelFed/Loops are "coming soon" cards in PreferencesSharing.tsx
+// with nothing but an enabled flag to persist.
+export interface SharingConfig {
+  flickr: FlickrConfig;
+  mastodonEnabled: boolean;
+  pixelfedEnabled: boolean;
+  loopsEnabled: boolean;
+}
+
 export interface AppConfig {
   library: LibraryConfig;
   settingsFolder: string | null;
@@ -72,6 +95,7 @@ export interface AppConfig {
   applications: ApplicationsConfig;
   import: ImportSettings;
   rawOverrides: string[];
+  sharing: SharingConfig;
 }
 
 export interface ConnectionStatus {
@@ -254,6 +278,14 @@ export function launchEditor(
   originalFileName?: string | null,
 ): Promise<void> {
   return invoke('launch_editor', { originalPath, appChoice, originalAssetId, originalFileName });
+}
+
+// "Show in File Manager" - resolves the asset's local path server-side and
+// asks the desktop to reveal (and where supported, select) it - see
+// reveal.rs. Not gated by read-only mode, same reasoning as launchEditor:
+// this only ever reads the path, it launches a viewer, not an editor.
+export function revealInFileManager(originalPath: string): Promise<void> {
+  return invoke('reveal_in_file_manager', { originalPath });
 }
 
 export function testConnection(cfg: LibraryConfig): Promise<ConnectionStatus> {
@@ -444,14 +476,36 @@ export function clearCompletedProcessingJobs(): Promise<void> {
 // label/thumbnail this export's row in the shared ArtQueue board (see
 // art_queue.rs's `start_manual`), so it shows up in ActivityIndicator/
 // ActivityPanel alongside Headless RAW Roundtrip jobs.
+// Mirrors commands.rs's ArtRoundTripOutcome: either the export actually
+// happened, or ART closed with no `.arp`/`.pp3` ever written (no edit made or
+// saved) - in which case the caller is expected to show a choice ("use ART's
+// default profile anyway" vs. "cancel") via finishArtRoundTripWithDefaultProfile/
+// cancelArtRoundTrip rather than treating this as a hard failure.
+export type ArtRoundTripOutcome =
+  | { kind: 'exported'; exportFileName: string }
+  | { kind: 'noSidecar'; jobId: number; rawPath: string; exportPath: string };
+
 export function launchArtRoundTrip(
   id: string,
   originalPath: string | null,
   fileName: string,
   fileExtension: string,
   rawEditor: AppChoice,
-): Promise<string> {
+): Promise<ArtRoundTripOutcome> {
   return invoke('launch_art_round_trip', { id, originalPath, fileName, fileExtension, rawEditor });
+}
+
+// Second half of the no-sidecar choice - runs ART-cli against the
+// already-resolved rawPath/exportPath (from a `noSidecar` outcome) using
+// ART's default profile, the user's alternative to cancelling.
+export function finishArtRoundTripWithDefaultProfile(jobId: number, rawPath: string, exportPath: string): Promise<string> {
+  return invoke('finish_art_round_trip_with_default_profile', { jobId, rawPath, exportPath });
+}
+
+// The other half - releases the reserved export path placeholder and marks
+// the queue row as cancelled, for when the user picks "cancel" instead.
+export function cancelArtRoundTrip(jobId: number, exportPath: string): Promise<void> {
+  return invoke('cancel_art_round_trip', { jobId, exportPath });
 }
 
 // One Headless RAW Roundtrip target - mirrors MetadataEditTarget plus the
@@ -491,6 +545,9 @@ export interface ArtJob {
   createdAtMs: number;
   finishedAtMs: number | null;
   error: string | null;
+  // True once cancel_art_job has been requested for this job while it was
+  // still pending/running - see art_queue.rs's ArtJob::cancel_requested.
+  cancelRequested: boolean;
 }
 
 export interface ArtQueueStatus {
@@ -506,6 +563,15 @@ export function clearCompletedArtJobs(): Promise<void> {
   return invoke('clear_completed_art_jobs');
 }
 
+// Cancels one still-pending/running ART round trip job (Headless RAW
+// Roundtrip's queue or a Variant 1 interactive round trip, both tracked on
+// the same board) - the Activity panel's "Cancel Selected" bulk action.
+// Resolves to false if the job had already finished by the time the backend
+// looked at it, which isn't an error - just nothing left to cancel.
+export function cancelArtJob(jobId: number): Promise<boolean> {
+  return invoke('cancel_art_job', { jobId });
+}
+
 // Grid cells render at ~160px - "thumbnail" (~30KB) is the right size for that.
 // "preview" (~1MB, full viewer resolution) is reserved for a future detail view.
 export function thumbnailSrc(assetId: string, size: 'thumbnail' | 'preview' = 'thumbnail'): string {
@@ -518,6 +584,20 @@ export interface MemoryUsage {
 
 export function getMemoryUsage(): Promise<MemoryUsage> {
   return invoke('get_memory_usage');
+}
+
+export interface ThumbCacheStats {
+  dir: string;
+  sizeBytes: number;
+  fileCount: number;
+}
+
+export function getThumbCacheInfo(): Promise<ThumbCacheStats> {
+  return invoke('get_thumb_cache_info');
+}
+
+export function clearThumbCache(): Promise<ThumbCacheStats> {
+  return invoke('clear_thumb_cache');
 }
 
 export function saveImportSettings(settings: ImportSettings): Promise<AppConfig> {
@@ -628,4 +708,140 @@ export function clearCompletedImportJobs(): Promise<void> {
 // either way, so a rejection here is just advisory.
 export function scanImmichLibrary(): Promise<void> {
   return invoke('scan_immich_library');
+}
+
+// ---------------------------------------------------------------------
+// Sharing & Export (Export to Folder / Export to Flickr) - see
+// export_queue.rs/flickr.rs for the backend queue and OAuth client these
+// wrap.
+// ---------------------------------------------------------------------
+
+export function saveSharingConfig(cfg: SharingConfig): Promise<AppConfig> {
+  return invoke('save_sharing_config', { cfg });
+}
+
+export interface FlickrBeginAuthResult {
+  authorizeUrl: string;
+  oauthToken: string;
+  oauthTokenSecret: string;
+}
+
+// Step 0 -> Step 1 of FlickrSetupDialog's wizard: exchanges the user's own
+// Flickr app API key/secret for a request token and the URL to open in the
+// system browser. Doesn't persist anything yet - the request token pair is
+// only good until flickrCompleteAuth (or abandoned).
+export function flickrBeginAuth(apiKey: string, apiSecret: string): Promise<FlickrBeginAuthResult> {
+  return invoke('flickr_begin_auth', { apiKey, apiSecret });
+}
+
+// Step 2 -> Step 3: exchanges the request token + the verification code the
+// user pasted back in for a real access token, and persists the whole
+// connected FlickrConfig to config.json.
+export function flickrCompleteAuth(
+  apiKey: string,
+  apiSecret: string,
+  oauthToken: string,
+  oauthTokenSecret: string,
+  verifier: string,
+): Promise<AppConfig> {
+  return invoke('flickr_complete_auth', { apiKey, apiSecret, oauthToken, oauthTokenSecret, verifier });
+}
+
+export function flickrDisconnect(): Promise<AppConfig> {
+  return invoke('flickr_disconnect');
+}
+
+export interface FlickrAlbum {
+  id: string;
+  title: string;
+  photoCount: number;
+}
+
+export function flickrListAlbums(): Promise<FlickrAlbum[]> {
+  return invoke('flickr_list_albums');
+}
+
+// One asset to export - mirrors ArtRoundTripTarget, the same shape already
+// built for the ART CLI round trip.
+export interface ExportAssetTarget {
+  id: string;
+  originalPath: string | null;
+  fileName: string;
+  fileExtension: string;
+}
+
+export type ExportFormat = 'jpeg' | 'original';
+
+export interface FolderExportOptions {
+  destination: string;
+  format: ExportFormat;
+  // Longest-edge target in pixels, fit-within (aspect preserved) - ignored
+  // for `original` format. `null` means "full size" (Immich's own preview
+  // resolution, just re-encoded at `quality`).
+  sizePx: number | null;
+  // 1-100, ignored for `original` format.
+  quality: number;
+}
+
+// Enqueues one ExportJob per asset onto the backend's background
+// ExportQueue and returns immediately with the assigned job ids - same
+// "enqueue and let the frontend poll" shape as batchArtRoundTrip/startImport.
+export function exportToFolder(assets: ExportAssetTarget[], options: FolderExportOptions): Promise<number[]> {
+  return invoke('export_to_folder', { assets, options });
+}
+
+export type FlickrPrivacy = 'public' | 'friendsFamily' | 'private';
+
+export type FlickrAlbumSelection = { kind: 'none' } | { kind: 'existing'; id: string } | { kind: 'new'; title: string };
+
+export interface FlickrExportOptions {
+  album: FlickrAlbumSelection;
+  privacy: FlickrPrivacy;
+  format: ExportFormat;
+  sizePx: number | null;
+  quality: number;
+}
+
+export function exportToFlickr(assets: ExportAssetTarget[], options: FlickrExportOptions): Promise<number[]> {
+  return invoke('export_to_flickr', { assets, options });
+}
+
+export type ExportJobStatus = 'pending' | 'running' | 'done' | 'failed';
+export type ExportTargetKind = 'folder' | 'flickr';
+
+// Mirrors export_queue.rs's ExportJob - one row of the Export section in the
+// advisory activity panel.
+export interface ExportJob {
+  jobId: number;
+  assetId: string;
+  target: ExportTargetKind;
+  status: ExportJobStatus;
+  // Set once `done` - the delivered file's name (on disk, or as uploaded to
+  // Flickr).
+  exportFileName: string | null;
+  // No natural mid-point to report (a folder write / Flickr upload is a
+  // single short-lived step, not ART-cli's multi-minute render) - null while
+  // running, 100 the instant a job succeeds.
+  progressPercent: number | null;
+  createdAtMs: number;
+  finishedAtMs: number | null;
+  error: string | null;
+  cancelRequested: boolean;
+}
+
+export interface ExportQueueStatus {
+  jobs: ExportJob[];
+  pendingCount: number;
+}
+
+export function getExportQueueStatus(): Promise<ExportQueueStatus> {
+  return invoke('get_export_queue_status');
+}
+
+export function cancelExportJob(jobId: number): Promise<boolean> {
+  return invoke('cancel_export_job', { jobId });
+}
+
+export function clearCompletedExportJobs(): Promise<void> {
+  return invoke('clear_completed_export_jobs');
 }

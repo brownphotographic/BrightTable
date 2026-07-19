@@ -1,6 +1,7 @@
 use crate::art_queue::ArtQueue;
 use crate::config::AppConfig;
 use crate::edit_queue::EditQueue;
+use crate::export_queue::ExportQueue;
 use crate::import::ImportQueue;
 use crate::io_guard::IoGuard;
 use crate::processing_queue::ProcessingQueue;
@@ -40,6 +41,10 @@ pub struct AppState {
     /// see `art_queue.rs`. Same "spawned once from `.setup()`" pattern as
     /// the other background queues.
     pub art_queue: Arc<ArtQueue>,
+    /// Background Export to Folder / Export to Flickr queue - see
+    /// `export_queue.rs`. Same "spawned once from `.setup()`" pattern as
+    /// the other background queues.
+    pub export_queue: Arc<ExportQueue>,
 }
 
 impl AppState {
@@ -50,6 +55,7 @@ impl AppState {
         round_trip: Arc<RoundTripWatcher>,
         processing_queue: Arc<ProcessingQueue>,
         art_queue: Arc<ArtQueue>,
+        export_queue: Arc<ExportQueue>,
     ) -> Self {
         Self {
             config: Mutex::new(config),
@@ -60,6 +66,7 @@ impl AppState {
             round_trip,
             processing_queue,
             art_queue,
+            export_queue,
         }
     }
 

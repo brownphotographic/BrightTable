@@ -6,12 +6,15 @@ mod config;
 mod edit_queue;
 mod embedded;
 mod export_naming;
+mod export_queue;
+mod flickr;
 mod immich;
 mod import;
 mod io_guard;
 mod paths;
 mod processing_queue;
 mod protocol;
+mod reveal;
 mod round_trip;
 mod state;
 #[cfg(target_os = "linux")]
@@ -26,6 +29,7 @@ use tauri::{Emitter, Manager};
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -50,13 +54,15 @@ pub fn run() {
             let (round_trip, round_trip_rx) = round_trip::RoundTripWatcher::new();
             let (processing_queue, processing_queue_rx) = processing_queue::ProcessingQueue::new();
             let (art_queue, art_queue_rx) = art_queue::ArtQueue::new();
-            app.manage(AppState::new(cfg, edit_queue, import_queue, round_trip.clone(), processing_queue, art_queue));
+            let (export_queue, export_queue_rx) = export_queue::ExportQueue::new();
+            app.manage(AppState::new(cfg, edit_queue, import_queue, round_trip.clone(), processing_queue, art_queue, export_queue));
 
             tauri::async_runtime::spawn(edit_queue::run(app.handle().clone(), edit_queue_rx));
             tauri::async_runtime::spawn(import::queue::run(app.handle().clone(), import_queue_rx, max_concurrent_import_jobs));
             tauri::async_runtime::spawn(round_trip::run(app.handle().clone(), round_trip, round_trip_rx));
             tauri::async_runtime::spawn(processing_queue::run(app.handle().clone(), processing_queue_rx));
             tauri::async_runtime::spawn(art_queue::run(app.handle().clone(), art_queue_rx));
+            tauri::async_runtime::spawn(export_queue::run(app.handle().clone(), export_queue_rx));
 
             #[cfg(target_os = "linux")]
             {
@@ -106,7 +112,8 @@ pub fn run() {
                 let pending = state.edit_queue.pending_count()
                     + state.import_queue.pending_count()
                     + state.processing_queue.pending_count()
-                    + state.art_queue.pending_count();
+                    + state.art_queue.pending_count()
+                    + state.export_queue.pending_count();
                 if pending > 0 {
                     api.prevent_close();
                     let _ = window.emit("queue-close-blocked", pending);
@@ -151,16 +158,32 @@ pub fn run() {
             commands::clear_completed_import_jobs,
             commands::scan_immich_library,
             commands::get_memory_usage,
+            commands::get_thumb_cache_info,
+            commands::clear_thumb_cache,
             commands::get_edit_queue_status,
             commands::clear_completed_edit_jobs,
             commands::paste_image_processing,
             commands::get_processing_queue_status,
             commands::clear_completed_processing_jobs,
             commands::launch_art_round_trip,
+            commands::finish_art_round_trip_with_default_profile,
+            commands::cancel_art_round_trip,
+            commands::cancel_art_job,
             commands::batch_art_round_trip,
             commands::get_art_queue_status,
             commands::clear_completed_art_jobs,
+            commands::reveal_in_file_manager,
             commands::force_quit,
+            commands::save_sharing_config,
+            commands::flickr_begin_auth,
+            commands::flickr_complete_auth,
+            commands::flickr_disconnect,
+            commands::flickr_list_albums,
+            commands::export_to_folder,
+            commands::export_to_flickr,
+            commands::get_export_queue_status,
+            commands::cancel_export_job,
+            commands::clear_completed_export_jobs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

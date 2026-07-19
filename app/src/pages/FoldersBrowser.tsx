@@ -13,6 +13,7 @@ import {
   launchEditor,
   listStacks,
   pasteImageProcessing,
+  revealInFileManager,
   setStackPick,
   updateAssetMetadata,
   type ArtJob,
@@ -31,8 +32,11 @@ import SelectionBar from '../components/SelectionBar';
 import StackBand from '../components/StackBand';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import SmartStackDialog from '../components/SmartStackDialog';
+import ExportToFolderDialog from '../components/ExportToFolderDialog';
+import ExportToFlickrDialog from '../components/ExportToFlickrDialog';
 import MetadataPanel from '../components/MetadataPanel';
 import ConfirmDialog from '../components/ConfirmDialog';
+import NoSidecarDialog from '../components/NoSidecarDialog';
 import InlineWarningBanner from '../components/InlineWarningBanner';
 import { isTypingTarget, matchesShortcut, useShortcuts, type ShortcutId } from '../lib/shortcuts';
 import { isRawAsset, matchesFilters, type Filters } from '../lib/filters';
@@ -49,6 +53,7 @@ import { useArtJobReconciliation } from '../lib/useArtJobReconciliation';
 import { useBucketMemo } from '../lib/bucketMemo';
 import { ingestRoundTripExport, type RoundTripIngestOutcome } from '../lib/roundTrip';
 import { useArtRoundTripProgress } from '../lib/useArtRoundTripProgress';
+import { useNoSidecarChoice } from '../lib/useNoSidecarChoice';
 
 // See PhotosBrowser.tsx's identical helper for the full explanation -
 // snapshots whichever AssetSummary fields a patch is about to touch, so a
@@ -115,6 +120,8 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   const [expandedStacks, setExpandedStacks] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; assetId: string } | null>(null);
   const [smartStackOpen, setSmartStackOpen] = useState(false);
+  const [exportFolderAssets, setExportFolderAssets] = useState<AssetSummary[] | null>(null);
+  const [exportFlickrAssets, setExportFlickrAssets] = useState<AssetSummary[] | null>(null);
   // This server version doesn't populate `stack` on /search/metadata or
   // /timeline/bucket at all (confirmed live - it's a newer-server-only
   // optimization), so stack membership is cross-referenced here from a
@@ -618,6 +625,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // rawEditorBusy prop.
   const [artLaunchBusy, setArtLaunchBusy] = useState(false);
   const artLaunchProgress = useArtRoundTripProgress(artLaunchBusy);
+  const { resolve: resolveArtRoundTripOutcome, dialog: noSidecarDialog } = useNoSidecarChoice();
   const launchEditorForSelection = useCallback(
     async (role: 'rawEditor' | 'externalEditor') => {
       if (selectedAssets.length !== 1) return;
@@ -630,7 +638,8 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       if (role === 'rawEditor' && artRoundTripEnabled) {
         setArtLaunchBusy(true);
         try {
-          const exportFileName = await launchArtRoundTrip(asset.id, asset.originalPath, asset.fileName, asset.fileExtension, choice);
+          const rtOutcome = await launchArtRoundTrip(asset.id, asset.originalPath, asset.fileName, asset.fileExtension, choice);
+          const exportFileName = await resolveArtRoundTripOutcome(rtOutcome);
           const outcome = await ingestRoundTripExport(asset, exportFileName);
           if (outcome) {
             applyRoundTripOutcome(outcome);
@@ -647,7 +656,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       }
       await launchEditor(asset.originalPath, choice);
     },
-    [selectedAssets, applications, artRoundTripEnabled, onOpenApplicationsPreferences, applyRoundTripOutcome],
+    [selectedAssets, applications, artRoundTripEnabled, onOpenApplicationsPreferences, applyRoundTripOutcome, resolveArtRoundTripOutcome],
   );
 
   // See PhotosBrowser.tsx's identical callback for the full explanation -
@@ -688,6 +697,11 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     },
     [setCopiedMetadata],
   );
+
+  const handleShowInFileManager = useCallback((asset: AssetSummary) => {
+    if (!asset.originalPath) return;
+    revealInFileManager(asset.originalPath).catch((e) => setEnqueueError(String(e)));
+  }, []);
 
   const handlePasteMetadata = useCallback(
     (ids: string[]) => {
@@ -760,16 +774,35 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   );
   const { trackJobs: trackArtJobs } = useArtJobReconciliation(artJobs, reconcileArtJob);
 
+  const runBatchArtRoundTrip = useCallback(
+    async (ids: string[]) => {
+      const targets: ArtRoundTripTarget[] = ids.map((id) => {
+        const a = assetByIdAll.get(id)!;
+        return { id, originalPath: a.originalPath, fileName: a.fileName, fileExtension: a.fileExtension };
+      });
+      const jobIds = await batchArtRoundTrip(targets);
+      trackArtJobs(jobIds);
+      setSelected(new Set());
+    },
+    [assetByIdAll, trackArtJobs],
+  );
+
+  // See PhotosBrowser.tsx's identical callback for the full explanation - some
+  // selected RAW photos may have no saved ART edits at all, so this surfaces
+  // an explicit choice (export everyone vs. exclude just the affected ones)
+  // once the outer "Headless RAW Roundtrip?" confirm is accepted, rather than
+  // silently exporting the affected ones with ART's default profile.
+  const [noSidecarBatch, setNoSidecarBatch] = useState<{ allIds: string[]; withoutSidecarCount: number } | null>(null);
+
   const confirmBatchArtRoundTrip = useCallback(async () => {
     if (!batchArtTargets) return;
-    const targets: ArtRoundTripTarget[] = batchArtTargets.map((id) => {
-      const a = assetByIdAll.get(id)!;
-      return { id, originalPath: a.originalPath, fileName: a.fileName, fileExtension: a.fileExtension };
-    });
-    const jobIds = await batchArtRoundTrip(targets);
-    trackArtJobs(jobIds);
-    setSelected(new Set());
-  }, [batchArtTargets, assetByIdAll, trackArtJobs]);
+    const withoutSidecarCount = batchArtTargets.filter((id) => !assetByIdAll.get(id)?.hasProcessingSidecar).length;
+    if (withoutSidecarCount > 0) {
+      setNoSidecarBatch({ allIds: batchArtTargets, withoutSidecarCount });
+      return;
+    }
+    await runBatchArtRoundTrip(batchArtTargets);
+  }, [batchArtTargets, assetByIdAll, runBatchArtRoundTrip]);
 
   // Stack/Unstack/Smart-Stack stay minimal here (band members already have
   // their own Unstack button and pick-star, so "Set as Stack Pick" never
@@ -800,6 +833,9 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         label: 'Unstack',
         onClick: () => unstackByStackId(asset.stack!.id).catch(() => {}),
       });
+    }
+    if (asset?.originalPath) {
+      items.push({ label: 'Show in File Manager', onClick: () => handleShowInFileManager(asset) });
     }
     if (asset && unsyncedMetadata.has(asset.id)) {
       items.push({
@@ -849,6 +885,11 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         onClick: () => handlePasteMetadata(pasteTargetIds),
       });
     }
+    if (pasteTargetIds.length > 0) {
+      const exportAssets = pasteTargetIds.map((id) => assetByIdAll.get(id)).filter((a): a is AssetSummary => !!a);
+      items.push({ label: 'Export to Folder…', onClick: () => setExportFolderAssets(exportAssets) });
+      items.push({ label: 'Share to Flickr…', onClick: () => setExportFlickrAssets(exportAssets) });
+    }
     return items;
   }, [
     contextMenu,
@@ -860,6 +901,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     syncMetadata,
     copiedProcessingSource,
     copiedMetadata,
+    handleShowInFileManager,
     handleCopyImageProcessing,
     requestPasteImageProcessing,
     handleCopyMetadata,
@@ -1351,12 +1393,39 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           onClose={() => setBatchArtTargets(null)}
         />
       )}
+      {noSidecarBatch && (
+        <NoSidecarDialog
+          title="Some Photos Have No Saved Edits"
+          message={`${noSidecarBatch.withoutSidecarCount} of ${noSidecarBatch.allIds.length} selected photos have no saved ART edits. Export ${
+            noSidecarBatch.withoutSidecarCount === 1 ? 'it' : 'them'
+          } anyway using ART's default processing profile, or exclude ${noSidecarBatch.withoutSidecarCount === 1 ? 'it' : 'them'} from this batch?`}
+          primaryLabel="Export with Default Processing"
+          secondaryLabel="Exclude Affected"
+          onPrimary={async () => {
+            const { allIds } = noSidecarBatch;
+            setNoSidecarBatch(null);
+            await runBatchArtRoundTrip(allIds);
+          }}
+          onSecondary={async () => {
+            const remaining = noSidecarBatch.allIds.filter((id) => assetByIdAll.get(id)?.hasProcessingSidecar);
+            setNoSidecarBatch(null);
+            if (remaining.length > 0) await runBatchArtRoundTrip(remaining);
+          }}
+        />
+      )}
+      {noSidecarDialog}
       {smartStackOpen && (
         <SmartStackDialog
           candidateAssets={selectedAssets}
           onApply={applySmartStackGroups}
           onClose={() => setSmartStackOpen(false)}
         />
+      )}
+      {exportFolderAssets && (
+        <ExportToFolderDialog assets={exportFolderAssets} onClose={() => setExportFolderAssets(null)} onExported={() => {}} />
+      )}
+      {exportFlickrAssets && (
+        <ExportToFlickrDialog assets={exportFlickrAssets} onClose={() => setExportFlickrAssets(null)} onExported={() => {}} />
       )}
     </div>
   );

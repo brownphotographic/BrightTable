@@ -11,6 +11,7 @@ import { ImportQueueProvider } from './lib/importQueue';
 import { ClipboardProvider } from './lib/clipboard';
 import { ProcessingQueueProvider } from './lib/processingQueue';
 import { ArtQueueProvider } from './lib/artQueue';
+import { ExportQueueProvider } from './lib/exportQueue';
 import { forceQuit } from './lib/api';
 import TitleBar from './components/TitleBar';
 import MenuBar from './components/MenuBar';
@@ -36,9 +37,11 @@ export default function App() {
                 <ImportQueueProvider>
                   <ProcessingQueueProvider>
                     <ArtQueueProvider>
-                      <LibraryStatusProvider>
-                        <AppShell />
-                      </LibraryStatusProvider>
+                      <ExportQueueProvider>
+                        <LibraryStatusProvider>
+                          <AppShell />
+                        </LibraryStatusProvider>
+                      </ExportQueueProvider>
                     </ArtQueueProvider>
                   </ProcessingQueueProvider>
                 </ImportQueueProvider>
@@ -57,8 +60,8 @@ function AppShell() {
   // Which tab Preferences opens on next - reset to 'library' once closed so
   // a later plain "Preferences…" open doesn't strand the user on whichever
   // tab a redirect (e.g. an editor button with no app chosen yet) last used.
-  const [prefsInitialTab, setPrefsInitialTab] = useState<'library' | 'applications'>('library');
-  const openPreferencesTab = (tab: 'library' | 'applications') => {
+  const [prefsInitialTab, setPrefsInitialTab] = useState<'library' | 'applications' | 'sharing'>('library');
+  const openPreferencesTab = (tab: 'library' | 'applications' | 'sharing') => {
     setPrefsInitialTab(tab);
     setPrefsOpen(true);
   };

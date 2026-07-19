@@ -90,7 +90,10 @@
   Preferences → Applications now detects installed native/Flatpak/Snap apps and lets the
   user pick a RAW Editor and an External Editor, each launched on the asset's resolved local
   path from the Viewer toolbar. Launch-only, by design (§7.21) — no file-watching/auto-
-  refresh/auto-stacking; see §1.6 for why.
+  refresh/auto-stacking; see §1.6 for why. **Exception**: when an `ART-cli` binary path is
+  also configured (Preferences → Applications), the RAW Editor role stops being launch-only
+  and becomes the deterministic **ART CLI round trip** instead (§1.6/§7.25) — the button
+  relabels to "Tweak RAW Roundtrip".
 - 🟡 **Metadata panel** is real (`MetadataPanel.tsx` / `MetadataRows.tsx`, §7.6) but with a
   much smaller field set than the prototype:
   - ⬜ IPTC (title, caption, keywords, creator, copyright) — not implemented; Immich's
@@ -123,6 +126,17 @@
 - ⬜ Create Version, auto-stacked renditions, version lineage — confirmed dead scope, not
   revisited.
 - ✅ RAW-editor round-trip, in the launch-only sense that decision left behind (§7.21).
+- ✅ **ART CLI round trip** (§7.25) — a deeper, deterministic alternative to the launch-only
+  round trip above, but scoped to ART specifically (only active when an `ART-cli` binary path
+  is configured). **Variant 1 ("Tweak RAW Roundtrip")** still opens ART's GUI and waits for
+  the user to edit/save/close it (same as the plain launch-only flow), but then runs
+  `ART-cli` itself against the sidecar ART just wrote to produce the export — no manual
+  "export" step inside ART's own UI. **Variant 2 ("Headless RAW Roundtrip")** skips the GUI
+  entirely: batch-exports N selected RAW assets' own sidecars (or the user's ART default
+  profile, for ones with none) straight through `ART-cli` in the background, with visible
+  per-asset progress and cancellation. Both variants feed the same Immich-side ingestion the
+  generic round trip's file watcher already used (thumbnail regen, capture-date fix,
+  rating/favorite/description carryover, auto-stack with the RAW original).
 
 ### 1.7 Sharing & export
 > **Prototype only — none of this exists in the real app.** No Sharing preferences content,
@@ -190,6 +204,13 @@
   via the same fallback) — real (§7.21).
 - ✅ Separate RAW editor / external editor roles — real, Preferences → Applications
   (§7.21; §7.15's placeholder-list mention of Applications is now stale).
+- ✅ **ART-cli path** — a third, separate Preferences → Applications field (a plain
+  file-browsed path, not an app-picker `AppChoice`, since there's no `.desktop` entry for a
+  CLI tool to pick). Configuring it is the single switch that turns on the ART CLI round trip
+  (§1.6/§7.25) in place of the plain launch-only RAW Editor role.
+- ✅ **Show in File Manager** (§7.25) — reveals, and where the desktop supports it
+  selects/highlights, an asset's local file in the OS file manager. Not app-picker-related,
+  but grouped here as another direct OS-integration touchpoint alongside editor launch.
 
 ### 2.6 Persistence
 - 🟡 Library, Shortcuts, and Applications settings are real, persisted to `config.json` in
@@ -1620,5 +1641,211 @@
     feature, not something it introduced. The real, working activity indicator is the
     title-bar pill (§7.20/§7.23), which only appears while a job is in-flight or failed. Left
     as a known small gap; revisit if the user wants the bottom-bar label wired up or removed.
+
+### 7.25 ART CLI round trip + Show in File Manager (real, July 2026)
+> New territory beyond §7.21's launch-only editor round trip and §7.24's Copy/Paste Image
+> Processing (a wholesale sidecar *file* copy). This is a third, deeper way to get a RAW file
+> through ART specifically: instead of just launching ART's GUI and trusting the user to
+> export manually (§7.21) or copying an existing `.arp`/`.pp3` from one asset onto another
+> (§7.24), ImmAture now invokes `ART-cli` itself to *produce* the export deterministically.
+> Landed across three commits (`6f07b15` "first version of single and batch roundtrip",
+> `576e449` "roundtrip fixes", `64b8907` "fixes to roundtrip", 2026-07-16 through 2026-07-18)
+> plus a further round of **uncommitted, in-progress work** as of this update (cancellation,
+> the no-sidecar-choice dialog, Show in File Manager, Exiv2-crash/stall UI — see the note at
+> the end of this section).
+- ✅ **Activation switch**: a new `art_cli_path: String` field on `ApplicationsConfig`
+  (`config.rs`) — a plain file-browsed path (no `.desktop` entry exists for a CLI tool, so no
+  app-picker entry), configured in Preferences → Applications. Non-empty is the single signal
+  (`artRoundTripEnabled`, `lib/applications.tsx`) that switches the RAW Editor role over to
+  this whole feature; empty (the default) leaves §7.21's existing launch-only round trip
+  byte-for-byte unchanged. `#[serde(default)]` for old `config.json` compatibility.
+- ✅ **Variant 1 — "Tweak RAW Roundtrip"** (interactive, single asset): the existing "Open in
+  RAW Editor" button/action relabels and branches here when `artRoundTripEnabled`. Opens ART
+  itself (`apps::launch_app_and_wait`, its own dedicated process — not a shared `-R` instance)
+  and awaits the user finishing their edit there, same as before — but then runs `ART-cli`
+  deterministically (`commands::launch_art_round_trip`, mode `ApplySidecar`/`-s`) against the
+  sidecar ART just wrote, producing a numbered export (e.g. `IMG_1_converted-1.jpg`) with no
+  dependency on the user manually exporting inside ART's GUI, and no dependency on
+  `round_trip.rs`'s passive file watcher (this command already knows the export's exact
+  filename as its own return value). Gated **upfront** by read-only mode, before ART even
+  opens. Entry points: `Viewer.tsx`'s header button (RAW assets only) and `SelectionBar`'s
+  "Tweak RAW Roundtrip" (single RAW asset selected) — both show live 0–100% progress via a
+  dedicated `art-round-trip-progress` Tauri event (`useArtRoundTripProgress`), separate from
+  the polled Activity board, so the triggering button gets instant feedback.
+- ✅ **Variant 2 — "Headless RAW Roundtrip"** (batch, N assets, never opens ART's GUI at all):
+  applies each asset's own sidecar layered over the user's ART default profile
+  (`DefaultThenSidecarOverride`/`-d -S`), or plain `-d` (`DefaultOnly`) for a target already
+  confirmed to have none. Runs fully in the background via a new `ArtQueue`
+  (`art_queue.rs`) — `commands::batch_art_round_trip` resolves every target's local/export
+  path and sidecar presence up front in one `guarded_spawn_blocking` closure (so a target that
+  can't be resolved fails the whole call, keeping the confirm dialog's count honest), then
+  enqueues and returns immediately with job ids for the frontend to poll/reconcile
+  (`useArtJobReconciliation`, same shape as the existing edit/import/processing queues).
+  Entry points: `SelectionBar`'s "Headless RAW Roundtrip (N)" button and a
+  `PhotosBrowser.tsx`/`FoldersBrowser.tsx` context-menu item, both gated by
+  `artRoundTripEnabled` and needing 1+ RAW asset selected, behind a `ConfirmDialog`
+  ("Export N RAW photos through ART-cli in the background…").
+- ✅ **`art.rs`** — pure argv construction (`build_art_cli_args`, unit-testable with no
+  process spawned) split from the actual spawn (`run_art_cli_with_progress`), confirmed
+  against a real `ART-cli -x` usage dump (ART 1.26.7): `-o`/`-j92` (fixed JPEG quality, no
+  Preferences control yet)/`-Y`/`-V`/`--progress` always included, plus one of `-s` / `-d -S`
+  / `-d` per `ArtCliMode`, then `-c <raw path>`. Streams stdout live so a bare `0`-`100` line
+  reports progress (a `#`-prefixed status line is ignored — no per-stage text field to put it
+  in yet) while stderr drains concurrently on its own task (reading only one pipe at a time
+  risks the other's OS buffer filling and stalling the child). `ART_CLI_RUN_TIMEOUT` = 20
+  minutes — confirmed live (~95% CPU, ~2GB RSS, several minutes elapsed) for one real
+  full-resolution export with a heavy sidecar profile over a slow mount.
+  - 🐛 **`ArtCliMode` asymmetry, confirmed live and the opposite of an earlier assumption**:
+    `-s` alone (Variant 1) does **not** error when no sidecar exists — it just warns and falls
+    back to neutral values, exiting 0. `-d -S` (Variant 2's sidecar-override mode) instead
+    exits non-zero with "no sidecar procparams found" in the identical situation. Both
+    variants now pre-check via `paths::find_processing_sidecar` (reused from §7.24) *before*
+    ever invoking `ART-cli` in a sidecar-applying mode, rather than relying on either
+    behavior — `mode_for_sidecar` in `art_queue.rs` picks plain `-d` for a target already
+    known sidecar-less, and `classify_exit`'s "no sidecar procparams found" match remains only
+    a defensive catch-all for a race (sidecar deleted between the check and the actual run).
+  - 🐛 **Real crash found and attributed, confirmed live**: `ART-cli` links a bundled Exiv2
+    that can `std::terminate` (an uncaught C++ exception, not a normal error return) reading a
+    specific RAW file's embedded metadata — reproduced against a real **Leica M10-R DNG**,
+    identically with a plain manual `ART-cli` invocation and no ImmAture involvement at all
+    (same crash with no sidecar present; the file reads cleanly under a separate, newer system
+    Exiv2, ruling out disk/network corruption). `classify_exit` now attributes this stderr
+    pattern explicitly to "ART-cli crashed reading this RAW file's metadata (an ART/Exiv2 bug
+    or format incompatibility, not an ImmAture issue)" rather than surfacing the bare,
+    unattributed C++ exception text.
+  - ✅ Cancellation threaded through `run_art_cli_with_progress` via a `tokio::select!` over
+    both stdout and a `watch::Receiver<bool>`, so a mid-run cancel takes effect immediately
+    rather than only being noticed after `ART-cli` exits on its own — best-effort `SIGKILL`
+    (`start_kill`, not the awaiting `kill`, since a genuinely wedged child in uninterruptible
+    NFS I/O would defeat the point) and returns without waiting for it to actually die.
+  - ✅ 10 unit tests: argv construction per mode, progress-line parsing (ignoring `#`-status
+    lines), stderr-empty exit-status fallback, the Exiv2-crash attribution, the no-sidecar
+    friendly message, and both pre-spawn and mid-run cancellation (a real spawned stub-script
+    child, killed and confirmed to return promptly rather than hanging the full sleep).
+- ✅ **`export_naming.rs`** — pure filename generation mirroring `smartStack.ts`'s
+  `baseName()`/suffix-pattern handling exactly, so a round-tripped export auto-matches Smart
+  Stack's own Version-mode pattern (default `*converted*` → `IMG_0001_converted-1.jpg`) with
+  no cross-language test runner to verify agreement automatically — covered by one unit test
+  hand-checked against the TS side. `next_export_path` **atomically claims** the first free
+  collision-numbered filename via `OpenOptions::create_new` (not just an `.exists()` check) —
+  closes a real race window: `ART-cli` itself doesn't run until after this returns, and for a
+  batch every target is resolved up front, so two round trips resolved around the same time
+  (most commonly two assets sharing a source directory/filename) could otherwise compute the
+  *same* "first free" number and have two `ART-cli` processes write it concurrently. 9 unit
+  tests, including the exact default-suffix cross-language case and the atomic-claim
+  regression (two sequential calls must return `-1` then `-2`, not `-1` twice).
+- ✅ **`art_queue.rs` (`ArtQueue`)** — Variant 2's background board, modeled on
+  `processing_queue.rs` (closest sibling: local-I/O-only worker, no Immich call inside the
+  job itself), same `Pending → Running → Done|Failed` shape and capped completed-history trim.
+  `MAX_CONCURRENT_ART_JOBS = 1` — deliberately serialized, confirmed live: a single
+  full-resolution `ART-cli` process used 1–2.5GB resident/12GB+ virtual memory on its own, and
+  even 2 concurrent exports left a 15GB machine little headroom before swapping, at which
+  point every concurrent `ART-cli` stalled indefinitely in `D` (disk sleep) state rather than
+  just running slower.
+  - 🐛 **Real bug found and fixed, confirmed live**: Variant 1's interactive export and
+    Variant 2's queue worker originally drew from *separate* concurrency budgets — running one
+    interactive round trip alongside an already-full batch queue produced **3** concurrent
+    full-resolution `ART-cli` processes, enough to push the same 15GB machine into swap
+    thrashing. Fixed by sharing one `Semaphore` (`acquire_permit`) across both variants, so the
+    cap is real regardless of which UI path asked for a slot.
+  - ✅ Per-asset locking (`asset_locks`, same idiom as `edit_queue::EditQueue`) serializes
+    same-asset jobs so two exports for one asset can never race on the same
+    collision-numbered export path, while different assets still run up to the concurrency cap.
+  - ✅ 14 unit tests: sidecar-mode selection, id assignment/sequencing shared correctly between
+    `enqueue` (Variant 2) and `start_manual` (Variant 1, tracked on the same board purely for
+    Activity-panel visibility), the shared-semaphore cap actually shared across both callers,
+    per-asset lock isolation, progress surviving into a failed job's final snapshot (same "show
+    how far it got" idiom as `import::ImportJob::bytes_copied`), completed-history trim never
+    evicting in-flight jobs, and the full cancel-request → channel-signal → board-flag lifecycle.
+- ✅ **No-sidecar choice** — rather than silently defaulting or hard-erroring when a target has
+  no saved ART edits at all, both variants now offer a real choice:
+  - Variant 1: `launch_art_round_trip` returns `ArtRoundTripOutcome::NoSidecar{jobId, rawPath,
+    exportPath}` instead of an export filename; `useNoSidecarChoice.tsx` shows
+    `NoSidecarDialog.tsx` ("This photo has no saved ART edits…") with **"Export with Default
+    Processing"** (`finish_art_round_trip_with_default_profile`, re-runs `ART-cli` with plain
+    `-d`) or **"Cancel Processing"** (`cancel_art_round_trip`, releases the placeholder export
+    file `next_export_path` had already claimed and marks the queue row cancelled).
+  - Variant 2: `PhotosBrowser.tsx`/`FoldersBrowser.tsx`'s batch confirm flow counts how many of
+    the confirmed targets lack `hasProcessingSidecar` (the same flag §7.24 already computes)
+    and, if any do, shows a second `NoSidecarDialog` ("Some Photos Have No Saved Edits — N of M
+    selected photos…") offering **"Export with Default Processing"** (whole batch, default
+    profile for the affected subset) or **"Exclude Affected"** (drops just the sidecar-less
+    targets, runs the rest) — skipped entirely, falling straight through to the export, when
+    every target already has a sidecar.
+- ✅ **Cancellation** — a per-job `watch::Sender<bool>` registered alongside every board row
+  (both `enqueue` and `start_manual`); `ArtQueue::request_cancel` flags the row and signals the
+  channel, and the job's own worker task (or, for Variant 1, the still-awaited command body)
+  notices via `tokio::select!` and best-effort kills the child — avoids a race where the
+  requester and the job's own finishing logic both try to finish the same row. New
+  `cancel_art_job` command (general bulk cancel — the Activity panel's new **"Cancel
+  Selected"** checkbox-driven action, reaching a job that's already `Running`) alongside the
+  narrower `cancel_art_round_trip` (Variant 1's no-sidecar-choice "Cancel" button, before
+  `ART-cli` has run at all).
+- ✅ **`reveal.rs` / "Show in File Manager"** — new, cross-platform. **Linux**: the
+  freedesktop `org.freedesktop.FileManager1` `ShowItems` D-Bus method (same `zbus`-proxy idiom
+  as `suspend_guard.rs`'s logind proxy) — actually selects/highlights the file inside
+  Nautilus/Dolphin/Nemo/etc., not just opens its folder; falls back to `xdg-open` on the parent
+  directory if that D-Bus service isn't registered (minimal window managers, some Wayland
+  compositors with no bundled file manager) — no selection then, but the folder still opens.
+  **macOS**: `open -R`. **Windows**: `explorer /select,<path>`, built as one glued argument
+  with no space after the comma, matching Explorer's own argument-parsing requirement (a
+  separate arg or inserted space stops it from selecting the file). New
+  `reveal_in_file_manager` command resolves the asset's local path first (existence-checked via
+  `guarded_spawn_blocking`, same as every other real disk touch on a possibly-NFS-backed
+  mount) — **not** gated by read-only mode, same reasoning as `launch_editor`: this only ever
+  reads the path and launches a viewer, it writes nothing. Entry points: a context-menu "Show
+  in File Manager" item (Photos/Folders) and a `Viewer.tsx` header button.
+- ✅ **Stall detection** (`artQueue.tsx`, frontend) — `STALL_THRESHOLD_MS` = 5 minutes of
+  continuous `running` with no finish flags a job "Stalled?" in the Activity panel instead of
+  silently showing a percentage that looks identical whether it's genuinely advancing or
+  wedged. Elapsed wall-clock time in `running`, not "no progress-percent change", is the
+  signal — `ART-cli`'s own `--progress` output can legitimately go quiet between checkpoints
+  on real, working exports, so a percent-based check would false-positive; 5 minutes sits
+  comfortably past the "several minutes for one real export" baseline while still surfacing
+  well before the 20-minute hard timeout, covering the same class of NFS-mount-hang scenario
+  §7.19 first diagnosed.
+- ✅ **`ActivityPanel.tsx`** — the Art section gained per-job checkboxes, a "Select All"
+  toggle, and a **"Cancel Selected"** bulk button; four additional state-specific pills beyond
+  the plain status ones: **"Won't Export"** (amber — the confirmed-permanent Exiv2-crash case,
+  since retrying that exact file fails identically every time, so it reads differently from a
+  generic retryable red "Failed"), **"Cancelled"** (neutral, not red), **"Cancelling…"**
+  (neutral, while a cancel is in flight), and **"Stalled?"** (amber, with an inline note about
+  network-mount slowness and the 20-minute budget).
+- ✅ **Immich-side ingestion reused, not reinvented** (`lib/roundTrip.ts`) — both variants feed
+  the exact same `ingestRoundTripExport` tail the generic (non-ART) round trip's file watcher
+  already used: poll `scanImmichLibrary` + `getFolderAssets` for the new filename (both ART
+  variants already know it deterministically, no candidate-matching needed, unlike the generic
+  watcher), regenerate its thumbnail, correct its capture date, carry over
+  rating/favorite/description, and create/merge a stack pairing it with its RAW original.
+  - 🐛 **Real bug found and fixed, live**: running Headless RAW Roundtrip across 2+ RAW assets
+    already stacked together produced overlapping `createStack`/`deleteStack` calls for the
+    *same* underlying stack (each ingestion racing to read-then-rebuild it), corrupting it —
+    Immich's own "trashing one stacked asset takes its siblings with it" behavior then made
+    this look like a mass delete. Fixed by serializing every ingestion app-wide through one
+    `ingestChain` promise queue, and re-reading the original's live stack membership fresh each
+    time rather than trusting a snapshot that may already be stale by the time a slower sibling
+    export's ingestion runs.
+  - 🐛 **Real bug found and fixed, live**: the original ~22s polling budget was too short — a
+    real ART CLI round-trip export that took several minutes to write finished successfully on
+    disk, but ImmAture gave up looking for it in Immich before the library scan had caught up,
+    so nothing appeared in the grid with no visible error at all. Raised to a ~2-minute budget
+    (40 attempts × 3s).
+  - 🐛 Confirmed live: a freshly `scanImmichLibrary`-discovered asset (every round-trip export)
+    doesn't reliably get Immich's own thumbnail-generation job auto-queued the way a normal
+    upload does — left alone it 404s on `/thumbnail` indefinitely rather than just slowly.
+    Fixed with a fire-and-forget `regenerateAssetThumbnail` call, same "best-effort, doesn't
+    block the outcome" treatment as the capture-date/metadata carryover calls alongside it.
+- ⚠️ **Currently uncommitted, in-progress work** (git working tree ahead of the last commit,
+  `64b8907` "fixes to roundtrip"): cancellation end-to-end (`cancel_art_job`,
+  `request_cancel`, the Activity panel's Select All/Cancel Selected UI), the entire no-sidecar-
+  choice flow (`NoSidecarDialog.tsx`, `useNoSidecarChoice.tsx`,
+  `finish_art_round_trip_with_default_profile`/`cancel_art_round_trip`), Show in File Manager
+  (`reveal.rs` and its command/entry points), the Exiv2-crash attribution in `classify_exit`,
+  and stall detection are all new since that commit and not yet committed to git. Not yet
+  manually verified against the user's real library/server/ART install for this latest round —
+  the Exiv2-crash and `-s`-vs-`-S` asymmetry findings above were confirmed live during an
+  *earlier* committed round against a real ART-cli 1.26.7 binary and a real Leica M10-R DNG,
+  but cancellation, the no-sidecar dialogs, and Show in File Manager across different desktop
+  environments are untested beyond `cargo test`/`tsc`/static checks so far.
 
 <!-- Paste further decisions, rationale, rejected ideas, or transcripts below; ask Claude to fold them in. -->

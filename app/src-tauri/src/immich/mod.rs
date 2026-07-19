@@ -240,6 +240,36 @@ impl ImmichClient {
         Ok((bytes.to_vec(), content_type))
     }
 
+    /// Downloads an asset's full original bytes (the untouched source file,
+    /// RAW or otherwise) - unlike `get_thumbnail_bytes`, there's no `size`
+    /// query param, since Immich just streams the file as stored. Used by
+    /// `export_queue.rs` as the "Original" format's fallback source when no
+    /// local path mapping resolves the asset (see `paths::resolve_local_path`),
+    /// e.g. a library with no configured "Originals on Disk" mount at all.
+    pub async fn get_original_bytes(&self, asset_id: &str) -> Result<(Vec<u8>, String), String> {
+        let resp = self
+            .http
+            .get(self.url(&format!("/assets/{asset_id}/original")))
+            .header("x-api-key", &self.api_key)
+            .send()
+            .await
+            .map_err(|e| format!("Original download request failed: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("Original download request returned {}", resp.status()));
+        }
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("Could not read original bytes: {e}"))?;
+        Ok((bytes.to_vec(), content_type))
+    }
+
     /// `force: false` moves assets to Immich's trash (recoverable); `true`
     /// deletes them immediately and permanently.
     pub async fn delete_assets(&self, ids: &[String], force: bool) -> Result<(), String> {

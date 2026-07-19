@@ -1,8 +1,23 @@
+import { useEffect, useState } from 'react';
 import { useEditQueue } from '../lib/editQueue';
 import { useImportQueue } from '../lib/importQueue';
 import { useProcessingQueue } from '../lib/processingQueue';
 import { useArtQueue } from '../lib/artQueue';
-import { thumbnailSrc, type ArtJobStatus, type EditJob, type ImportJob, type ImportJobStatus, type ProcessingJobStatus } from '../lib/api';
+import { useExportQueue } from '../lib/exportQueue';
+import {
+  cancelArtJob,
+  cancelExportJob,
+  thumbnailSrc,
+  type ArtJob,
+  type ArtJobStatus,
+  type EditJob,
+  type ExportJob,
+  type ExportJobStatus,
+  type ExportTargetKind,
+  type ImportJob,
+  type ImportJobStatus,
+  type ProcessingJobStatus,
+} from '../lib/api';
 
 function kindLabel(job: EditJob): string {
   const parts: string[] = [];
@@ -64,6 +79,54 @@ function artStatusPill(status: ArtJobStatus): { label: string; color: string; bg
   }
 }
 
+// `art.rs::classify_exit`'s fixed wording for a RAW file whose embedded
+// metadata makes ART-cli's bundled Exiv2 crash outright (confirmed live
+// against a real Leica M10-R DNG, reproducible with no ImmAture involvement
+// at all) - unlike a timeout or a transient NFS hiccup, retrying this exact
+// file will fail identically every time, so it reads as "won't export"
+// rather than a generic red "Failed" the user might reasonably retry.
+function isPermanentArtFailure(error: string | null): boolean {
+  return error != null && error.includes("ART-cli crashed reading this RAW file's metadata");
+}
+
+// Mirrors art::CANCELLED_BY_USER's exact wording - a cancelled job is still
+// `failed` with this as its error text (see art_queue.rs's `finish` call in
+// the cancellation branch), so it needs its own check to render as neutral
+// "Cancelled" rather than red "Failed".
+function isCancelledArtFailure(error: string | null): boolean {
+  return error === 'Cancelled by user';
+}
+
+// A job the user can still ask to cancel - excludes one that's already
+// finished (whether successfully or not) and one that's already had a
+// cancellation requested (no point re-selecting it).
+function isCancellableArtJob(job: ArtJob): boolean {
+  return (job.status === 'pending' || job.status === 'running') && !job.cancelRequested;
+}
+
+function exportStatusPill(status: ExportJobStatus, target: ExportTargetKind): { label: string; color: string; bg: string } {
+  switch (status) {
+    case 'pending':
+      return { label: 'Queued', color: 'rgba(255,255,255,0.6)', bg: 'rgba(255,255,255,0.08)' };
+    case 'running':
+      return { label: target === 'flickr' ? 'Uploading…' : 'Writing…', color: '#9cc2f0', bg: 'rgba(53,132,228,0.22)' };
+    case 'done':
+      return { label: 'Done', color: '#8ce0ae', bg: 'rgba(46,194,126,0.18)' };
+    case 'failed':
+      return { label: 'Failed', color: '#ff8080', bg: 'rgba(224,27,36,0.2)' };
+  }
+}
+
+// Mirrors art::CANCELLED_BY_USER's exact wording - export_queue.rs's worker
+// finishes a cancelled job the same way ART round-trip jobs do.
+function isCancelledExportFailure(error: string | null): boolean {
+  return error === 'Cancelled by user';
+}
+
+function isCancellableExportJob(job: ExportJob): boolean {
+  return (job.status === 'pending' || job.status === 'running') && !job.cancelRequested;
+}
+
 function baseName(path: string): string {
   return path.split('/').pop() ?? path;
 }
@@ -84,22 +147,56 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
   const { jobs: editJobs, clearCompleted: clearEditCompleted } = useEditQueue();
   const { jobs: importJobs, clearCompleted: clearImportCompleted, nudgeError } = useImportQueue();
   const { jobs: processingJobs, clearCompleted: clearProcessingCompleted } = useProcessingQueue();
-  const { jobs: artJobs, clearCompleted: clearArtCompleted } = useArtQueue();
+  const { jobs: artJobs, clearCompleted: clearArtCompleted, stalledJobIds } = useArtQueue();
+  const { jobs: exportJobs, clearCompleted: clearExportCompleted } = useExportQueue();
   const sortedEdits = [...editJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
   const sortedImports = [...importJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
   const sortedProcessing = [...processingJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
   const sortedArt = [...artJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
+  const sortedExports = [...exportJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
+  const cancellableArtJobIds = sortedArt.filter(isCancellableArtJob).map((j) => j.jobId);
+  const [selectedArtJobIds, setSelectedArtJobIds] = useState<Set<number>>(new Set());
+
+  // Drops any selected id that's no longer cancellable (finished on its own,
+  // or a cancel was already requested some other way) - otherwise a stale
+  // selection would just silently no-op next time "Cancel Selected" runs.
+  useEffect(() => {
+    setSelectedArtJobIds((prev) => {
+      const stillCancellable = new Set(cancellableArtJobIds);
+      const next = new Set([...prev].filter((id) => stillCancellable.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [artJobs]);
+
+  function toggleArtJobSelected(jobId: number) {
+    setSelectedArtJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
+      return next;
+    });
+  }
+
+  function cancelSelectedArtJobs() {
+    const ids = [...selectedArtJobIds];
+    setSelectedArtJobIds(new Set());
+    for (const jobId of ids) cancelArtJob(jobId).catch(() => {});
+  }
+
   const hasCompleted =
     editJobs.some((j) => j.status === 'done' || j.status === 'failed') ||
     importJobs.some((j) => j.status === 'done' || j.status === 'failed') ||
     processingJobs.some((j) => j.status === 'done' || j.status === 'failed') ||
-    artJobs.some((j) => j.status === 'done' || j.status === 'failed');
+    artJobs.some((j) => j.status === 'done' || j.status === 'failed') ||
+    exportJobs.some((j) => j.status === 'done' || j.status === 'failed');
 
   function clearAllCompleted() {
     clearEditCompleted();
     clearImportCompleted();
     clearProcessingCompleted();
     clearArtCompleted();
+    clearExportCompleted();
   }
 
   return (
@@ -263,15 +360,108 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
           {sortedArt.length === 0 ? (
             <EmptyRow>No ART round trips yet this session.</EmptyRow>
           ) : (
-            sortedArt.map((job) => {
-              const pill = artStatusPill(job.status);
-              // Real percentage (parsed backend-side from ART-cli's own
-              // --progress output), not just a "Exporting…" pill that looks
-              // identical whether it's genuinely advancing or stuck -
-              // matching the Imports section's real-byte-count treatment.
-              if (job.status === 'running' && job.progressPercent != null) {
-                pill.label = `${job.progressPercent}%`;
-              }
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', padding: '0 8px 6px', gap: 10 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'rgba(255,255,255,0.6)', cursor: 'default' }}>
+                  <input
+                    type="checkbox"
+                    checked={cancellableArtJobIds.length > 0 && selectedArtJobIds.size === cancellableArtJobIds.length}
+                    disabled={cancellableArtJobIds.length === 0}
+                    onChange={(e) => setSelectedArtJobIds(e.target.checked ? new Set(cancellableArtJobIds) : new Set())}
+                  />
+                  Select All
+                </label>
+                <div style={{ flex: 1 }} />
+                <button
+                  onClick={cancelSelectedArtJobs}
+                  disabled={selectedArtJobIds.size === 0}
+                  style={{
+                    height: 26,
+                    padding: '0 10px',
+                    borderRadius: 7,
+                    border: 'none',
+                    background: 'rgba(224,27,36,0.18)',
+                    color: '#ff8080',
+                    fontSize: 11.5,
+                    fontWeight: 600,
+                    cursor: 'default',
+                    opacity: selectedArtJobIds.size === 0 ? 0.4 : 1,
+                  }}
+                >
+                  Cancel Selected{selectedArtJobIds.size > 0 ? ` (${selectedArtJobIds.size})` : ''}
+                </button>
+              </div>
+              {sortedArt.map((job) => {
+                const permanent = job.status === 'failed' && isPermanentArtFailure(job.error);
+                const cancelled = job.status === 'failed' && isCancelledArtFailure(job.error);
+                const cancelling = (job.status === 'pending' || job.status === 'running') && job.cancelRequested;
+                const stalled = job.status === 'running' && !cancelling && stalledJobIds.has(job.jobId);
+                const neutralPill = { label: '', color: 'rgba(255,255,255,0.6)', bg: 'rgba(255,255,255,0.08)' };
+                const pill = permanent
+                  ? { label: "Won't Export", color: '#ffd699', bg: 'rgba(255,169,15,0.18)' }
+                  : cancelled
+                    ? { ...neutralPill, label: 'Cancelled' }
+                    : cancelling
+                      ? { ...neutralPill, label: 'Cancelling…' }
+                      : stalled
+                        ? { label: 'Stalled?', color: '#ffd699', bg: 'rgba(255,169,15,0.18)' }
+                        : artStatusPill(job.status);
+                // Real percentage (parsed backend-side from ART-cli's own
+                // --progress output), not just a "Exporting…" pill that looks
+                // identical whether it's genuinely advancing or stuck -
+                // matching the Imports section's real-byte-count treatment.
+                if (job.status === 'running' && !stalled && !cancelling && job.progressPercent != null) {
+                  pill.label = `${job.progressPercent}%`;
+                }
+                const cancellable = isCancellableArtJob(job);
+                return (
+                  <div key={job.jobId} style={rowStyle}>
+                    {cancellable ? (
+                      <input
+                        type="checkbox"
+                        checked={selectedArtJobIds.has(job.jobId)}
+                        onChange={() => toggleArtJobSelected(job.jobId)}
+                        style={{ flexShrink: 0 }}
+                      />
+                    ) : (
+                      <div style={{ width: 13, flexShrink: 0 }} />
+                    )}
+                    <img
+                      src={thumbnailSrc(job.assetId)}
+                      alt=""
+                      style={{ width: 40, height: 40, borderRadius: 6, objectFit: 'cover', flexShrink: 0, background: '#333' }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={rowTitle}>{job.exportFileName ?? 'RAW Roundtrip'}</div>
+                      {job.error && !cancelled && <div style={permanent ? rowWarning : rowError}>{job.error}</div>}
+                      {!job.error && stalled && (
+                        <div style={rowWarning}>
+                          No progress in a while — this can happen when the RAW or export folder lives on a network drive
+                          that's slow or briefly unreachable. It'll keep waiting up to 20 minutes before giving up.
+                        </div>
+                      )}
+                    </div>
+                    <StatusPill pill={pill} />
+                  </div>
+                );
+              })}
+            </>
+          )}
+
+          <SectionLabel>Export</SectionLabel>
+          {sortedExports.length === 0 ? (
+            <EmptyRow>No exports yet this session.</EmptyRow>
+          ) : (
+            sortedExports.map((job) => {
+              const cancelled = job.status === 'failed' && isCancelledExportFailure(job.error);
+              const cancelling = (job.status === 'pending' || job.status === 'running') && job.cancelRequested;
+              const neutralPill = { label: '', color: 'rgba(255,255,255,0.6)', bg: 'rgba(255,255,255,0.08)' };
+              const pill = cancelled
+                ? { ...neutralPill, label: 'Cancelled' }
+                : cancelling
+                  ? { ...neutralPill, label: 'Cancelling…' }
+                  : exportStatusPill(job.status, job.target);
+              const cancellable = isCancellableExportJob(job);
               return (
                 <div key={job.jobId} style={rowStyle}>
                   <img
@@ -280,9 +470,30 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
                     style={{ width: 40, height: 40, borderRadius: 6, objectFit: 'cover', flexShrink: 0, background: '#333' }}
                   />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={rowTitle}>{job.exportFileName ?? 'RAW Roundtrip'}</div>
-                    {job.error && <div style={rowError}>{job.error}</div>}
+                    <div style={rowTitle}>{job.exportFileName ?? (job.target === 'flickr' ? 'Share to Flickr' : 'Export to Folder')}</div>
+                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 1 }}>
+                      {job.target === 'flickr' ? 'Flickr' : 'Folder'}
+                    </div>
+                    {job.error && !cancelled && <div style={rowError}>{job.error}</div>}
                   </div>
+                  {cancellable && !cancelling && (
+                    <button
+                      onClick={() => cancelExportJob(job.jobId).catch(() => {})}
+                      style={{
+                        flexShrink: 0,
+                        height: 22,
+                        padding: '0 8px',
+                        borderRadius: 6,
+                        border: 'none',
+                        background: 'rgba(255,255,255,0.08)',
+                        color: 'rgba(255,255,255,0.7)',
+                        fontSize: 10.5,
+                        cursor: 'default',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  )}
                   <StatusPill pill={pill} />
                 </div>
               );

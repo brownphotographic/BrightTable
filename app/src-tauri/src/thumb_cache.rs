@@ -1,9 +1,19 @@
+use serde::Serialize;
 use std::fs;
+use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{AppHandle, Manager};
 
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThumbCacheStats {
+    pub dir: PathBuf,
+    pub size_bytes: u64,
+    pub file_count: u64,
+}
 
 fn ext_for_content_type(ct: &str) -> &'static str {
     match ct {
@@ -65,5 +75,37 @@ pub fn write(app: &AppHandle, asset_id: &str, size: &str, content_type: &str, by
         let _ = fs::rename(&tmp_path, &final_path);
     } else {
         let _ = fs::remove_file(&tmp_path);
+    }
+}
+
+/// Walks the cache dir to report its total size/file count for Preferences.
+/// A missing dir (nothing cached yet) isn't an error - it just reports zero,
+/// with `dir` still populated so the UI can show where it *would* live.
+pub fn stats(app: &AppHandle) -> ThumbCacheStats {
+    let dir = cache_dir(app).unwrap_or_default();
+    let mut size_bytes = 0u64;
+    let mut file_count = 0u64;
+    for entry in walkdir::WalkDir::new(&dir).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() {
+            size_bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
+            file_count += 1;
+        }
+    }
+    ThumbCacheStats { dir, size_bytes, file_count }
+}
+
+/// Wipes the whole cache dir. Safe against `write()`'s concurrent-writer
+/// pattern: each writer owns a uniquely-named tmp file, so a clear racing a
+/// write can at worst delete that one writer's tmp/final file out from under
+/// it - never corrupt a file - and the affected thumbnail just gets
+/// refetched on its next request, same as any other cache miss.
+pub fn clear(app: &AppHandle) -> io::Result<()> {
+    let Some(dir) = cache_dir(app) else {
+        return Err(io::Error::other("Could not resolve the thumbnail cache directory"));
+    };
+    match fs::remove_dir_all(&dir) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
     }
 }

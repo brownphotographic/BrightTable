@@ -132,6 +132,44 @@ pub struct AppConfig {
     /// exceptions individually (Edit menu -> Toggle Canon RAW).
     #[serde(default)]
     pub raw_overrides: HashSet<String>,
+    #[serde(default)]
+    pub sharing: SharingConfig,
+}
+
+/// Preferences → Sharing. Only Flickr has a real, working connection today -
+/// Mastodon/PixelFed/Loops are visible "coming soon" cards in the UI (see
+/// `PreferencesSharing.tsx`) with nothing but an enabled flag to persist,
+/// matching the design prototype's card grid without any real upload logic
+/// behind the other three yet.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SharingConfig {
+    pub flickr: FlickrConfig,
+    #[serde(default)]
+    pub mastodon_enabled: bool,
+    #[serde(default)]
+    pub pixelfed_enabled: bool,
+    #[serde(default)]
+    pub loops_enabled: bool,
+}
+
+/// Flickr OAuth 1.0a credentials/tokens - stored in plaintext in
+/// `config.json`, the same precedent `LibraryConfig.api_key` already set (no
+/// OS keychain integration exists anywhere in this app). `api_key`/
+/// `api_secret` are the user's own Flickr "non-commercial" app credentials
+/// (see flickr.com/services/apps/create); `oauth_token`/`oauth_token_secret`
+/// are the three-legged OAuth 1.0a *access* token pair obtained once the user
+/// completes `FlickrSetupDialog`'s wizard - see `flickr.rs`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FlickrConfig {
+    pub api_key: String,
+    pub api_secret: String,
+    pub oauth_token: String,
+    pub oauth_token_secret: String,
+    pub username: String,
+    pub user_nsid: String,
+    pub connected: bool,
 }
 
 /// Last-used Smart Stack dialog settings (grouping mode, version suffix, time

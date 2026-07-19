@@ -12,6 +12,8 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "core:window:allow-is-maximized",
-    "dialog:default"
+    "dialog:default",
+    "opener:default",
+    "opener:allow-open-url"
   ]
 }

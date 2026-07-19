@@ -2,6 +2,8 @@ import { useState } from 'react';
 import PreferencesLibrary from '../pages/PreferencesLibrary';
 import PreferencesShortcuts from '../pages/PreferencesShortcuts';
 import PreferencesApplications from '../pages/PreferencesApplications';
+import PreferencesConfiguration from '../pages/PreferencesConfiguration';
+import PreferencesSharing from '../pages/PreferencesSharing';
 
 type PrefsTab = 'library' | 'applications' | 'sharing' | 'configuration' | 'shortcuts';
 
@@ -127,6 +129,10 @@ export default function PreferencesOverlay({
             <PreferencesShortcuts />
           ) : tab === 'applications' ? (
             <PreferencesApplications />
+          ) : tab === 'sharing' ? (
+            <PreferencesSharing />
+          ) : tab === 'configuration' ? (
+            <PreferencesConfiguration />
           ) : (
             <div style={{ maxWidth: 480, margin: '60px auto 0', textAlign: 'center', color: 'var(--text-dimmer)' }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-dim)', marginBottom: 8 }}>
