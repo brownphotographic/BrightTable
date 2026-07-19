@@ -24,6 +24,7 @@ import {
   type AssetSummary,
   type EditJob,
   type MetadataEditTarget,
+  type ProcessingJob,
   type RoundTripFileDetected,
   type TimeBucketInfo,
   type UnsyncedMetadata,
@@ -53,6 +54,8 @@ import { useEditQueue } from '../lib/editQueue';
 import { useEditJobReconciliation } from '../lib/useEditJobReconciliation';
 import { useArtQueue } from '../lib/artQueue';
 import { useArtJobReconciliation } from '../lib/useArtJobReconciliation';
+import { useProcessingQueue } from '../lib/processingQueue';
+import { useProcessingJobReconciliation } from '../lib/useProcessingJobReconciliation';
 import { useBucketMemo } from '../lib/bucketMemo';
 import { ingestRoundTripExport, type RoundTripIngestOutcome } from '../lib/roundTrip';
 import { useArtRoundTripProgress } from '../lib/useArtRoundTripProgress';
@@ -816,14 +819,33 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     [copiedProcessingSource, assetByIdAll],
   );
 
+  const { jobs: processingJobs } = useProcessingQueue();
+
+  // Fires once per queued Paste Image Processing job as it settles - a
+  // `done` job really did write a fresh `.arp`/`.pp3` to disk (see
+  // processing_queue.rs), so mark the target as having a sidecar locally
+  // too. Without this, hasProcessingSidecar stays stale until the next full
+  // bucket reload, hiding Copy Image Processing on a photo that clearly has
+  // processing metadata now - this was the bug reported live. A `failed`
+  // job surfaces its error the same way reconcileJob/reconcileArtJob do.
+  const reconcileProcessingJob = useCallback((job: ProcessingJob) => {
+    if (job.status === 'failed') {
+      setEnqueueError(job.error ?? "Couldn't paste image processing onto a photo.");
+      return;
+    }
+    setProcessingSidecarAssets((s) => (s.has(job.targetAssetId) ? s : new Set(s).add(job.targetAssetId)));
+  }, []);
+  const { trackJobs: trackProcessingJobs } = useProcessingJobReconciliation(processingJobs, reconcileProcessingJob);
+
   const confirmPasteImageProcessing = useCallback(async () => {
     if (!copiedProcessingSource || !pasteProcessingTargets) return;
     const targets: MetadataEditTarget[] = pasteProcessingTargets.map((id) => ({
       id,
       originalPath: assetByIdAll.get(id)?.originalPath ?? null,
     }));
-    await pasteImageProcessing(copiedProcessingSource.originalPath, targets);
-  }, [copiedProcessingSource, pasteProcessingTargets, assetByIdAll]);
+    const jobIds = await pasteImageProcessing(copiedProcessingSource.originalPath, targets);
+    trackProcessingJobs(jobIds);
+  }, [copiedProcessingSource, pasteProcessingTargets, assetByIdAll, trackProcessingJobs]);
 
   // Headless RAW Roundtrip (ART CLI round trip Variant 2) - fully headless,
   // background-queued export of one or more RAW assets at once. Only
@@ -900,12 +922,42 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
 
   const confirmBatchArtRoundTrip = useCallback(async () => {
     if (!batchArtTargets) return;
-    const withoutSidecarCount = batchArtTargets.filter((id) => !assetByIdAll.get(id)?.hasProcessingSidecar).length;
+    const targets = batchArtTargets;
+    // Closes the "Headless RAW Roundtrip?" dialog immediately instead of
+    // keeping it open (Cancel disabled) while deciding what to do - see
+    // runBatchArtRoundTrip below for why that decision is now cache-only
+    // rather than a live disk round trip. Same "close first, await after"
+    // trick the no-sidecar follow-up dialog below already uses. Errors are
+    // caught explicitly and routed to the standing enqueueError banner
+    // instead of left to reject back through ConfirmDialog's own
+    // handleConfirm, since that dialog is already unmounted by the time any
+    // of this can fail.
+    setBatchArtTargets(null);
+    // Decides the no-sidecar warning from the cached `hasProcessingSidecar`
+    // flag only - this used to `await checkSidecarMetadata(...)` for a live
+    // disk recheck first (to catch a sidecar created out-of-band, e.g. via
+    // Tweak Roundtrip or in the Folders view's own separate cache), but that
+    // added a full extra network round trip - individually timeout-bounded
+    // at 120s - in front of the actual enqueue below. Confirmed live: on a
+    // slow NFS mount this left nothing visible on screen (dialog already
+    // closed, pill not up yet) for up to two minutes, reading as "the
+    // roundtrip button doesn't do anything". The cache is kept fresh enough
+    // for this one warning-dialog judgment call by the context-menu-open
+    // live recheck effect below and by reconcileArtJob/reconcileProcessingJob
+    // updating it the moment a real sidecar is written - and even a stale
+    // "no sidecar" read here can't cause data loss, since batch_art_round_trip
+    // itself still re-checks each target's sidecar on disk before deciding
+    // whether to apply the default profile.
+    const withoutSidecarCount = targets.filter((id) => !assetByIdAll.get(id)?.hasProcessingSidecar).length;
     if (withoutSidecarCount > 0) {
-      setNoSidecarBatch({ allIds: batchArtTargets, withoutSidecarCount });
+      setNoSidecarBatch({ allIds: targets, withoutSidecarCount });
       return;
     }
-    await runBatchArtRoundTrip(batchArtTargets);
+    try {
+      await runBatchArtRoundTrip(targets);
+    } catch (e) {
+      setEnqueueError(String(e));
+    }
   }, [batchArtTargets, assetByIdAll, runBatchArtRoundTrip]);
 
   const navigateOpen = (dir: 1 | -1) => {
@@ -1019,6 +1071,35 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     artRoundTripEnabled,
     requestBatchArtRoundTrip,
   ]);
+
+  // Right-clicking a RAW asset that doesn't currently show Copy Image
+  // Processing live-rechecks disk once, the same checkSidecarMetadata call
+  // confirmBatchArtRoundTrip below uses. hasProcessingSidecar is otherwise
+  // only refreshed on bucket load, a completed round trip, or a completed
+  // Paste Image Processing job (see reconcileProcessingJob above) - a
+  // sidecar created any other way (an external ART/RawTherapee run, or a
+  // paste that happened in the Folders view, which keeps its own separate
+  // processingSidecarAssets cache) would otherwise hide Copy Image
+  // Processing until the next full reload.
+  useEffect(() => {
+    if (!contextMenu) return;
+    const asset = assetByIdAll.get(contextMenu.assetId);
+    if (!asset || !asset.originalPath || asset.hasProcessingSidecar || !isRawAsset(asset)) return;
+    let cancelled = false;
+    checkSidecarMetadata([
+      { assetId: asset.id, originalPath: asset.originalPath, currentRating: asset.rating, currentDescription: asset.description },
+    ])
+      .then((results) => {
+        if (cancelled) return;
+        if (results.some((r) => r.hasProcessingSidecar)) {
+          setProcessingSidecarAssets((s) => (s.has(asset.id) ? s : new Set(s).add(asset.id)));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [contextMenu, assetByIdAll]);
 
   useEffect(() => {
     getTimelineBuckets()
@@ -1440,6 +1521,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           }
           onOpenApplicationsPreferences={onOpenApplicationsPreferences}
           onRoundTripExported={(_original, outcome) => applyRoundTripOutcome(outcome)}
+          onProcessingSidecarCreated={(id) => setProcessingSidecarAssets((s) => (s.has(id) ? s : new Set(s).add(id)))}
         />
       )}
       {confirmDeleteSelection && (

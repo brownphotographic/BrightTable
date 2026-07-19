@@ -15,26 +15,58 @@
 //! state - see `suspend_guard.rs` and the `system-sleep` force-unmount hook
 //! (requirements.md 7.19) for the mechanism that actually guarantees
 //! suspend isn't stuck forever.
+//!
+//! Also owns a separate, smaller cap: `metadata_scan_semaphore` bounds how
+//! many `commands::check_sidecar_metadata` calls run at once. That command
+//! is fired once per timeline bucket/folder as it loads, with no queue of
+//! its own (unlike `edit_queue`/`import_queue`/`art_queue`, which all
+//! already bound their own concurrency) - confirmed live that scrolling
+//! across a large, decades-spanning library fired enough of these
+//! concurrently to leave ~85 OS threads simultaneously blocked in the
+//! kernel on the NFS mount (`rpc_wait_bit_killable`/`d_alloc_parallel`),
+//! degrading that mount's latency for minutes at a time for every other
+//! caller, ImmAture or not. Unlike `paused`/`inflight` above, this is a
+//! real admission-control cap, not just a suspend-time signal.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::Notify;
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
+
+/// Default and allowed range for `LibraryConfig::max_concurrent_metadata_scans` -
+/// clamped to this range wherever the configured value is used, so a
+/// corrupted/hand-edited config.json can't set an unreasonable value. Higher
+/// than the other queues' hardcoded `4` (`edit_queue`/`processing_queue`) is
+/// fine as a default since each unit of work here is a stat plus a small
+/// embedded-metadata read, not a full-resolution image decode or copy.
+pub const DEFAULT_MAX_CONCURRENT_METADATA_SCANS: usize = 4;
+pub const MIN_CONCURRENT_METADATA_SCANS: usize = 1;
+pub const MAX_CONCURRENT_METADATA_SCANS_LIMIT: usize = 16;
 
 pub struct IoGuard {
     paused: AtomicBool,
     inflight: AtomicUsize,
     drained: Notify,
+    metadata_scan_semaphore: Arc<Semaphore>,
 }
 
 impl IoGuard {
-    pub fn new() -> Arc<Self> {
+    pub fn new(max_concurrent_metadata_scans: usize) -> Arc<Self> {
+        let max_scans = max_concurrent_metadata_scans
+            .clamp(MIN_CONCURRENT_METADATA_SCANS, MAX_CONCURRENT_METADATA_SCANS_LIMIT);
         Arc::new(Self {
             paused: AtomicBool::new(false),
             inflight: AtomicUsize::new(0),
             drained: Notify::new(),
+            metadata_scan_semaphore: Arc::new(Semaphore::new(max_scans)),
         })
+    }
+
+    /// Blocks until a `check_sidecar_metadata` concurrency slot is free -
+    /// same "shared bounded `Semaphore`" pattern as `ArtQueue::acquire_permit`.
+    pub async fn acquire_metadata_scan_permit(&self) -> OwnedSemaphorePermit {
+        self.metadata_scan_semaphore.clone().acquire_owned().await.expect("IoGuard's metadata scan semaphore is never closed")
     }
 
     pub fn is_paused(&self) -> bool {

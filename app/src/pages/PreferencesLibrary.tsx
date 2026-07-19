@@ -20,6 +20,7 @@ const emptyLib: LibraryConfig = {
   uploadedImmichRoot: '',
   readOnly: true,
   maxWritesPerBatch: 25,
+  maxConcurrentMetadataScans: 4,
 };
 
 type Status = { kind: 'idle' | 'ok' | 'error'; text: string };
@@ -330,6 +331,28 @@ export default function PreferencesLibrary() {
               ? 'Read-only mode is on — all write operations (delete, rating, favorite, description edits) are refused by the app.'
               : `A single delete or edit action can affect at most ${lib.maxWritesPerBatch} assets - e.g. selecting 30 photos and rating them all at once is refused if this is 25.`}
       </div>
+
+      <div style={{ fontSize: 14, fontWeight: 700, margin: '26px 4px 8px' }}>Performance</div>
+      <div style={{ fontSize: 12.5, color: 'var(--text-dimmer)', margin: '0 4px 13px', lineHeight: 1.5 }}>
+        Scrolling through the grid checks each visible photo's sidecar/embedded metadata against
+        your local library mount. Too many of these at once can saturate a slow NFS/SMB share and
+        slow everything else down (including unrelated apps using the same share) - cap it lower
+        for a slow or remote mount, higher for a fast local one.
+      </div>
+      <div style={panel}>
+        <Row label="Concurrent metadata scans" wide>
+          <input
+            type="number"
+            min={1}
+            max={16}
+            value={lib.maxConcurrentMetadataScans}
+            onChange={(e) => setLib('maxConcurrentMetadataScans', Math.min(16, Math.max(1, Number(e.target.value) || 1)))}
+            onBlur={() => persistSafety()}
+            style={{ ...inputRight, width: 90, flex: 'unset' }}
+          />
+        </Row>
+      </div>
+      <div style={helpText}>Takes effect after restarting the app.</div>
     </div>
   );
 }

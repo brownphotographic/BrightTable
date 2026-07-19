@@ -55,6 +55,22 @@ pub struct LibraryConfig {
         alias = "maxDeletePerSession"
     )]
     pub max_writes_per_batch: u32,
+    /// How many `check_sidecar_metadata` scans (each one stats/reads a
+    /// batch of originals for embedded rating/description/processing-
+    /// sidecar presence) may run at once against the local library mount.
+    /// Read once at app startup to size `IoGuard`'s semaphore (see
+    /// `io_guard.rs`), not adjustable mid-session - same "read once, not
+    /// live" contract as `ImportSettings::max_concurrent_jobs`, and for the
+    /// same reason: this call is fired once per timeline bucket/folder as
+    /// it loads, with no shared queue of its own, so how much concurrent
+    /// fan-out a given NFS/SMB mount can actually absorb before per-call
+    /// latency collapses is a judgment call about the user's own share, not
+    /// something to hardcode. `#[serde(default = ...)]` per-field (not just
+    /// relying on `LibraryConfig`'s own presence) so an existing
+    /// config.json saved before this field existed still deserializes
+    /// cleanly instead of resetting the whole library section to defaults.
+    #[serde(default = "default_max_concurrent_metadata_scans")]
+    pub max_concurrent_metadata_scans: usize,
 }
 
 fn default_true() -> bool {
@@ -63,6 +79,10 @@ fn default_true() -> bool {
 
 fn default_write_cap() -> u32 {
     25
+}
+
+fn default_max_concurrent_metadata_scans() -> usize {
+    crate::io_guard::DEFAULT_MAX_CONCURRENT_METADATA_SCANS
 }
 
 impl Default for LibraryConfig {
@@ -79,6 +99,7 @@ impl Default for LibraryConfig {
             uploaded_immich_root: String::new(),
             read_only: true,
             max_writes_per_batch: 25,
+            max_concurrent_metadata_scans: default_max_concurrent_metadata_scans(),
         }
     }
 }

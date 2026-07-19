@@ -115,7 +115,7 @@ mod tests {
 
     #[tokio::test]
     async fn pause_sets_flag() {
-        let guard = IoGuard::new();
+        let guard = IoGuard::new(crate::io_guard::DEFAULT_MAX_CONCURRENT_METADATA_SCANS);
         assert!(!guard.is_paused());
         on_prepare_for_sleep(true, &guard).await;
         assert!(guard.is_paused());
@@ -123,7 +123,7 @@ mod tests {
 
     #[tokio::test]
     async fn resume_clears_flag() {
-        let guard = IoGuard::new();
+        let guard = IoGuard::new(crate::io_guard::DEFAULT_MAX_CONCURRENT_METADATA_SCANS);
         guard.set_paused(true);
         on_prepare_for_sleep(false, &guard).await;
         assert!(!guard.is_paused());
@@ -131,7 +131,7 @@ mod tests {
 
     #[tokio::test]
     async fn pause_waits_for_inflight_work_to_drain() {
-        let guard = IoGuard::new();
+        let guard = IoGuard::new(crate::io_guard::DEFAULT_MAX_CONCURRENT_METADATA_SCANS);
         let handle = guarded_spawn_blocking(&guard, || {
             std::thread::sleep(StdDuration::from_millis(50));
         })
@@ -146,7 +146,7 @@ mod tests {
 
     #[tokio::test]
     async fn paused_guard_refuses_new_work() {
-        let guard = IoGuard::new();
+        let guard = IoGuard::new(crate::io_guard::DEFAULT_MAX_CONCURRENT_METADATA_SCANS);
         on_prepare_for_sleep(true, &guard).await;
         assert!(guarded_spawn_blocking(&guard, || 1).is_none());
     }

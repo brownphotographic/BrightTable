@@ -20,6 +20,11 @@ export interface LibraryConfig {
   uploadedImmichRoot: string;
   readOnly: boolean;
   maxWritesPerBatch: number;
+  // How many check_sidecar_metadata scans may run at once against the local
+  // library mount - see LibraryConfig's own doc comment on the Rust side.
+  // Read once at app startup to size IoGuard's semaphore, so changing this
+  // needs a restart to take effect.
+  maxConcurrentMetadataScans: number;
 }
 
 export interface SmartStackSettings {

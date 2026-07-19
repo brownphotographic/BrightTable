@@ -2,7 +2,7 @@ import {
   createStack,
   deleteStack,
   getFolderAssets,
-  getStack,
+  listStacks,
   regenerateAssetThumbnail,
   scanImmichLibrary,
   setAssetCaptureDate,
@@ -10,6 +10,7 @@ import {
   type AssetMetadataPatch,
   type AssetStackInfo,
   type AssetSummary,
+  type StackInfo,
 } from './api';
 
 // Immich only learns about a round-trip output file once scan_immich_library
@@ -106,15 +107,20 @@ async function ingestRoundTripExportInner(original: AssetSummary, newFileName: s
   // setAssetCaptureDate/updateAssetMetadata below.
   regenerateAssetThumbnail(found.id).catch(() => {});
 
-  // Re-fetch `original`'s own current server-side stack membership rather
-  // than trusting `original.stack` - that's a snapshot the caller captured
-  // before this export (or a just-settled sibling export sharing the same
-  // stack, now serialized ahead of this one - see `ingestChain` above) ran,
-  // and may already point at a stack id Immich has since dissolved/replaced.
-  // Folder listing was just fetched by pollForNewAsset anyway, so this is one
-  // more of the same call, not a new kind of request.
-  const freshSiblings = await getFolderAssets(folderImmichPath).catch(() => [] as AssetSummary[]);
-  const freshOriginal = freshSiblings.find((a) => a.id === original.id) ?? original;
+  // Look up `original`'s current server-side stack membership via list_stacks
+  // rather than trusting `original.stack` (a caller snapshot) or any inline
+  // `.stack` field off get_folder_assets/search-metadata - confirmed live
+  // that this Immich server version (2.7.5) doesn't populate `stack` on
+  // /search/metadata or /timeline/bucket (see list_stacks's doc comment on
+  // the Rust side), and get_folder_assets's /view/folder deserializes the
+  // exact same AssetResponseDto shape, so it has the same gap. Trusting that
+  // field here meant `existingStack` was always undefined, so a round-trip
+  // export of an already-stacked original silently created its own separate
+  // 2-member stack instead of joining the existing one - and since Immich
+  // won't let an asset belong to two stacks, that create then failed
+  // (swallowed below), leaving the new export outside any stack entirely.
+  const allStacks = await listStacks().catch(() => [] as StackInfo[]);
+  const existingStack = allStacks.find((s) => s.assets.some((a) => a.id === original.id));
 
   // RAW editors' exported JPEGs frequently carry no EXIF DateTimeOriginal of
   // their own, so Immich indexes them under "now" instead of the original's
@@ -138,14 +144,10 @@ async function ingestRoundTripExportInner(original: AssetSummary, newFileName: s
   }
 
   let memberIds = [found.id, original.id];
-  const existingStackId = freshOriginal.stack?.id;
-  if (existingStackId) {
-    const existing = await getStack(existingStackId).catch(() => null);
-    if (existing) {
-      await deleteStack(existingStackId).catch(() => {});
-      const extraIds = existing.assets.map((a) => a.id).filter((id) => id !== original.id);
-      memberIds = [found.id, original.id, ...extraIds];
-    }
+  if (existingStack) {
+    await deleteStack(existingStack.id).catch(() => {});
+    const extraIds = existingStack.assets.map((a) => a.id).filter((id) => id !== original.id);
+    memberIds = [found.id, original.id, ...extraIds];
   }
   const stack = await createStack(memberIds).catch(() => null);
   const stackResult = stack

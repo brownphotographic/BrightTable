@@ -611,7 +611,10 @@ pub async fn finish_art_round_trip_with_default_profile(
     raw_path: String,
     export_path: String,
 ) -> Result<String, String> {
-    let art_cli_path = state.config.lock().unwrap().applications.art_cli_path.clone();
+    let (art_cli_path, exiftool_path) = {
+        let cfg = state.config.lock().unwrap();
+        (cfg.applications.art_cli_path.clone(), cfg.applications.exiftool_path.clone())
+    };
     let art_queue = state.art_queue.clone();
     let raw_path = PathBuf::from(raw_path);
     let export_path = PathBuf::from(export_path);
@@ -624,12 +627,23 @@ pub async fn finish_art_round_trip_with_default_profile(
         }
         art_queue.set_status(job_id, ArtJobStatus::Running);
 
-        let args = art::build_art_cli_args(art::ArtCliMode::DefaultOnly, &export_path, &raw_path);
         let progress_app = app.clone();
         let progress_queue = art_queue.clone();
-        let run = art::run_art_cli_with_progress_and_retry(
+        // Goes through the same Exiv2-crash fallback as Variant 1's sidecar
+        // path and Variant 2's worker (`run_art_cli_with_metadata_fallback`)
+        // rather than a plain retry - ART's own `-d` default profile carries
+        // the identical `Mode=1` a real sidecar does (see
+        // `MINIMAL_METADATA_OFF_PROFILE`'s doc comment), so a RAW that
+        // crashes ART-cli's Exiv2 read crashes here just as reliably as it
+        // does with a saved sidecar, and blind retries alone never recover
+        // from that for a file where the crash is deterministic rather than
+        // the racy case those retries are actually good for.
+        let run = art::run_art_cli_with_metadata_fallback(
             &art_cli_path,
-            &args,
+            &exiftool_path,
+            &raw_path,
+            &export_path,
+            art::ArtCliMode::DefaultOnly,
             move |percent| {
                 let _ = progress_app.emit(ART_ROUND_TRIP_PROGRESS_EVENT, percent);
                 progress_queue.set_progress(job_id, percent);
@@ -1221,6 +1235,14 @@ pub struct MetadataSyncResult {
 /// last saw a value must still surface as unsynced, not just a first-time
 /// gap. Immich is still never overwritten automatically - the user always
 /// explicitly triggers the sync action.
+///
+/// Called once per timeline bucket/folder as it loads, with no queue of its
+/// own - `io_guard.acquire_metadata_scan_permit()` below is what actually
+/// bounds how many of these run at once (see its own doc comment for why:
+/// confirmed live that an unbounded burst of these across a large library
+/// saturated the NFS mount for minutes). Acquired before `guarded_spawn_blocking`
+/// so a caller waiting on a full semaphore doesn't also count as one more
+/// `io_guard`-tracked in-flight call the whole time it's merely queued.
 #[tauri::command]
 pub async fn check_sidecar_metadata(
     state: State<'_, AppState>,
@@ -1230,6 +1252,7 @@ pub async fn check_sidecar_metadata(
     if cfg.immich_root.trim().is_empty() && cfg.uploaded_immich_root.trim().is_empty() {
         return Err("No local path mapping configured".into());
     }
+    let _permit = state.io_guard.acquire_metadata_scan_permit().await;
     let Some(handle) = io_guard::guarded_spawn_blocking(&state.io_guard, move || {
         queries
             .into_iter()
@@ -1253,7 +1276,21 @@ pub async fn check_sidecar_metadata(
         // callers already treat as a normal per-query outcome.
         return Ok(Vec::new());
     };
-    handle.await.map_err(|e| e.to_string())
+    // Bounded the same way as `batch_art_round_trip`'s own export-path scan
+    // (`ART_EXPORT_PATH_TIMEOUT`) - without this, a stat() stuck on an
+    // unreachable NFS mount left this `await` pending forever. Confirmed
+    // live: that hung `confirmBatchArtRoundTrip`'s dialog indefinitely with
+    // Cancel disabled the whole time, since `ConfirmDialog` only re-enables
+    // Cancel once its `onConfirm` promise settles one way or the other.
+    // Every frontend caller already `.catch()`s this call and falls back to
+    // "nothing detected this round", so erroring out here on timeout is safe.
+    match tokio::time::timeout(ART_EXPORT_PATH_TIMEOUT, handle).await {
+        Ok(join_result) => join_result.map_err(|e| e.to_string()),
+        Err(_) => Err(format!(
+            "Timed out after {}s checking for sidecars — check your library's local mount is actually connected/reachable",
+            ART_EXPORT_PATH_TIMEOUT.as_secs()
+        )),
+    }
 }
 
 /// Current process's resident-set size, in bytes - a lightweight diagnostic

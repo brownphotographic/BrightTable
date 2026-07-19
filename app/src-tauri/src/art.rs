@@ -371,12 +371,55 @@ fn build_art_cli_args_for_profile(profile_path: &Path, export_path: &Path, raw_p
     ]
 }
 
+/// argv for the no-sidecar fallback: `-d` (ART's own default profile) plus
+/// `-p <profile_path>` layered on top of it, where `profile_path` is
+/// expected to hold nothing but `MINIMAL_METADATA_OFF_PROFILE` - unlike
+/// `build_art_cli_args_for_profile`'s full-sidecar substitution, there's no
+/// complete profile on disk to swap in here (`DefaultOnly` mode means
+/// exactly that: no per-asset `.arp`/`.pp3` exists at all), so this keeps
+/// `-d` supplying every other develop setting and relies on ART/RT's
+/// partial-profile support (confirmed live: a `.arp`/`.pp3` with only a
+/// `[MetaData]` section present leaves every other section at whatever `-d`
+/// already set, the same "missing key/section keeps the incoming value"
+/// behavior the format's own partial-profile copy/paste feature depends on)
+/// to have only `Mode=0` actually override anything.
+fn build_art_cli_args_for_default_with_metadata_patch(profile_path: &Path, export_path: &Path, raw_path: &Path) -> Vec<String> {
+    vec![
+        "-o".to_string(),
+        export_path.to_string_lossy().to_string(),
+        format!("-j{JPEG_QUALITY}"),
+        "-Y".to_string(),
+        "-V".to_string(),
+        "--progress".to_string(),
+        "-d".to_string(),
+        "-p".to_string(),
+        profile_path.to_string_lossy().to_string(),
+        "-c".to_string(),
+        raw_path.to_string_lossy().to_string(),
+    ]
+}
+
+/// A from-scratch partial profile forcing `[MetaData] Mode=0` - what the
+/// no-sidecar fallback (`build_art_cli_args_for_default_with_metadata_patch`)
+/// writes to a temp file when there's no real `.arp`/`.pp3` to read and
+/// patch a copy of. Confirmed live: a real sidecar ART itself saves for an
+/// otherwise-untouched RAW still has `[MetaData] Mode=1` in it (ART's own
+/// baked-in default, not something a user has to opt into) - so `DefaultOnly`
+/// mode (`-d`, no per-asset sidecar) hits the identical Exiv2 crash as
+/// `ApplySidecar`/`DefaultThenSidecarOverride` do, just with no on-disk
+/// sidecar file for `run_art_cli_with_metadata_fallback` to find and patch.
+const MINIMAL_METADATA_OFF_PROFILE: &str = "[MetaData]\nMode=0\n";
+
 /// Runs `ART-cli` for a sidecar-driven mode (`ApplySidecar`/
 /// `DefaultThenSidecarOverride`), with a fallback for the Exiv2 crash: if it
 /// crashes, this rebuilds a temp copy of the *actual* sidecar (via
 /// `paths::find_processing_sidecar`) with `patch_metadata_mode_off` and
 /// reruns against that copy (`build_art_cli_args_for_profile`) instead of the
-/// original `-s`/`-S` invocation. On a successful fallback run, shells out to
+/// original `-s`/`-S` invocation - or, for `DefaultOnly`/any target with no
+/// per-asset sidecar at all, reruns with `MINIMAL_METADATA_OFF_PROFILE`
+/// layered on `-d` instead (`build_art_cli_args_for_default_with_metadata_patch`),
+/// since ART's own default profile carries the identical `Mode=1` that
+/// crashes a real sidecar just as often. On a successful fallback run, shells out to
 /// `exiftool` (if `exiftool_path` is configured - same convention as
 /// `export_queue::apply_metadata_policy`, an empty string means "not set up,
 /// skip") to copy the metadata `Mode=1` would otherwise have embedded, via
@@ -405,10 +448,8 @@ fn build_art_cli_args_for_profile(profile_path: &Path, export_path: &Path, raw_p
 /// Falls straight back to the original crash error - not the fallback
 /// attempt's own error, which would usually just be a second instance of
 /// the identical crash - if: the error wasn't this specific crash signature,
-/// cancellation fired, no sidecar is found (shouldn't happen - both call
-/// sites only reach this in a mode that already confirmed one exists - but
-/// defensive rather than panicking), the sidecar can't be read/copied, or
-/// the fallback run itself still fails.
+/// cancellation fired, an existing sidecar can't be read/copied, or the
+/// fallback run itself still fails.
 pub async fn run_art_cli_with_metadata_fallback<F>(
     art_cli_path: &str,
     exiftool_path: &str,
@@ -427,32 +468,60 @@ where
     if *cancel.borrow() || !crash_err.starts_with(EXIV2_CRASH_ERROR_PREFIX) {
         return result;
     }
-    let Some((sidecar_path, _, _)) = paths::find_processing_sidecar(raw_path) else { return result };
-    let Ok(sidecar_content) = tokio::fs::read_to_string(&sidecar_path).await else { return result };
-    let patched = patch_metadata_mode_off(&sidecar_content);
+    let raw_display = raw_path.display();
+    let (patched, uses_default_profile) = match paths::find_processing_sidecar(raw_path) {
+        Some((sidecar_path, _, _)) => match tokio::fs::read_to_string(&sidecar_path).await {
+            Ok(sidecar_content) => (patch_metadata_mode_off(&sidecar_content), false),
+            Err(_) => {
+                log::warn!("art metadata fallback: Exiv2 crash on {raw_display}, but couldn't read its sidecar at {} — giving up on the fallback", sidecar_path.display());
+                return result;
+            }
+        },
+        // No per-asset `.arp`/`.pp3` at all - the crash came from ART's own
+        // `-d` default profile, which carries the same `Mode=1` (see
+        // `MINIMAL_METADATA_OFF_PROFILE`'s doc comment) - so there's nothing
+        // to read and patch, but a from-scratch minimal profile still works.
+        None => (MINIMAL_METADATA_OFF_PROFILE.to_string(), true),
+    };
     let temp_path = std::env::temp_dir().join(format!(
         "immature-art-metadata-fallback-{}-{}.arp",
         std::process::id(),
         raw_path.file_name().and_then(|n| n.to_str()).unwrap_or("export")
     ));
     if tokio::fs::write(&temp_path, &patched).await.is_err() {
+        log::warn!("art metadata fallback: Exiv2 crash on {raw_display}, but couldn't write the patched profile to {} — giving up on the fallback", temp_path.display());
         return result;
     }
 
-    let fallback_args = build_art_cli_args_for_profile(&temp_path, export_path, raw_path);
+    if uses_default_profile {
+        log::info!("art metadata fallback: Exiv2 crash on {raw_display} with no per-asset sidecar, retrying with a from-scratch MetaData Mode=0 profile layered on ART's defaults");
+    } else {
+        log::info!("art metadata fallback: Exiv2 crash on {raw_display}, retrying with MetaData Mode=0 patched into the sidecar");
+    }
+    let fallback_args = if uses_default_profile {
+        build_art_cli_args_for_default_with_metadata_patch(&temp_path, export_path, raw_path)
+    } else {
+        build_art_cli_args_for_profile(&temp_path, export_path, raw_path)
+    };
     let fallback_result = run_art_cli_with_progress_and_retry(art_cli_path, &fallback_args, &mut on_progress, cancel).await;
     let _ = tokio::fs::remove_file(&temp_path).await;
 
     match fallback_result {
         Ok(()) => {
-            if !exiftool_path.trim().is_empty() {
-                if let Some(exif_args) = exiftool::build_exiftool_args(exiftool::MetadataPolicy::Keep, Some(raw_path), export_path) {
-                    let _ = exiftool::run_exiftool(exiftool_path, &exif_args).await;
+            log::info!("art metadata fallback: Mode=0 retry succeeded for {raw_display}");
+            if exiftool_path.trim().is_empty() {
+                log::warn!("art metadata fallback: no exiftool_path configured, exported {raw_display} without restoring metadata");
+            } else if let Some(exif_args) = exiftool::build_exiftool_args(exiftool::MetadataPolicy::Keep, Some(raw_path), export_path) {
+                if let Err(e) = exiftool::run_exiftool(exiftool_path, &exif_args).await {
+                    log::warn!("art metadata fallback: exiftool failed to restore metadata onto {}: {e}", export_path.display());
                 }
             }
             Ok(())
         }
-        Err(_) => result,
+        Err(fallback_err) => {
+            log::warn!("art metadata fallback: Mode=0 retry also failed for {raw_display}: {fallback_err}");
+            result
+        }
     }
 }
 
@@ -916,15 +985,84 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// A stub `ART-cli` that crashes on a bare `-d` (no `-p`) - simulating
+    /// `DefaultOnly` mode's baked-in `Mode=1` crashing exactly like a real
+    /// sidecar's does - and succeeds once `-p` is also present (simulating
+    /// `build_art_cli_args_for_default_with_metadata_patch`'s fallback
+    /// working). Copies whatever file follows `-p` out to `profile_copy`,
+    /// same convention as `write_fallback_aware_stub`.
+    fn write_default_mode_fallback_aware_stub(dir: &Path, calls_log: &Path, profile_copy: &Path) -> PathBuf {
+        write_stub_script(
+            dir,
+            "art-cli-default-fallback-aware.sh",
+            &format!(
+                "#!/bin/sh\n\
+                 echo \"$@\" >> '{calls_log}'\n\
+                 has_p=0\n\
+                 prev=\"\"\n\
+                 for a in \"$@\"; do\n\
+                 if [ \"$a\" = \"-p\" ]; then has_p=1; fi\n\
+                 if [ \"$prev\" = \"-p\" ]; then cp \"$a\" '{profile_copy}'; fi\n\
+                 prev=\"$a\"\n\
+                 done\n\
+                 if [ \"$has_p\" = \"0\" ]; then\n\
+                 echo \"terminate called after throwing an instance of 'Exiv2::Error'\" >&2\n\
+                 echo '  what():  Failed to read input data' >&2\n\
+                 exit 134\n\
+                 fi\n\
+                 echo '100'\n\
+                 exit 0\n",
+                calls_log = calls_log.display(),
+                profile_copy = profile_copy.display(),
+            ),
+        )
+    }
+
+    #[tokio::test]
+    async fn run_art_cli_with_metadata_fallback_uses_a_minimal_profile_when_no_sidecar_exists() {
+        let dir = tmp_dir("fallback-no-sidecar-success");
+        // A filename distinct from the other `run_art_cli_with_metadata_fallback_*`
+        // tests' shared `photo.DNG` - the temp fallback profile path is keyed
+        // only on PID + raw filename (see its own doc comment), and `std::process::id()`
+        // is identical across every test in this same test binary, so reusing
+        // that name here would race the other tests over the same temp path.
+        let raw_path = dir.join("default-mode-photo.DNG");
+        fs::write(&raw_path, b"raw").unwrap();
+        // Deliberately no `.arp`/`.pp3` written - this is `DefaultOnly`
+        // mode's whole premise: no per-asset sidecar exists, only ART's own
+        // default profile, which still crashes on the same Exiv2 read.
+        let export_path = dir.join("out.jpg");
+
+        let calls_log = dir.join("art-cli-calls.log");
+        let profile_copy = dir.join("profile-used-by-fallback.arp");
+        let art_cli = write_default_mode_fallback_aware_stub(&dir, &calls_log, &profile_copy);
+
+        let result = retrying_on_text_file_busy(|| {
+            run_art_cli_with_metadata_fallback(art_cli.to_str().unwrap(), "", &raw_path, &export_path, ArtCliMode::DefaultOnly, |_| {}, no_cancel())
+        })
+        .await;
+        assert!(result.is_ok(), "{result:?}");
+
+        let calls = fs::read_to_string(&calls_log).unwrap();
+        let fallback_calls = calls.lines().filter(|l| l.split_whitespace().any(|a| a == "-p")).count();
+        assert_eq!(fallback_calls, 1, "expected exactly one fallback -p attempt: {calls}");
+        assert!(calls.lines().all(|l| l.split_whitespace().any(|a| a == "-d")), "every attempt should still carry -d: {calls}");
+
+        let used_profile = fs::read_to_string(&profile_copy).unwrap();
+        assert_eq!(used_profile, MINIMAL_METADATA_OFF_PROFILE);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[tokio::test]
     async fn run_art_cli_with_metadata_fallback_does_not_attempt_a_fallback_for_a_non_crash_failure() {
         let dir = tmp_dir("fallback-not-applicable");
         let raw_path = dir.join("photo.DNG");
         fs::write(&raw_path, b"raw").unwrap();
-        // No sidecar written at all - if the fallback were (incorrectly)
-        // attempted here, `paths::find_processing_sidecar` would find
-        // nothing and it would still fall through to the original error, so
-        // this also exercises that defensive path.
+        // No sidecar written at all - a non-crash failure never even
+        // reaches the sidecar lookup (gated on the Exiv2 crash signature
+        // first), so this exercises that early-exit rather than the
+        // no-sidecar fallback path itself.
         let export_path = dir.join("out.jpg");
         let script = write_stub_script(&dir, "art-cli-deterministic-fail.sh", "#!/bin/sh\necho 'some other error' >&2\nexit 1\n");
 

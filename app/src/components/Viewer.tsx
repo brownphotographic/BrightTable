@@ -9,6 +9,7 @@ import {
   type AssetMetadataPatch,
   type AssetSummary,
   type MetadataEditTarget,
+  type ProcessingJob,
 } from '../lib/api';
 import { decodeThumbHash } from '../lib/thumbhash';
 import { formatDims, formatSize } from '../lib/exifFormat';
@@ -22,6 +23,8 @@ import { useClipboard } from '../lib/clipboard';
 import { ingestRoundTripExport, type RoundTripIngestOutcome } from '../lib/roundTrip';
 import { useArtRoundTripProgress } from '../lib/useArtRoundTripProgress';
 import { useNoSidecarChoice } from '../lib/useNoSidecarChoice';
+import { useProcessingQueue } from '../lib/processingQueue';
+import { useProcessingJobReconciliation } from '../lib/useProcessingJobReconciliation';
 
 const MIN_ZOOM = 25;
 const MAX_ZOOM = 400;
@@ -75,6 +78,7 @@ export default function Viewer({
   onSetStackPick,
   onOpenApplicationsPreferences,
   onRoundTripExported,
+  onProcessingSidecarCreated,
 }: {
   asset: AssetSummary;
   hasPrev: boolean;
@@ -99,6 +103,13 @@ export default function Viewer({
   // already does for the generic round trip's 'round-trip-file-detected'
   // listener.
   onRoundTripExported?: (original: AssetSummary, outcome: RoundTripIngestOutcome) => void;
+  // Fired once a Paste Image Processing job started from this viewer
+  // actually settles as `done` - lets the parent (PhotosBrowser/
+  // FoldersBrowser) mark the target as having a sidecar in its own
+  // processingSidecarAssets cache, the same way onRoundTripExported does for
+  // a round trip. Without this, hasProcessingSidecar stays stale on the
+  // grid behind the viewer until the next full bucket/folder reload.
+  onProcessingSidecarCreated?: (assetId: string) => void;
 }) {
   const [zoom, setZoom] = useState(100);
   const [infoOpen, setInfoOpen] = useState(true);
@@ -269,11 +280,25 @@ export default function Viewer({
     handleEdit(shown.id, copiedMetadata).catch(() => {});
   }, [copiedMetadata, handleEdit, shown.id]);
 
+  const { jobs: processingJobs } = useProcessingQueue();
+  const reconcileProcessingJob = useCallback(
+    (job: ProcessingJob) => {
+      if (job.status === 'failed') {
+        setLaunchError(job.error ?? "Couldn't paste image processing onto a photo.");
+        return;
+      }
+      onProcessingSidecarCreated?.(job.targetAssetId);
+    },
+    [onProcessingSidecarCreated],
+  );
+  const { trackJobs: trackProcessingJobs } = useProcessingJobReconciliation(processingJobs, reconcileProcessingJob);
+
   const confirmPasteImageProcessingAction = useCallback(async () => {
     if (!copiedProcessingSource) return;
     const targets: MetadataEditTarget[] = [{ id: shown.id, originalPath: shown.originalPath }];
-    await pasteImageProcessing(copiedProcessingSource.originalPath, targets);
-  }, [copiedProcessingSource, shown.id, shown.originalPath]);
+    const jobIds = await pasteImageProcessing(copiedProcessingSource.originalPath, targets);
+    trackProcessingJobs(jobIds);
+  }, [copiedProcessingSource, shown.id, shown.originalPath, trackProcessingJobs]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

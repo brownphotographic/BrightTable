@@ -23,6 +23,7 @@ import {
   type AssetSummary,
   type EditJob,
   type MetadataEditTarget,
+  type ProcessingJob,
   type UnsyncedMetadata,
 } from '../lib/api';
 import { buildFolderTree, collectAssetPaths, findFolderNode, type FolderNode } from '../lib/folderTree';
@@ -50,6 +51,8 @@ import { useEditQueue } from '../lib/editQueue';
 import { useEditJobReconciliation } from '../lib/useEditJobReconciliation';
 import { useArtQueue } from '../lib/artQueue';
 import { useArtJobReconciliation } from '../lib/useArtJobReconciliation';
+import { useProcessingQueue } from '../lib/processingQueue';
+import { useProcessingJobReconciliation } from '../lib/useProcessingJobReconciliation';
 import { useBucketMemo } from '../lib/bucketMemo';
 import { ingestRoundTripExport, type RoundTripIngestOutcome } from '../lib/roundTrip';
 import { useArtRoundTripProgress } from '../lib/useArtRoundTripProgress';
@@ -724,14 +727,31 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     [copiedProcessingSource, assetByIdAll],
   );
 
+  const { jobs: processingJobs } = useProcessingQueue();
+
+  // See PhotosBrowser.tsx's identical callback for the full explanation -
+  // a `done` Paste Image Processing job really did write a fresh
+  // `.arp`/`.pp3` to disk, so mark the target as having a sidecar locally
+  // too rather than leaving hasProcessingSidecar stale until the next full
+  // folder reload.
+  const reconcileProcessingJob = useCallback((job: ProcessingJob) => {
+    if (job.status === 'failed') {
+      setEnqueueError(job.error ?? "Couldn't paste image processing onto a photo.");
+      return;
+    }
+    setProcessingSidecarAssets((s) => (s.has(job.targetAssetId) ? s : new Set(s).add(job.targetAssetId)));
+  }, []);
+  const { trackJobs: trackProcessingJobs } = useProcessingJobReconciliation(processingJobs, reconcileProcessingJob);
+
   const confirmPasteImageProcessing = useCallback(async () => {
     if (!copiedProcessingSource || !pasteProcessingTargets) return;
     const targets: MetadataEditTarget[] = pasteProcessingTargets.map((id) => ({
       id,
       originalPath: assetByIdAll.get(id)?.originalPath ?? null,
     }));
-    await pasteImageProcessing(copiedProcessingSource.originalPath, targets);
-  }, [copiedProcessingSource, pasteProcessingTargets, assetByIdAll]);
+    const jobIds = await pasteImageProcessing(copiedProcessingSource.originalPath, targets);
+    trackProcessingJobs(jobIds);
+  }, [copiedProcessingSource, pasteProcessingTargets, assetByIdAll, trackProcessingJobs]);
 
   // Headless RAW Roundtrip (ART CLI round trip Variant 2) - see
   // PhotosBrowser.tsx's identical setup for the full explanation.
@@ -796,12 +816,33 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
 
   const confirmBatchArtRoundTrip = useCallback(async () => {
     if (!batchArtTargets) return;
-    const withoutSidecarCount = batchArtTargets.filter((id) => !assetByIdAll.get(id)?.hasProcessingSidecar).length;
+    const targets = batchArtTargets;
+    // See PhotosBrowser.tsx's identical callback - closes the dialog
+    // immediately (same "close first, await after" trick the no-sidecar
+    // follow-up dialog below already uses) instead of blocking it on a
+    // decision. The no-sidecar warning below is decided from the cached
+    // `hasProcessingSidecar` flag only, not a live checkSidecarMetadata
+    // round trip - that used to sit in front of the enqueue call below,
+    // and on a slow NFS mount left nothing visible on screen (dialog
+    // already closed, pill not up yet) for up to two minutes. The cache is
+    // kept fresh enough for this one judgment call by the context-menu-open
+    // live recheck effect below; a stale read here can't cause data loss
+    // since batch_art_round_trip itself still re-checks each target's
+    // sidecar on disk before deciding whether to apply the default profile.
+    // Errors are caught explicitly and routed to the standing enqueueError
+    // banner since the dialog is already unmounted by the time any of this
+    // can fail.
+    setBatchArtTargets(null);
+    const withoutSidecarCount = targets.filter((id) => !assetByIdAll.get(id)?.hasProcessingSidecar).length;
     if (withoutSidecarCount > 0) {
-      setNoSidecarBatch({ allIds: batchArtTargets, withoutSidecarCount });
+      setNoSidecarBatch({ allIds: targets, withoutSidecarCount });
       return;
     }
-    await runBatchArtRoundTrip(batchArtTargets);
+    try {
+      await runBatchArtRoundTrip(targets);
+    } catch (e) {
+      setEnqueueError(String(e));
+    }
   }, [batchArtTargets, assetByIdAll, runBatchArtRoundTrip]);
 
   // Stack/Unstack/Smart-Stack stay minimal here (band members already have
@@ -909,6 +950,32 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     artRoundTripEnabled,
     requestBatchArtRoundTrip,
   ]);
+
+  // See PhotosBrowser.tsx's identical effect for the full explanation -
+  // right-clicking a RAW asset that doesn't currently show Copy Image
+  // Processing live-rechecks disk once, covering sidecars created outside
+  // this view's own tracked flows (an external ART/RawTherapee run, or a
+  // paste that happened in the Photos view, which keeps its own separate
+  // processingSidecarAssets cache).
+  useEffect(() => {
+    if (!contextMenu) return;
+    const asset = assetByIdAll.get(contextMenu.assetId);
+    if (!asset || !asset.originalPath || asset.hasProcessingSidecar || !isRawAsset(asset)) return;
+    let cancelled = false;
+    checkSidecarMetadata([
+      { assetId: asset.id, originalPath: asset.originalPath, currentRating: asset.rating, currentDescription: asset.description },
+    ])
+      .then((results) => {
+        if (cancelled) return;
+        if (results.some((r) => r.hasProcessingSidecar)) {
+          setProcessingSidecarAssets((s) => (s.has(asset.id) ? s : new Set(s).add(asset.id)));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [contextMenu, assetByIdAll]);
 
   const navigateOpen = (dir: 1 | -1) => {
     const ni = openIndex + dir;
@@ -1355,6 +1422,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           }
           onOpenApplicationsPreferences={onOpenApplicationsPreferences}
           onRoundTripExported={(_original, outcome) => applyRoundTripOutcome(outcome)}
+          onProcessingSidecarCreated={(id) => setProcessingSidecarAssets((s) => (s.has(id) ? s : new Set(s).add(id)))}
         />
       )}
       {contextMenu && (

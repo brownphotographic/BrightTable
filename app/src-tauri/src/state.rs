@@ -63,11 +63,16 @@ impl AppState {
         art_queue: Arc<ArtQueue>,
         export_queue: Arc<ExportQueue>,
     ) -> Self {
+        // Captured before `config` moves into the `Mutex` below - same "read
+        // once at startup to size a semaphore" contract as
+        // `import::queue::run`'s own `max_concurrent_jobs` parameter (see
+        // `LibraryConfig::max_concurrent_metadata_scans`'s doc comment).
+        let max_concurrent_metadata_scans = config.library.max_concurrent_metadata_scans;
         Self {
             config: Mutex::new(config),
             http: reqwest::Client::new(),
             auto_resolution: Arc::new(Mutex::new(None)),
-            io_guard: IoGuard::new(),
+            io_guard: IoGuard::new(max_concurrent_metadata_scans),
             edit_queue,
             import_queue,
             round_trip,
