@@ -30,7 +30,10 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tokio::sync::{mpsc, watch, OwnedSemaphorePermit, Semaphore};
 
+use crate::art;
+use crate::art_queue::{self, ArtQueue};
 use crate::config::LibraryConfig;
+use crate::exiftool::{self, MetadataPolicy};
 use crate::export_naming;
 use crate::flickr::{self, FlickrPrivacy};
 use crate::immich::ImmichClient;
@@ -99,6 +102,7 @@ pub struct RenditionOptions {
     pub format: ExportFormat,
     pub size_px: Option<u32>,
     pub quality: u8,
+    pub metadata: MetadataPolicy,
 }
 
 /// Coordinates a "New album" Flickr export across every job in the same
@@ -132,6 +136,15 @@ pub struct ExportTarget {
     pub original_path: Option<String>,
     pub file_name: String,
     pub file_extension: String,
+    /// Whether this asset is RAW - resolved by the frontend's `isRawAsset()`
+    /// (see `commands.rs`'s `ExportAssetTarget::is_raw` doc comment for why
+    /// the backend trusts this instead of re-deriving it from
+    /// `file_extension` alone: the frontend's `isRawOverride` exception has
+    /// no backend-visible equivalent). Only changes behavior for
+    /// `RenditionOptions::format == ExportFormat::Jpeg`, where `true` routes
+    /// through a headless `ART-cli` conversion instead of Immich's `preview`
+    /// rendition - see `resolve_rendition`.
+    pub is_raw: bool,
     pub rendition: RenditionOptions,
     pub delivery: ExportDelivery,
 }
@@ -142,6 +155,7 @@ pub(crate) struct QueuedExport {
     original_path: Option<String>,
     file_name: String,
     file_extension: String,
+    is_raw: bool,
     rendition: RenditionOptions,
     delivery: ExportDelivery,
 }
@@ -205,6 +219,7 @@ impl ExportQueue {
                 original_path: t.original_path,
                 file_name: t.file_name,
                 file_extension: t.file_extension,
+                is_raw: t.is_raw,
                 rendition: t.rendition,
                 delivery: t.delivery,
             });
@@ -322,13 +337,23 @@ pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedExport>) 
             }
             queue.set_status(work.job_id, ExportJobStatus::Running);
 
-            let (library_cfg, flickr_cfg) = {
+            let (library_cfg, flickr_cfg, applications_cfg, auto_resolution, art_queue) = {
                 let app_state = app.state::<AppState>();
                 let guard = app_state.config.lock().unwrap();
-                (guard.library.clone(), guard.sharing.flickr.clone())
+                (
+                    guard.library.clone(),
+                    guard.sharing.flickr.clone(),
+                    guard.applications.clone(),
+                    app_state.auto_resolution.clone(),
+                    app_state.art_queue.clone(),
+                )
             };
 
-            match run_one(&http, &library_cfg, &flickr_cfg, &work).await {
+            // `cancel_rx` is cloned here (not moved) because the RAW branch
+            // of `resolve_rendition` needs to thread it into a real,
+            // potentially multi-minute `ART-cli` invocation - see the module
+            // doc comment's cancellation note.
+            match run_one(&http, &library_cfg, &flickr_cfg, &applications_cfg, &art_queue, &work, &auto_resolution, cancel_rx).await {
                 Ok(export_file_name) => {
                     queue.set_progress(work.job_id, 100);
                     queue.finish(work.job_id, ExportJobStatus::Done, Some(export_file_name), None);
@@ -339,10 +364,48 @@ pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedExport>) 
     }
 }
 
-async fn run_one(http: &reqwest::Client, library_cfg: &LibraryConfig, flickr_cfg: &crate::config::FlickrConfig, work: &QueuedExport) -> Result<String, String> {
-    let immich = ImmichClient::from_config(library_cfg, http.clone())?;
-    let (bytes, filename, mime) =
-        resolve_rendition(&immich, library_cfg, &work.asset_id, &work.original_path, &work.file_name, &work.file_extension, &work.rendition).await?;
+#[allow(clippy::too_many_arguments)]
+async fn run_one(
+    http: &reqwest::Client,
+    library_cfg: &LibraryConfig,
+    flickr_cfg: &crate::config::FlickrConfig,
+    applications_cfg: &crate::config::ApplicationsConfig,
+    art_queue: &ArtQueue,
+    work: &QueuedExport,
+    auto_resolution: &Mutex<Option<crate::config::AutoResolution>>,
+    cancel_rx: watch::Receiver<bool>,
+) -> Result<String, String> {
+    let immich = ImmichClient::from_config(library_cfg, http.clone(), auto_resolution).await?;
+    let (bytes, filename, mime) = resolve_rendition(
+        &immich,
+        library_cfg,
+        &applications_cfg.art_cli_path,
+        art_queue,
+        &work.asset_id,
+        &work.original_path,
+        &work.file_name,
+        &work.file_extension,
+        work.is_raw,
+        &work.rendition,
+        work.job_id,
+        cancel_rx,
+    )
+    .await?;
+
+    let bytes = apply_metadata_policy(
+        bytes,
+        &filename,
+        matches!(work.rendition.format, ExportFormat::Original),
+        work.rendition.metadata,
+        &applications_cfg.exiftool_path,
+        &immich,
+        library_cfg,
+        &work.asset_id,
+        &work.original_path,
+        &work.file_name,
+        work.job_id,
+    )
+    .await?;
 
     match &work.delivery {
         ExportDelivery::Folder { destination } => deliver_to_folder(bytes, filename, destination.clone()).await,
@@ -358,31 +421,49 @@ async fn run_one(http: &reqwest::Client, library_cfg: &LibraryConfig, flickr_cfg
 /// Produces the bytes to actually deliver, plus a filename and MIME type -
 /// shared by both delivery targets (see the module doc comment for why
 /// there's just one rendition step regardless of where it ends up).
+///
+/// `is_raw && format == Jpeg` is the one branch that doesn't go anywhere near
+/// Immich's own `preview` rendition at all - it headless-converts the RAW's
+/// local file through `ART-cli` first (same sidecar-aware mechanism as
+/// Headless RAW Roundtrip, see `convert_raw_to_jpeg`), then feeds that
+/// full-resolution output into the *same* `encode_jpeg_rendition` resize/
+/// quality step a non-RAW asset's Immich preview goes through - unifying the
+/// two source paths before delivery/metadata handling ever sees them.
+#[allow(clippy::too_many_arguments)]
 async fn resolve_rendition(
     immich: &ImmichClient,
     library_cfg: &LibraryConfig,
+    art_cli_path: &str,
+    art_queue: &ArtQueue,
     asset_id: &str,
     original_path: &Option<String>,
     file_name: &str,
     file_extension: &str,
+    is_raw: bool,
     rendition: &RenditionOptions,
+    job_id: u64,
+    cancel_rx: watch::Receiver<bool>,
 ) -> Result<(Vec<u8>, String, String), String> {
     match rendition.format {
         ExportFormat::Original => {
-            if let Some(op) = original_path {
-                if let Some(local) = paths::resolve_local_path(op, library_cfg) {
-                    let read_path = local.clone();
-                    let bytes = tokio::task::spawn_blocking(move || std::fs::read(&read_path)).await.map_err(|e| e.to_string())?.map_err(|e| format!("Could not read local file: {e}"))?;
-                    let filename = local.file_name().and_then(|n| n.to_str()).unwrap_or(file_name).to_string();
-                    let mime = guess_mime(&filename);
-                    return Ok((bytes, filename, mime));
-                }
-            }
-            let (bytes, mime) = immich.get_original_bytes(asset_id).await?;
-            Ok((bytes, file_name.to_string(), mime))
+            let (bytes, filename) = fetch_true_original(immich, library_cfg, asset_id, original_path, file_name).await?;
+            let mime = guess_mime(&filename);
+            Ok((bytes, filename, mime))
         }
         ExportFormat::Jpeg => {
-            let (bytes, _mime) = immich.get_thumbnail_bytes(asset_id, "preview").await?;
+            let bytes = if is_raw {
+                if art_cli_path.trim().is_empty() {
+                    return Err("Configure ART-cli in Preferences → Applications to export RAW photos as JPEG".to_string());
+                }
+                let raw_path = original_path
+                    .as_deref()
+                    .and_then(|op| paths::resolve_local_path(op, library_cfg))
+                    .ok_or_else(|| format!("No local path mapping configured for {file_name} — set up External Library mapping in Preferences → Library"))?;
+                convert_raw_to_jpeg(art_cli_path, art_queue, &raw_path, job_id, cancel_rx).await?
+            } else {
+                let (bytes, _mime) = immich.get_thumbnail_bytes(asset_id, "preview").await?;
+                bytes
+            };
             let size_px = rendition.size_px;
             let quality = rendition.quality;
             let out = tokio::task::spawn_blocking(move || encode_jpeg_rendition(&bytes, size_px, quality)).await.map_err(|e| e.to_string())??;
@@ -390,6 +471,151 @@ async fn resolve_rendition(
             Ok((out, format!("{base}.jpg"), "image/jpeg".to_string()))
         }
     }
+}
+
+/// Reads an asset's true, unaltered original bytes - the local file when a
+/// path mapping resolves it, otherwise Immich's `/assets/{id}/original`
+/// download. Shared by the `Original` export format (`resolve_rendition`)
+/// and `apply_metadata_policy`'s need for a full-metadata source to copy tags
+/// from onto an otherwise metadata-free `Jpeg`-format rendition.
+async fn fetch_true_original(
+    immich: &ImmichClient,
+    library_cfg: &LibraryConfig,
+    asset_id: &str,
+    original_path: &Option<String>,
+    file_name: &str,
+) -> Result<(Vec<u8>, String), String> {
+    if let Some(op) = original_path {
+        if let Some(local) = paths::resolve_local_path(op, library_cfg) {
+            let read_path = local.clone();
+            let bytes = tokio::task::spawn_blocking(move || std::fs::read(&read_path)).await.map_err(|e| e.to_string())?.map_err(|e| format!("Could not read local file: {e}"))?;
+            let filename = local.file_name().and_then(|n| n.to_str()).unwrap_or(file_name).to_string();
+            return Ok((bytes, filename));
+        }
+    }
+    let (bytes, _mime) = immich.get_original_bytes(asset_id).await?;
+    Ok((bytes, file_name.to_string()))
+}
+
+/// Headless-converts one RAW file through `ART-cli`, applying its own
+/// sidecar (`.arp`/`.pp3`) if one exists or ART's default profile otherwise -
+/// the exact same sidecar-presence-driven mode choice
+/// `art_queue::mode_for_sidecar` already makes for Headless RAW Roundtrip.
+/// Acquires a permit from `art_queue` - the **same** semaphore (capped at
+/// `art_queue::MAX_CONCURRENT_ART_JOBS = 1`) Headless RAW Roundtrip's own
+/// worker uses, not `ExportQueue`'s higher-concurrency one, so an export
+/// batch full of RAW assets can never run alongside a Headless RAW Roundtrip
+/// (or another RAW export job) and oversubscribe `ART-cli`'s confirmed-live
+/// memory ceiling. `cancel_rx` is threaded into `ART-cli`'s own run so a
+/// cancelled export actually kills a multi-minute conversion in progress,
+/// not just a queued-but-not-yet-started one (see the module doc comment).
+async fn convert_raw_to_jpeg(art_cli_path: &str, art_queue: &ArtQueue, raw_path: &Path, job_id: u64, cancel_rx: watch::Receiver<bool>) -> Result<Vec<u8>, String> {
+    let raw_path_owned = raw_path.to_path_buf();
+    let has_sidecar = tokio::task::spawn_blocking(move || paths::find_processing_sidecar(&raw_path_owned).is_some()).await.map_err(|e| e.to_string())?;
+    let mode = art_queue::mode_for_sidecar(has_sidecar);
+    let temp_path = std::env::temp_dir().join(format!("immature-export-raw-{job_id}.jpg"));
+    let args = art::build_art_cli_args(mode, &temp_path, raw_path);
+
+    let _permit = art_queue.acquire_permit().await;
+    // Re-checked here (not just wherever the caller last checked it) since
+    // this permit acquisition can itself block for a while behind another
+    // in-flight ART-cli process - same "cancel can land while queued"
+    // reasoning as every other queue's worker in this codebase.
+    if *cancel_rx.borrow() {
+        return Err(art::CANCELLED_BY_USER.to_string());
+    }
+    let run = art::run_art_cli_with_progress(art_cli_path, &args, |_percent| {}, cancel_rx);
+    let outcome = match tokio::time::timeout(art::ART_CLI_RUN_TIMEOUT, run).await {
+        Ok(r) => r,
+        Err(_) => Err(format!("Timed out after {}s running ART-cli", art::ART_CLI_RUN_TIMEOUT.as_secs())),
+    };
+    let bytes = match outcome {
+        Ok(()) => {
+            let p = temp_path.clone();
+            tokio::task::spawn_blocking(move || std::fs::read(&p)).await.map_err(|e| e.to_string())?.map_err(|e| format!("Could not read ART-cli output: {e}"))
+        }
+        Err(e) => Err(e),
+    };
+    let _ = std::fs::remove_file(&temp_path);
+    bytes
+}
+
+/// Applies a metadata policy to the final rendition bytes before delivery,
+/// shelling out to `exiftool` when there's real work to do. Two of the four
+/// `(is_original_format, policy)` combinations are no-ops handled without
+/// ever touching `exiftool`: `Original` + `Keep` (the bytes already are the
+/// untouched original) and non-`Original` + `StripAll` (the `image` crate's
+/// decode/re-encode in `encode_jpeg_rendition` already dropped everything).
+///
+/// `exiftool_path` empty while real work is needed is expected to be
+/// unreachable in practice - `commands.rs`'s `export_to_folder`/
+/// `export_to_flickr` reject the whole batch up front when the chosen
+/// format/policy combination would need `exiftool` and none is configured -
+/// but is still handled here defensively rather than assumed.
+#[allow(clippy::too_many_arguments)]
+async fn apply_metadata_policy(
+    bytes: Vec<u8>,
+    filename: &str,
+    is_original_format: bool,
+    policy: MetadataPolicy,
+    exiftool_path: &str,
+    immich: &ImmichClient,
+    library_cfg: &LibraryConfig,
+    asset_id: &str,
+    original_path: &Option<String>,
+    file_name: &str,
+    job_id: u64,
+) -> Result<Vec<u8>, String> {
+    if is_original_format && matches!(policy, MetadataPolicy::Keep) {
+        return Ok(bytes);
+    }
+    if !is_original_format && matches!(policy, MetadataPolicy::StripAll) {
+        return Ok(bytes);
+    }
+
+    let (_, target_ext) = split_base_ext(filename);
+    let target_temp = std::env::temp_dir().join(format!("immature-export-meta-{job_id}.{target_ext}"));
+    tokio::fs::write(&target_temp, &bytes).await.map_err(|e| format!("Could not write temp file for metadata: {e}"))?;
+
+    // A `Jpeg`-format rendition has no metadata of its own to edit yet (see
+    // the module doc comment) - `Keep`/`RemoveGps` both need the asset's true
+    // original fetched as a `-TagsFromFile` source. `Original` format is
+    // already the full source, so it's edited in place instead (`RemoveGps`/
+    // `StripAll` only - `Keep` already returned above).
+    let source_temp = if !is_original_format && matches!(policy, MetadataPolicy::Keep | MetadataPolicy::RemoveGps) {
+        let (source_bytes, source_filename) = fetch_true_original(immich, library_cfg, asset_id, original_path, file_name).await?;
+        let (_, source_ext) = split_base_ext(&source_filename);
+        let p = std::env::temp_dir().join(format!("immature-export-meta-src-{job_id}.{source_ext}"));
+        tokio::fs::write(&p, &source_bytes).await.map_err(|e| format!("Could not write temp source file for metadata: {e}"))?;
+        Some(p)
+    } else {
+        None
+    };
+
+    let args = exiftool::build_exiftool_args(policy, source_temp.as_deref(), &target_temp);
+    let run_result = if let Some(args) = args {
+        if exiftool_path.trim().is_empty() {
+            Err("Configure exiftool in Preferences → Applications to use this metadata option (or choose \"Strip all metadata\", which needs no configuration)".to_string())
+        } else {
+            exiftool::run_exiftool(exiftool_path, &args).await
+        }
+    } else {
+        Ok(())
+    };
+
+    let read_result = if run_result.is_ok() {
+        tokio::fs::read(&target_temp).await.map_err(|e| format!("Could not read metadata-processed file: {e}"))
+    } else {
+        Ok(Vec::new())
+    };
+
+    let _ = tokio::fs::remove_file(&target_temp).await;
+    if let Some(p) = &source_temp {
+        let _ = tokio::fs::remove_file(p).await;
+    }
+
+    run_result?;
+    read_result
 }
 
 /// Decodes Immich's `preview` JPEG, optionally downsizes it (fit within a
@@ -508,7 +734,8 @@ mod tests {
                 original_path: None,
                 file_name: "a.jpg".into(),
                 file_extension: "jpg".into(),
-                rendition: RenditionOptions { format: ExportFormat::Original, size_px: None, quality: 90 },
+                is_raw: false,
+                rendition: RenditionOptions { format: ExportFormat::Original, size_px: None, quality: 90, metadata: MetadataPolicy::Keep },
                 delivery: ExportDelivery::Folder { destination: PathBuf::from("/tmp/exports") },
             },
             ExportTarget {
@@ -516,7 +743,8 @@ mod tests {
                 original_path: None,
                 file_name: "b.jpg".into(),
                 file_extension: "jpg".into(),
-                rendition: RenditionOptions { format: ExportFormat::Jpeg, size_px: Some(1024), quality: 85 },
+                is_raw: false,
+                rendition: RenditionOptions { format: ExportFormat::Jpeg, size_px: Some(1024), quality: 85, metadata: MetadataPolicy::Keep },
                 delivery: ExportDelivery::Flickr { title: "b".into(), privacy: FlickrPrivacy::Public, album: FlickrAlbumChoice::None },
             },
         ]);
@@ -537,7 +765,8 @@ mod tests {
             original_path: None,
             file_name: "a.jpg".into(),
             file_extension: "jpg".into(),
-            rendition: RenditionOptions { format: ExportFormat::Original, size_px: None, quality: 90 },
+            is_raw: false,
+            rendition: RenditionOptions { format: ExportFormat::Original, size_px: None, quality: 90, metadata: MetadataPolicy::Keep },
             delivery: ExportDelivery::Folder { destination: PathBuf::from("/tmp/exports") },
         }]);
         let cancel_rx = queue.cancel_receiver(ids[0]).expect("job should have a registered cancel channel");
@@ -555,7 +784,8 @@ mod tests {
             original_path: None,
             file_name: "a.jpg".into(),
             file_extension: "jpg".into(),
-            rendition: RenditionOptions { format: ExportFormat::Original, size_px: None, quality: 90 },
+            is_raw: false,
+            rendition: RenditionOptions { format: ExportFormat::Original, size_px: None, quality: 90, metadata: MetadataPolicy::Keep },
             delivery: ExportDelivery::Folder { destination: PathBuf::from("/tmp/exports") },
         }]);
         queue.finish(ids[0], ExportJobStatus::Done, Some("a.jpg".into()), None);
@@ -571,7 +801,8 @@ mod tests {
                 original_path: None,
                 file_name: "a.jpg".into(),
                 file_extension: "jpg".into(),
-                rendition: RenditionOptions { format: ExportFormat::Original, size_px: None, quality: 90 },
+                is_raw: false,
+                rendition: RenditionOptions { format: ExportFormat::Original, size_px: None, quality: 90, metadata: MetadataPolicy::Keep },
                 delivery: ExportDelivery::Folder { destination: PathBuf::from("/tmp/exports") },
             },
             ExportTarget {
@@ -579,7 +810,8 @@ mod tests {
                 original_path: None,
                 file_name: "b.jpg".into(),
                 file_extension: "jpg".into(),
-                rendition: RenditionOptions { format: ExportFormat::Original, size_px: None, quality: 90 },
+                is_raw: false,
+                rendition: RenditionOptions { format: ExportFormat::Original, size_px: None, quality: 90, metadata: MetadataPolicy::Keep },
                 delivery: ExportDelivery::Folder { destination: PathBuf::from("/tmp/exports") },
             },
         ]);

@@ -84,23 +84,48 @@ impl Default for LibraryConfig {
 }
 
 impl LibraryConfig {
-    /// Mirrors the prototype's effLibUrl()/effLibVia() lan/tailscale/auto logic.
+    /// Resolves the LAN/Tailscale endpoints for the non-Auto modes. `Auto`
+    /// itself is resolved separately (see `immich::resolve_connection`),
+    /// since picking a real endpoint for it requires an async reachability
+    /// probe this sync helper can't do.
     pub fn resolve_active_url(&self) -> Result<(String, &'static str), String> {
-        let (url, via) = match self.conn_mode {
-            ConnMode::Tailscale => (self.tailscale_url.clone(), "via Tailscale"),
-            ConnMode::Auto => {
-                if !self.tailscale_url.trim().is_empty() {
-                    (self.tailscale_url.clone(), "Auto → Tailscale")
-                } else {
-                    (self.lan_url.clone(), "Auto → LAN")
-                }
-            }
-            ConnMode::Lan => (self.lan_url.clone(), "via LAN"),
+        let url = match self.conn_mode {
+            ConnMode::Tailscale => self.tailscale_url.clone(),
+            ConnMode::Lan => self.lan_url.clone(),
+            ConnMode::Auto => unreachable!("Auto is resolved via immich::resolve_connection"),
+        };
+        let via = match self.conn_mode {
+            ConnMode::Tailscale => "via Tailscale",
+            ConnMode::Lan => "via LAN",
+            ConnMode::Auto => unreachable!("Auto is resolved via immich::resolve_connection"),
         };
         if url.trim().is_empty() {
             return Err("No server URL configured for the active connection mode".into());
         }
         Ok((url.trim_end_matches('/').to_string(), via))
+    }
+}
+
+/// A cached outcome of probing LAN reachability for `ConnMode::Auto`, so
+/// repeated calls (e.g. once per thumbnail) don't each pay a network probe.
+/// Keyed by the two candidate URLs so a Preferences edit invalidates it
+/// automatically; also expires after `TTL` so a LAN link that drops mid-
+/// session (laptop leaves the house without touching Preferences) gets
+/// re-probed instead of sticking with a stale choice forever.
+#[derive(Debug, Clone)]
+pub struct AutoResolution {
+    pub lan_url: String,
+    pub tailscale_url: String,
+    pub resolved_url: String,
+    pub via: &'static str,
+    pub resolved_at: std::time::Instant,
+}
+
+impl AutoResolution {
+    pub const TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+    pub fn is_fresh_for(&self, lan_url: &str, tailscale_url: &str) -> bool {
+        self.lan_url == lan_url && self.tailscale_url == tailscale_url && self.resolved_at.elapsed() < Self::TTL
     }
 }
 
@@ -219,6 +244,17 @@ pub struct ApplicationsConfig {
     /// files (saved before this field existed) still deserialize cleanly.
     #[serde(default)]
     pub art_cli_path: String,
+    /// Path to the `exiftool` binary - same shape as `art_cli_path` (a
+    /// plain string, manual file-browse only, no `.desktop` entry to pick
+    /// from). A non-empty value is required by the Export to Folder/Share to
+    /// Flickr dialogs' "Keep all metadata"/"Remove GPS only" options (see
+    /// `export_queue.rs`/`exiftool.rs`) - "Strip all metadata" needs no
+    /// external tool for a JPEG-format rendition (the `image` crate re-encode
+    /// already drops everything), so it works with this unset.
+    /// `#[serde(default)]` for the same old-config.json-compatibility reason
+    /// as `art_cli_path`.
+    #[serde(default)]
+    pub exiftool_path: String,
 }
 
 /// Last-used SD-card/disk import settings - the chosen folder hierarchy and

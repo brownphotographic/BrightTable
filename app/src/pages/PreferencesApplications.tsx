@@ -13,9 +13,10 @@ const ROLE_HELP: Record<Role, string> = {
 };
 
 export default function PreferencesApplications() {
-  const { applications, setEditor, setArtCliPath, artRoundTripEnabled } = useApplications();
+  const { applications, setEditor, setArtCliPath, setExiftoolPath, artRoundTripEnabled, exiftoolConfigured } = useApplications();
   const [pickerRole, setPickerRole] = useState<Role | null>(null);
   const [browseError, setBrowseError] = useState<string | null>(null);
+  const [exiftoolBrowseError, setExiftoolBrowseError] = useState<string | null>(null);
 
   function handlePick(choice: AppChoice) {
     if (pickerRole) setEditor(pickerRole, choice);
@@ -30,6 +31,17 @@ export default function PreferencesApplications() {
       setArtCliPath(path);
     } catch (e) {
       setBrowseError(String(e));
+    }
+  }
+
+  async function browseForExiftool() {
+    setExiftoolBrowseError(null);
+    try {
+      const path = await open({ multiple: false, directory: false, title: 'Choose the exiftool binary' });
+      if (!path || typeof path !== 'string') return;
+      setExiftoolPath(path);
+    } catch (e) {
+      setExiftoolBrowseError(String(e));
     }
   }
 
@@ -100,6 +112,37 @@ export default function PreferencesApplications() {
         </div>
         {browseError && (
           <div style={{ padding: '0 16px 13px', fontSize: 12, color: 'var(--danger)' }}>{browseError}</div>
+        )}
+      </div>
+
+      <div style={{ fontSize: 14, fontWeight: 700, margin: '24px 4px 12px' }}>Metadata (exiftool)</div>
+      <div style={{ fontSize: 12.5, color: 'var(--text-dimmer)', margin: '0 4px 16px', lineHeight: 1.5 }}>
+        Used by Export to Folder/Share to Flickr's "Keep all metadata" and "Remove GPS only" options - "Strip all
+        metadata" needs no configuration. Get{' '}
+        <a href="https://exiftool.org/" target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>
+          exiftool
+        </a>{' '}
+        and point this at the binary.
+      </div>
+      <div style={panel}>
+        <div style={row}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.85)' }}>exiftool path</div>
+            <div style={{ fontSize: 12, marginTop: 6, color: exiftoolConfigured ? '#fff' : 'var(--text-dimmer)' }}>
+              {exiftoolConfigured ? applications.exiftoolPath : 'Not configured'}
+            </div>
+          </div>
+          <button onClick={browseForExiftool} style={btnSecondary}>
+            Browse…
+          </button>
+          {exiftoolConfigured && (
+            <button onClick={() => setExiftoolPath('')} style={{ ...btnSecondary, marginLeft: 8 }}>
+              Clear
+            </button>
+          )}
+        </div>
+        {exiftoolBrowseError && (
+          <div style={{ padding: '0 16px 13px', fontSize: 12, color: 'var(--danger)' }}>{exiftoolBrowseError}</div>
         )}
       </div>
 

@@ -1,5 +1,5 @@
 use crate::art_queue::ArtQueue;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, AutoResolution};
 use crate::edit_queue::EditQueue;
 use crate::export_queue::ExportQueue;
 use crate::import::ImportQueue;
@@ -14,6 +14,12 @@ pub struct AppState {
     /// (including per-thumbnail fetches) instead of paying a fresh TCP/TLS
     /// handshake per call - this is what makes the Photos grid load fast.
     pub http: reqwest::Client,
+    /// Cached outcome of the last `ConnMode::Auto` LAN-reachability probe -
+    /// see `immich::resolve_connection`/`config::AutoResolution`. Shared
+    /// (`Arc`) so background workers (edit/export queues, the thumbnail
+    /// protocol handler) that only hold a cloned handle rather than the
+    /// whole `AppState` can still read/refresh it.
+    pub auto_resolution: Arc<Mutex<Option<AutoResolution>>>,
     /// Lets `suspend_guard` (Linux only) pause new NFS-touching blocking
     /// I/O around a system suspend. Inert everywhere else - see
     /// `io_guard.rs`.
@@ -60,6 +66,7 @@ impl AppState {
         Self {
             config: Mutex::new(config),
             http: reqwest::Client::new(),
+            auto_resolution: Arc::new(Mutex::new(None)),
             io_guard: IoGuard::new(),
             edit_queue,
             import_queue,

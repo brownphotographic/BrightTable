@@ -24,10 +24,17 @@ const emptyLib: LibraryConfig = {
 
 type Status = { kind: 'idle' | 'ok' | 'error'; text: string };
 
+// Auto mode actually probes LAN reachability on the Rust side (see
+// `immich::resolve_connection`) rather than statically preferring Tailscale
+// whenever a URL is configured for it - this preview can't run that probe
+// (it's just a label before Test Connection/Connect does real work), so when
+// both are configured it shows the LAN-first policy instead of guessing.
 function effUrl(lib: LibraryConfig): { url: string; via: string } {
   if (lib.connMode === 'tailscale') return { url: lib.tailscaleUrl, via: 'via Tailscale' };
-  if (lib.connMode === 'auto')
+  if (lib.connMode === 'auto') {
+    if (lib.lanUrl && lib.tailscaleUrl) return { url: lib.lanUrl, via: 'Auto (LAN if reachable, else Tailscale)' };
     return lib.tailscaleUrl ? { url: lib.tailscaleUrl, via: 'Auto → Tailscale' } : { url: lib.lanUrl, via: 'Auto → LAN' };
+  }
   return { url: lib.lanUrl, via: 'via LAN' };
 }
 

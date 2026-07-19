@@ -1,7 +1,9 @@
 import { useState, type CSSProperties } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { exportToFolder, type AssetSummary, type ExportFormat } from '../lib/api';
+import { exportToFolder, type AssetSummary, type ExportFormat, type MetadataPolicy } from '../lib/api';
+import { isRawAsset } from '../lib/filters';
 import ExportSizeQualityFields from './ExportSizeQualityFields';
+import NoSidecarDialog from './NoSidecarDialog';
 
 // Export to Folder dialog, ported from the design prototype's Export to
 // Folder modal (Immich Desktop.dc.html) - enqueues one ExportJob per asset
@@ -10,11 +12,21 @@ import ExportSizeQualityFields from './ExportSizeQualityFields';
 // "fire and watch the Activity panel" shape as batchArtRoundTrip/startImport.
 export default function ExportToFolderDialog({ assets, onClose, onExported }: { assets: AssetSummary[]; onClose: () => void; onExported: () => void }) {
   const [format, setFormat] = useState<ExportFormat>('jpeg');
-  const [sizePx, setSizePx] = useState<number | null>(2048);
+  // Default to Full size (was 2048px) - RAW assets now headless-convert
+  // through ART-cli at full resolution when format is 'jpeg', so there's no
+  // reason to default to a downsized export anymore.
+  const [sizePx, setSizePx] = useState<number | null>(null);
   const [quality, setQuality] = useState(90);
+  const [metadata, setMetadata] = useState<MetadataPolicy>('keep');
   const [destination, setDestination] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Only relevant when format === 'jpeg' - a RAW asset with no saved ART
+  // edits still exports fine (ART's default profile), but that's worth
+  // flagging before committing, same NoSidecarDialog pattern the Headless
+  // RAW Roundtrip batch confirm already uses (PhotosBrowser.tsx's
+  // noSidecarBatch). `excludedIds` is what "Exclude Affected" removes.
+  const [noSidecarInfo, setNoSidecarInfo] = useState<{ count: number; excludedIds: Set<string> } | null>(null);
 
   const n = assets.length;
 
@@ -28,12 +40,23 @@ export default function ExportToFolderDialog({ assets, onClose, onExported }: { 
       setError('Choose a destination folder');
       return;
     }
+    if (format === 'jpeg') {
+      const withoutSidecar = assets.filter((a) => isRawAsset(a) && !a.hasProcessingSidecar).map((a) => a.id);
+      if (withoutSidecar.length > 0) {
+        setNoSidecarInfo({ count: withoutSidecar.length, excludedIds: new Set(withoutSidecar) });
+        return;
+      }
+    }
+    await runExport(assets);
+  }
+
+  async function runExport(targets: AssetSummary[]) {
     setBusy(true);
     setError(null);
     try {
       await exportToFolder(
-        assets.map((a) => ({ id: a.id, originalPath: a.originalPath, fileName: a.fileName, fileExtension: a.fileExtension })),
-        { destination, format, sizePx: format === 'jpeg' ? sizePx : null, quality },
+        targets.map((a) => ({ id: a.id, originalPath: a.originalPath, fileName: a.fileName, fileExtension: a.fileExtension, isRaw: isRawAsset(a) })),
+        { destination, format, sizePx: format === 'jpeg' ? sizePx : null, quality, metadata },
       );
       onExported();
       onClose();
@@ -45,10 +68,11 @@ export default function ExportToFolderDialog({ assets, onClose, onExported }: { 
   }
 
   return (
-    <div
-      style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-      onClick={busy ? undefined : onClose}
-    >
+    <>
+      <div
+        style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onClick={busy ? undefined : onClose}
+      >
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
@@ -87,7 +111,17 @@ export default function ExportToFolderDialog({ assets, onClose, onExported }: { 
         </div>
 
         <div style={{ flex: 1, overflow: 'auto', padding: '18px 22px', minHeight: 0 }}>
-          <ExportSizeQualityFields format={format} onFormatChange={setFormat} sizePx={sizePx} onSizePxChange={setSizePx} quality={quality} onQualityChange={setQuality} />
+          <ExportSizeQualityFields
+            format={format}
+            onFormatChange={setFormat}
+            sizePx={sizePx}
+            onSizePxChange={setSizePx}
+            quality={quality}
+            onQualityChange={setQuality}
+            metadata={metadata}
+            onMetadataChange={setMetadata}
+            hasRawOriginal={assets.some(isRawAsset)}
+          />
 
           <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'rgba(255,255,255,0.45)', margin: '18px 0 8px' }}>DESTINATION</div>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -128,6 +162,28 @@ export default function ExportToFolderDialog({ assets, onClose, onExported }: { 
         </div>
       </div>
     </div>
+      {noSidecarInfo && (
+        <NoSidecarDialog
+          title="Some RAW Photos Have No Saved Edits"
+          message={`${noSidecarInfo.count} of ${n} selected photo${n === 1 ? '' : 's'} have no saved ART edits. Export ${
+            noSidecarInfo.count === 1 ? 'it' : 'them'
+          } anyway using ART's default processing profile, or exclude ${noSidecarInfo.count === 1 ? 'it' : 'them'} from this export?`}
+          primaryLabel="Export with Default Processing"
+          secondaryLabel="Exclude Affected"
+          onPrimary={async () => {
+            setNoSidecarInfo(null);
+            await runExport(assets);
+          }}
+          onSecondary={async () => {
+            const { excludedIds } = noSidecarInfo;
+            setNoSidecarInfo(null);
+            const remaining = assets.filter((a) => !excludedIds.has(a.id));
+            if (remaining.length > 0) await runExport(remaining);
+            else onClose();
+          }}
+        />
+      )}
+    </>
   );
 }
 

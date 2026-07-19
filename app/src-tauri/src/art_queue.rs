@@ -333,7 +333,7 @@ fn trim_completed(board: &mut VecDeque<ArtJob>) {
 /// Picks `run`'s per-job `ArtCliMode` from `QueuedArtWork::has_sidecar` -
 /// pulled out as its own pure function so the choice is unit-testable without
 /// spinning up a full `AppHandle`/worker loop.
-fn mode_for_sidecar(has_sidecar: bool) -> ArtCliMode {
+pub(crate) fn mode_for_sidecar(has_sidecar: bool) -> ArtCliMode {
     if has_sidecar { ArtCliMode::DefaultThenSidecarOverride } else { ArtCliMode::DefaultOnly }
 }
 
@@ -343,6 +343,7 @@ pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedArtWork>)
     while let Some(work) = rx.recv().await {
         let queue = queue.clone();
         let asset_lock = queue.asset_lock(&work.asset_id);
+        let app_for_job = app.clone();
 
         tauri::async_runtime::spawn(async move {
             let _asset_guard = asset_lock.lock().await;
@@ -359,12 +360,21 @@ pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedArtWork>)
             }
             queue.set_status(work.job_id, ArtJobStatus::Running);
 
-            let args = art::build_art_cli_args(mode_for_sidecar(work.has_sidecar), &work.export_path, &work.raw_path);
+            // Fetched fresh here (rather than threaded through `QueuedArtWork`
+            // like `art_cli_path` is) since it's only ever needed on the rare
+            // Exiv2-crash fallback path inside `run_art_cli_with_metadata_fallback`
+            // - not worth widening `enqueue`'s signature (and every call site/test
+            // that builds a `QueuedArtWork` tuple) for a value the common case
+            // never touches.
+            let exiftool_path = app_for_job.state::<AppState>().config.lock().unwrap().applications.exiftool_path.clone();
             let progress_queue = queue.clone();
             let job_id = work.job_id;
-            let run = art::run_art_cli_with_progress(
+            let run = art::run_art_cli_with_metadata_fallback(
                 &work.art_cli_path,
-                &args,
+                &exiftool_path,
+                &work.raw_path,
+                &work.export_path,
+                mode_for_sidecar(work.has_sidecar),
                 move |percent| {
                     progress_queue.set_progress(job_id, percent);
                 },

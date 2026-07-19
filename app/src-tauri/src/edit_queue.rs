@@ -295,9 +295,9 @@ async fn write_xmp(io_guard: &Arc<IoGuard>, local_path: Option<PathBuf>, rating:
 /// `Semaphore(MAX_CONCURRENT_JOBS)` so at most that many writes run at once
 /// regardless of how many were enqueued in a burst.
 pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedWork>) {
-    let (http, io_guard, queue) = {
+    let (http, io_guard, queue, auto_resolution) = {
         let state = app.state::<AppState>();
-        (state.http.clone(), state.io_guard.clone(), state.edit_queue.clone())
+        (state.http.clone(), state.io_guard.clone(), state.edit_queue.clone(), state.auto_resolution.clone())
     };
 
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_JOBS));
@@ -307,6 +307,7 @@ pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedWork>) {
         let http = http.clone();
         let io_guard = io_guard.clone();
         let queue = queue.clone();
+        let auto_resolution = auto_resolution.clone();
 
         let asset_lock = queue.asset_lock(&work.asset_id);
 
@@ -319,13 +320,15 @@ pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedWork>) {
             let _permit = semaphore.acquire_owned().await;
             queue.set_status(work.job_id, JobStatus::Writing);
 
-            // Client construction is sync/CPU-only (no I/O - just URL/key
-            // validation), so it's resolved eagerly rather than inside the
-            // joined futures below. A config problem here (bad URL, no API
-            // key) becomes an Immich-side error same as any other PUT
-            // failure - it must not block the XMP write, which is the
-            // authoritative mechanism and doesn't need a client at all.
-            let client_result = ImmichClient::from_config(&work.cfg, http);
+            // Resolved eagerly (before the joined futures below) rather than
+            // as a third leg of the `join!` - it must not block the XMP
+            // write, which is the authoritative mechanism and doesn't need a
+            // client at all. Usually no real I/O (Auto mode's LAN probe is
+            // cached - see `AutoResolution`), but on a cache miss this can
+            // await a short reachability probe; a resulting config/network
+            // problem becomes an Immich-side error same as any other PUT
+            // failure.
+            let client_result = ImmichClient::from_config(&work.cfg, http, &auto_resolution).await;
 
             let xmp_fut = write_xmp(&io_guard, work.local_path, work.rating, work.description.clone());
             let immich_fut = async {

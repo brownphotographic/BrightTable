@@ -11,6 +11,7 @@ use crate::config::{self, AppConfig, ApplicationsConfig, ImportSettings, Library
 use crate::edit_queue::EditJob;
 use crate::export_naming;
 use crate::export_queue::{ExportDelivery, ExportFormat, ExportJob, ExportTarget, FlickrAlbumChoice, RenditionOptions};
+use crate::exiftool::MetadataPolicy;
 use crate::flickr::{self, FlickrPrivacy};
 use crate::immich::models::{AssetSummary, ConnectionStatus, StackInfo, TimeBucketInfo};
 use crate::immich::ImmichClient;
@@ -140,14 +141,14 @@ pub async fn test_connection(
     state: State<'_, AppState>,
     cfg: LibraryConfig,
 ) -> Result<ConnectionStatus, String> {
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.test_connection().await
 }
 
 #[tauri::command]
 pub async fn get_timeline_buckets(state: State<'_, AppState>) -> Result<Vec<TimeBucketInfo>, String> {
     let cfg = state.library_config();
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.get_time_buckets().await
 }
 
@@ -157,7 +158,7 @@ pub async fn get_timeline_bucket_assets(
     time_bucket: String,
 ) -> Result<Vec<AssetSummary>, String> {
     let cfg = state.library_config();
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.get_time_bucket_assets(&time_bucket).await
 }
 
@@ -182,14 +183,14 @@ pub async fn delete_assets(
         ));
     }
 
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.delete_assets(&ids, permanent).await
 }
 
 #[tauri::command]
 pub async fn get_trashed_assets(state: State<'_, AppState>) -> Result<Vec<AssetSummary>, String> {
     let cfg = state.library_config();
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.get_trashed_assets().await
 }
 
@@ -210,7 +211,7 @@ pub async fn restore_assets(state: State<'_, AppState>, ids: Vec<String>) -> Res
         ));
     }
 
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.restore_assets(&ids).await
 }
 
@@ -224,7 +225,7 @@ pub async fn empty_trash(state: State<'_, AppState>) -> Result<(), String> {
         );
     }
 
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     // "Empty trash" affects everything currently trashed, not a caller-chosen
     // list of ids - checking the cap here means it still means something
     // rather than being silently bypassed by this one action.
@@ -451,9 +452,9 @@ pub async fn launch_art_round_trip(
     file_extension: String,
     raw_editor: AppChoice,
 ) -> Result<ArtRoundTripOutcome, String> {
-    let (cfg, art_cli_path, suffix_pattern) = {
+    let (cfg, art_cli_path, exiftool_path, suffix_pattern) = {
         let guard = state.config.lock().unwrap();
-        (guard.library.clone(), guard.applications.art_cli_path.clone(), guard.smart_stack.suffix.clone())
+        (guard.library.clone(), guard.applications.art_cli_path.clone(), guard.applications.exiftool_path.clone(), guard.smart_stack.suffix.clone())
     };
     if cfg.read_only {
         return Err("Read-only mode is on — turn it off in Preferences → Library to use ART Round Trip".into());
@@ -544,12 +545,14 @@ pub async fn launch_art_round_trip(
         }
         art_queue.set_status(job_id, ArtJobStatus::Running);
 
-        let args = art::build_art_cli_args(art::ArtCliMode::ApplySidecar, &export_path, &raw_path);
         let progress_app = app.clone();
         let progress_queue = art_queue.clone();
-        let run = art::run_art_cli_with_progress(
+        let run = art::run_art_cli_with_metadata_fallback(
             &art_cli_path,
-            &args,
+            &exiftool_path,
+            &raw_path,
+            &export_path,
+            art::ArtCliMode::ApplySidecar,
             move |percent| {
                 let _ = progress_app.emit(ART_ROUND_TRIP_PROGRESS_EVENT, percent);
                 progress_queue.set_progress(job_id, percent);
@@ -624,7 +627,7 @@ pub async fn finish_art_round_trip_with_default_profile(
         let args = art::build_art_cli_args(art::ArtCliMode::DefaultOnly, &export_path, &raw_path);
         let progress_app = app.clone();
         let progress_queue = art_queue.clone();
-        let run = art::run_art_cli_with_progress(
+        let run = art::run_art_cli_with_progress_and_retry(
             &art_cli_path,
             &args,
             move |percent| {
@@ -847,21 +850,21 @@ pub async fn create_stack(state: State<'_, AppState>, ids: Vec<String>) -> Resul
         ));
     }
 
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.create_stack(&ids).await
 }
 
 #[tauri::command]
 pub async fn get_stack(state: State<'_, AppState>, stack_id: String) -> Result<StackInfo, String> {
     let cfg = state.library_config();
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.get_stack(&stack_id).await
 }
 
 #[tauri::command]
 pub async fn list_stacks(state: State<'_, AppState>) -> Result<Vec<StackInfo>, String> {
     let cfg = state.library_config();
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.list_stacks().await
 }
 
@@ -885,7 +888,7 @@ pub async fn set_stack_pick(
         ));
     }
 
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.update_stack_primary(&stack_id, &asset_id).await
 }
 
@@ -900,7 +903,7 @@ pub async fn set_stack_pick(
 #[tauri::command]
 pub async fn regenerate_asset_thumbnail(state: State<'_, AppState>, asset_id: String) -> Result<(), String> {
     let cfg = state.library_config();
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.regenerate_thumbnail(&asset_id).await
 }
 
@@ -924,7 +927,7 @@ pub async fn set_asset_capture_date(
             "Read-only mode is on — turn it off in Preferences → Library to correct the capture date".into(),
         );
     }
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.update_asset(&asset_id, None, None, None, Some(&date_time_original)).await
 }
 
@@ -937,7 +940,7 @@ pub async fn delete_stack(state: State<'_, AppState>, stack_id: String) -> Resul
         );
     }
 
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     // Unstacking has no caller-supplied id list of its own (just a stack id) -
     // fetch the stack first so the cap still means something, same pattern as
     // empty_trash checking the live trashed count before proceeding.
@@ -1139,7 +1142,7 @@ pub fn clear_completed_import_jobs(state: State<AppState>) {
 #[tauri::command]
 pub async fn scan_immich_library(state: State<'_, AppState>) -> Result<(), String> {
     let cfg = state.library_config();
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     let libraries = client.get_libraries().await?;
     match crate::import::find_matching_library(&libraries, &cfg.immich_root) {
         crate::import::LibraryMatch::Found(id) => client.scan_library(&id).await,
@@ -1159,7 +1162,7 @@ pub async fn scan_immich_library(state: State<'_, AppState>) -> Result<(), Strin
 #[tauri::command]
 pub async fn get_folder_paths(state: State<'_, AppState>) -> Result<Vec<String>, String> {
     let cfg = state.library_config();
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.get_unique_folder_paths().await
 }
 
@@ -1167,7 +1170,7 @@ pub async fn get_folder_paths(state: State<'_, AppState>) -> Result<Vec<String>,
 #[tauri::command]
 pub async fn get_folder_assets(state: State<'_, AppState>, path: String) -> Result<Vec<AssetSummary>, String> {
     let cfg = state.library_config();
-    let client = ImmichClient::from_config(&cfg, state.http.clone())?;
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.get_folder_assets(&path).await
 }
 
@@ -1400,6 +1403,14 @@ pub struct ExportAssetTarget {
     pub original_path: Option<String>,
     pub file_name: String,
     pub file_extension: String,
+    /// Whether this asset is RAW - computed by the frontend's `isRawAsset()`
+    /// rather than re-derived here from `file_extension` alone, since only
+    /// the frontend knows about a per-asset `isRawOverride` exception
+    /// (`app/src/lib/rawOverrides.tsx`) that this command has no visibility
+    /// into. Only changes behavior for `format: 'jpeg'`, where `true` routes
+    /// through a headless `ART-cli` conversion instead of Immich's `preview`
+    /// rendition - see `export_queue::resolve_rendition`.
+    pub is_raw: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1409,7 +1420,24 @@ pub struct FolderExportOptions {
     pub format: ExportFormat,
     pub size_px: Option<u32>,
     pub quality: u8,
+    pub metadata: MetadataPolicy,
 }
+
+/// Whether the chosen format/metadata-policy combination needs `exiftool` at
+/// all - `format`/`metadata` are single options for the whole dialog/batch
+/// (not per-asset, unlike RAW conversion's per-asset `ART-cli` need), so this
+/// is checked once up front rather than per job. Two combinations need no
+/// `exiftool` call regardless of whether it's configured: `Original` +
+/// `Keep` (the exported bytes already are the untouched original) and
+/// `Jpeg` + `StripAll` (the `image`-crate re-encode in `encode_jpeg_rendition`
+/// already drops all metadata as a side effect - see
+/// `export_queue::apply_metadata_policy`'s identical reasoning).
+fn needs_exiftool(format: ExportFormat, metadata: MetadataPolicy) -> bool {
+    !matches!((format, metadata), (ExportFormat::Original, MetadataPolicy::Keep) | (ExportFormat::Jpeg, MetadataPolicy::StripAll))
+}
+
+const EXIFTOOL_NOT_CONFIGURED: &str =
+    "Configure exiftool in Preferences → Applications to use this metadata option (or choose \"Strip all metadata\", which needs no configuration)";
 
 /// Export to Folder: writes a rendition of every target asset into
 /// `options.destination`, one `ExportJob` per asset. Deliberately skips the
@@ -1426,6 +1454,9 @@ pub async fn export_to_folder(state: State<'_, AppState>, assets: Vec<ExportAsse
     if options.destination.trim().is_empty() {
         return Err("Choose a destination folder".to_string());
     }
+    if needs_exiftool(options.format, options.metadata) && state.config.lock().unwrap().applications.exiftool_path.trim().is_empty() {
+        return Err(EXIFTOOL_NOT_CONFIGURED.to_string());
+    }
     let destination = PathBuf::from(options.destination);
     let quality = options.quality.clamp(1, 100);
     let size_px = match options.format {
@@ -1440,7 +1471,8 @@ pub async fn export_to_folder(state: State<'_, AppState>, assets: Vec<ExportAsse
             original_path: a.original_path,
             file_name: a.file_name,
             file_extension: a.file_extension,
-            rendition: RenditionOptions { format: options.format, size_px, quality },
+            is_raw: a.is_raw,
+            rendition: RenditionOptions { format: options.format, size_px, quality, metadata: options.metadata },
             delivery: ExportDelivery::Folder { destination: destination.clone() },
         })
         .collect();
@@ -1463,6 +1495,7 @@ pub struct FlickrExportOptions {
     pub format: ExportFormat,
     pub size_px: Option<u32>,
     pub quality: u8,
+    pub metadata: MetadataPolicy,
 }
 
 /// Export to Flickr (Share to Flickr…): uploads every target asset, one
@@ -1479,6 +1512,9 @@ pub async fn export_to_flickr(state: State<'_, AppState>, assets: Vec<ExportAsse
     }
     if !state.config.lock().unwrap().sharing.flickr.connected {
         return Err("Flickr isn't connected — go to Preferences → Sharing to set it up".to_string());
+    }
+    if needs_exiftool(options.format, options.metadata) && state.config.lock().unwrap().applications.exiftool_path.trim().is_empty() {
+        return Err(EXIFTOOL_NOT_CONFIGURED.to_string());
     }
     let quality = options.quality.clamp(1, 100);
     let size_px = match options.format {
@@ -1500,7 +1536,8 @@ pub async fn export_to_flickr(state: State<'_, AppState>, assets: Vec<ExportAsse
                 original_path: a.original_path,
                 file_name: a.file_name,
                 file_extension: a.file_extension,
-                rendition: RenditionOptions { format: options.format, size_px, quality },
+                is_raw: a.is_raw,
+                rendition: RenditionOptions { format: options.format, size_px, quality, metadata: options.metadata },
                 delivery: ExportDelivery::Flickr { title, privacy: options.privacy, album: album.clone() },
             }
         })
@@ -1528,4 +1565,25 @@ pub fn cancel_export_job(state: State<AppState>, job_id: u64) -> bool {
 #[tauri::command]
 pub fn clear_completed_export_jobs(state: State<AppState>) {
     state.export_queue.clear_completed();
+}
+
+#[cfg(test)]
+mod export_metadata_tests {
+    use super::*;
+
+    // The only two combinations that need no `exiftool` at all - see
+    // `needs_exiftool`'s own doc comment for why.
+    #[test]
+    fn needs_exiftool_is_false_for_original_keep_and_jpeg_strip_all() {
+        assert!(!needs_exiftool(ExportFormat::Original, MetadataPolicy::Keep));
+        assert!(!needs_exiftool(ExportFormat::Jpeg, MetadataPolicy::StripAll));
+    }
+
+    #[test]
+    fn needs_exiftool_is_true_for_every_other_combination() {
+        assert!(needs_exiftool(ExportFormat::Original, MetadataPolicy::RemoveGps));
+        assert!(needs_exiftool(ExportFormat::Original, MetadataPolicy::StripAll));
+        assert!(needs_exiftool(ExportFormat::Jpeg, MetadataPolicy::Keep));
+        assert!(needs_exiftool(ExportFormat::Jpeg, MetadataPolicy::RemoveGps));
+    }
 }

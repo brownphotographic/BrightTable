@@ -1,6 +1,8 @@
 pub mod models;
 
-use crate::config::LibraryConfig;
+use std::sync::Mutex;
+
+use crate::config::{AutoResolution, ConnMode, LibraryConfig};
 use models::{
     ConnectionStatus, LibraryInfo, RawLibraryResponse, RawSearchAsset, RawSearchMetadataResponse,
     RawStackResponse, RawTimeBucket, RawTimeBucketAssets, ServerVersion, StackInfo, UserInfo,
@@ -14,16 +16,87 @@ pub struct ImmichClient {
     http: reqwest::Client,
 }
 
+/// GET /server/ping is Immich's unauthenticated health-check endpoint - no
+/// API key needed, so this can run before an `ImmichClient` even exists.
+/// Short timeout since this only exists to disambiguate "on the LAN right
+/// now" from "not" - a real request to a live LAN server answers in
+/// milliseconds, so anything slower is treated as unreachable rather than
+/// making every Auto-mode connection attempt wait out a long default.
+async fn probe_lan(http: &reqwest::Client, lan_url: &str) -> bool {
+    http.get(format!("{lan_url}/server/ping"))
+        .timeout(std::time::Duration::from_millis(1200))
+        .send()
+        .await
+        .map(|resp| resp.status().is_success())
+        .unwrap_or(false)
+}
+
+/// Resolves `ConnMode::Auto` by actually checking whether the LAN endpoint
+/// answers, instead of the old static heuristic ("prefer Tailscale if a URL
+/// is configured for it at all") which broke as soon as Tailscale wasn't
+/// actually reachable (e.g. tailscaled not running) even while sat on the
+/// same LAN as the server. Non-Auto modes pass straight through to
+/// `LibraryConfig::resolve_active_url`. `auto_cache` lets repeat calls in the
+/// same session (a whole thumbnail grid's worth of requests) skip the probe -
+/// see `AutoResolution`.
+pub async fn resolve_connection(
+    cfg: &LibraryConfig,
+    http: &reqwest::Client,
+    auto_cache: &Mutex<Option<AutoResolution>>,
+) -> Result<(String, &'static str), String> {
+    if cfg.conn_mode != ConnMode::Auto {
+        return cfg.resolve_active_url();
+    }
+
+    let lan_url = cfg.lan_url.trim().trim_end_matches('/').to_string();
+    let tailscale_url = cfg.tailscale_url.trim().trim_end_matches('/').to_string();
+    if lan_url.is_empty() && tailscale_url.is_empty() {
+        return Err("No server URL configured for the active connection mode".into());
+    }
+
+    {
+        let cache = auto_cache.lock().unwrap();
+        if let Some(cached) = cache.as_ref() {
+            if cached.is_fresh_for(&lan_url, &tailscale_url) {
+                return Ok((cached.resolved_url.clone(), cached.via));
+            }
+        }
+    }
+
+    let (resolved_url, via) = if !lan_url.is_empty() && probe_lan(http, &lan_url).await {
+        (lan_url.clone(), "Auto → LAN")
+    } else if !tailscale_url.is_empty() {
+        (tailscale_url.clone(), "Auto → Tailscale")
+    } else {
+        (lan_url.clone(), "Auto → LAN")
+    };
+
+    *auto_cache.lock().unwrap() = Some(AutoResolution {
+        lan_url,
+        tailscale_url,
+        resolved_url: resolved_url.clone(),
+        via,
+        resolved_at: std::time::Instant::now(),
+    });
+
+    Ok((resolved_url, via))
+}
+
 impl ImmichClient {
     /// `http` should be the app-wide shared client (see AppState::http) so
     /// requests reuse pooled/keep-alive connections instead of each paying a
     /// fresh TCP/TLS handshake - critical for a grid that fires one request
-    /// per thumbnail.
-    pub fn from_config(cfg: &LibraryConfig, http: reqwest::Client) -> Result<Self, String> {
-        let (base_url, via) = cfg.resolve_active_url()?;
+    /// per thumbnail. `auto_cache` is `AppState::auto_resolution` - see
+    /// `resolve_connection`.
+    pub async fn from_config(
+        cfg: &LibraryConfig,
+        http: reqwest::Client,
+        auto_cache: &Mutex<Option<AutoResolution>>,
+    ) -> Result<Self, String> {
         if cfg.api_key.trim().is_empty() {
             return Err("No API key configured".into());
         }
+        let (base_url, via) = resolve_connection(cfg, &http, auto_cache).await?;
         Ok(Self {
             base_url,
             via,

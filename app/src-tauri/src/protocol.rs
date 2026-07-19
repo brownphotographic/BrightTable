@@ -20,6 +20,7 @@ pub fn handle(
     let cfg = app_state.library_config();
     let http = app_state.http.clone();
     let io_guard = app_state.io_guard.clone();
+    let auto_resolution = app_state.auto_resolution.clone();
 
     let uri = request.uri().clone();
     let asset_id = uri
@@ -68,7 +69,7 @@ pub fn handle(
         }
 
         let result = async {
-            let client = ImmichClient::from_config(&cfg, http)?;
+            let client = ImmichClient::from_config(&cfg, http, &auto_resolution).await?;
             client.get_thumbnail_bytes(&asset_id, &size).await
         }
         .await;

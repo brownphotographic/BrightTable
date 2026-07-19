@@ -30,6 +30,9 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::watch;
 
+use crate::exiftool;
+use crate::paths;
+
 /// The exact error text `run_art_cli_with_progress` returns when `cancel`
 /// fires - `art_queue.rs`'s `finish` and `commands.rs`'s Variant 1 handlers
 /// both just thread this straight through as the job's `error`, same as any
@@ -249,6 +252,208 @@ fn classify_exit(status: std::process::ExitStatus, stderr_bytes: &[u8]) -> Resul
         return Err(stderr);
     }
     Ok(())
+}
+
+/// The exact prefix `classify_exit` emits for the "terminate called after
+/// throwing an instance of 'Exiv2::Error'" crash - checked against, rather
+/// than re-matching the raw stderr a second time here, since that's the only
+/// path that ever produces this specific prefix.
+const EXIV2_CRASH_ERROR_PREFIX: &str = "ART-cli crashed reading this RAW file's metadata";
+
+/// Extra attempts made when `ART-cli` crashes with the Exiv2 signature above
+/// - confirmed live (see the upstream bug report filed against ART) to be a
+/// nondeterministic race in ART-cli's own bundled Exiv2 usage. Ruled out as
+/// file corruption, disk/network I/O, or a bug in Exiv2 itself (the bundled
+/// `libexiv2.so` reads the same file cleanly when driven by a different,
+/// single-threaded caller).
+///
+/// Only used in two places now, both on paths where a blind retry is
+/// actually worth its ~30-60s-per-attempt cost: `finish_art_round_trip_with_default_profile`
+/// (`DefaultOnly`, no sidecar - there's no known fix to fall back to, so
+/// retrying the only option available is all that can be done), and the
+/// *patched* `Mode=0` attempt inside `run_art_cli_with_metadata_fallback`
+/// (cheap insurance on a path that's already reliable, not the primary
+/// mitigation). It is **not** used for the original `Mode=1` sidecar
+/// attempt itself - confirmed live that `Mode=1` succeeds only ~1 time in 12
+/// once a file is crash-prone at all, so spending several ~30-60s retries on
+/// it before reaching the fallback that actually works reliably would be
+/// pure wasted wall-clock time; see `run_art_cli_with_metadata_fallback`'s
+/// own doc comment for why that path gets exactly one attempt instead.
+const EXIV2_CRASH_RETRIES: u32 = 4;
+
+/// Runs `ART-cli` via `run_art_cli_with_progress`, automatically retrying
+/// (up to `EXIV2_CRASH_RETRIES` extra attempts) when it fails with the
+/// racy Exiv2 crash `EXIV2_CRASH_RETRIES`'s doc comment describes - every
+/// other error (including cancellation) is returned immediately, same as a
+/// single `run_art_cli_with_progress` call. `finish_art_round_trip_with_default_profile`
+/// calls this directly (see `EXIV2_CRASH_RETRIES`'s doc comment for why);
+/// `run_art_cli_with_metadata_fallback` calls this only for its own patched
+/// `Mode=0` fallback attempt, not for the original `Mode=1` one. The plain
+/// `run_art_cli_with_progress` stays as-is (and independently tested) for
+/// the case where a caller genuinely wants a single attempt.
+///
+/// `on_progress` may be called multiple times with a percentage that resets
+/// toward 0 partway through if an earlier attempt crashed and a retry
+/// started over - an accepted, minor UI quirk (a progress bar jumping back)
+/// in exchange for not surfacing a spurious failure for what's usually a
+/// transient crash.
+pub async fn run_art_cli_with_progress_and_retry<F>(
+    art_cli_path: &str,
+    args: &[String],
+    mut on_progress: F,
+    cancel: watch::Receiver<bool>,
+) -> Result<(), String>
+where
+    F: FnMut(u8) + Send,
+{
+    let mut attempt = 0;
+    loop {
+        let result = run_art_cli_with_progress(art_cli_path, args, &mut on_progress, cancel.clone()).await;
+        match &result {
+            Err(e) if attempt < EXIV2_CRASH_RETRIES && e.starts_with(EXIV2_CRASH_ERROR_PREFIX) && !*cancel.borrow() => {
+                attempt += 1;
+            }
+            _ => return result,
+        }
+    }
+}
+
+/// Rewrites a `.arp`/`.pp3` processing profile's `[MetaData] Mode=1` line to
+/// `Mode=0` - ART's own "re-read the RAW's EXIF via Exiv2 and copy specific
+/// tags into the output" step, confirmed live (see the upstream bug report
+/// filed under this crash) to be the most reliable trigger found for it:
+/// disabling it turned 4/4 crashes on a real saved sidecar into 4/4 clean
+/// exports, with every other line of the profile left byte-identical. Plain
+/// line scanning rather than a full INI parser - both `.arp` and `.pp3`
+/// sidecars are flat `[Section]`/`key=value` text with no nesting, and this
+/// is the one narrowly-scoped edit this module ever needs to make to one. A
+/// `Mode=` key outside `[MetaData]` (there isn't one today, but nothing
+/// guarantees that stays true) is deliberately left untouched.
+fn patch_metadata_mode_off(sidecar: &str) -> String {
+    let mut in_metadata_section = false;
+    let mut out = String::with_capacity(sidecar.len());
+    for line in sidecar.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_metadata_section = trimmed.eq_ignore_ascii_case("[MetaData]");
+            out.push_str(line);
+        } else if in_metadata_section && trimmed.starts_with("Mode=") {
+            out.push_str("Mode=0");
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// argv for a single-profile `ART-cli` run (`-p <profile> -c <raw>`, no
+/// `-d`/`-s`/`-S`) - what `run_art_cli_with_metadata_fallback` uses for its
+/// patched-sidecar retry, since `-s`/`-S` always apply *last* regardless of
+/// where they sit on the command line (`ART-cli -h`'s own documented merge
+/// order: neutral values, then `-d`, then every `-p`, then `-s`/`-S`
+/// finally overriding all of it) - stacking a `-p` override alongside the
+/// original `-s`/`-S` would just have the untouched sidecar's own
+/// `Mode=1` win again, so the sidecar has to be edited and substituted
+/// wholesale instead of layered under.
+fn build_art_cli_args_for_profile(profile_path: &Path, export_path: &Path, raw_path: &Path) -> Vec<String> {
+    vec![
+        "-o".to_string(),
+        export_path.to_string_lossy().to_string(),
+        format!("-j{JPEG_QUALITY}"),
+        "-Y".to_string(),
+        "-V".to_string(),
+        "--progress".to_string(),
+        "-p".to_string(),
+        profile_path.to_string_lossy().to_string(),
+        "-c".to_string(),
+        raw_path.to_string_lossy().to_string(),
+    ]
+}
+
+/// Runs `ART-cli` for a sidecar-driven mode (`ApplySidecar`/
+/// `DefaultThenSidecarOverride`), with a fallback for the Exiv2 crash: if it
+/// crashes, this rebuilds a temp copy of the *actual* sidecar (via
+/// `paths::find_processing_sidecar`) with `patch_metadata_mode_off` and
+/// reruns against that copy (`build_art_cli_args_for_profile`) instead of the
+/// original `-s`/`-S` invocation. On a successful fallback run, shells out to
+/// `exiftool` (if `exiftool_path` is configured - same convention as
+/// `export_queue::apply_metadata_policy`, an empty string means "not set up,
+/// skip") to copy the metadata `Mode=1` would otherwise have embedded, via
+/// the same `Keep`-policy args `export_queue.rs`'s own metadata-policy
+/// dialogs use - so the fallback doesn't silently produce a metadata-less
+/// export. A failure in that `exiftool` step, or no `exiftool_path`
+/// configured at all, is treated as "the export itself still succeeded"
+/// rather than failing the whole operation - a JPEG with missing metadata is
+/// still a far better outcome for the user than no JPEG at all, and this is
+/// already the crash-recovery path, not the common case.
+///
+/// Deliberately gives the *original* `Mode=1` invocation only a single
+/// attempt (`run_art_cli_with_progress`, not `..._and_retry`) before falling
+/// back, rather than burning `EXIV2_CRASH_RETRIES` more attempts on it first:
+/// confirmed live that `Mode=1` succeeds on only about 1 real attempt in 12
+/// once it's crashed once on a given file, while the patched `Mode=0`
+/// fallback has been clean on every attempt observed. Retrying the failing
+/// path first was the original (wrong) design - each attempt costs a real
+/// ~30-60s full processing pass, so spending several of those on a ~8%-odds
+/// path before trying the one that reliably works is pure wasted wall-clock
+/// time for no meaningfully better outcome. The fallback attempt itself
+/// still goes through `run_art_cli_with_progress_and_retry` - its own small
+/// retry margin is cheap insurance on a path that's actually likely to
+/// succeed, unlike the original one.
+///
+/// Falls straight back to the original crash error - not the fallback
+/// attempt's own error, which would usually just be a second instance of
+/// the identical crash - if: the error wasn't this specific crash signature,
+/// cancellation fired, no sidecar is found (shouldn't happen - both call
+/// sites only reach this in a mode that already confirmed one exists - but
+/// defensive rather than panicking), the sidecar can't be read/copied, or
+/// the fallback run itself still fails.
+pub async fn run_art_cli_with_metadata_fallback<F>(
+    art_cli_path: &str,
+    exiftool_path: &str,
+    raw_path: &Path,
+    export_path: &Path,
+    mode: ArtCliMode,
+    mut on_progress: F,
+    cancel: watch::Receiver<bool>,
+) -> Result<(), String>
+where
+    F: FnMut(u8) + Send,
+{
+    let args = build_art_cli_args(mode, export_path, raw_path);
+    let result = run_art_cli_with_progress(art_cli_path, &args, &mut on_progress, cancel.clone()).await;
+    let Err(crash_err) = &result else { return result };
+    if *cancel.borrow() || !crash_err.starts_with(EXIV2_CRASH_ERROR_PREFIX) {
+        return result;
+    }
+    let Some((sidecar_path, _, _)) = paths::find_processing_sidecar(raw_path) else { return result };
+    let Ok(sidecar_content) = tokio::fs::read_to_string(&sidecar_path).await else { return result };
+    let patched = patch_metadata_mode_off(&sidecar_content);
+    let temp_path = std::env::temp_dir().join(format!(
+        "immature-art-metadata-fallback-{}-{}.arp",
+        std::process::id(),
+        raw_path.file_name().and_then(|n| n.to_str()).unwrap_or("export")
+    ));
+    if tokio::fs::write(&temp_path, &patched).await.is_err() {
+        return result;
+    }
+
+    let fallback_args = build_art_cli_args_for_profile(&temp_path, export_path, raw_path);
+    let fallback_result = run_art_cli_with_progress_and_retry(art_cli_path, &fallback_args, &mut on_progress, cancel).await;
+    let _ = tokio::fs::remove_file(&temp_path).await;
+
+    match fallback_result {
+        Ok(()) => {
+            if !exiftool_path.trim().is_empty() {
+                if let Some(exif_args) = exiftool::build_exiftool_args(exiftool::MetadataPolicy::Keep, Some(raw_path), export_path) {
+                    let _ = exiftool::run_exiftool(exiftool_path, &exif_args).await;
+                }
+            }
+            Ok(())
+        }
+        Err(_) => result,
+    }
 }
 
 #[cfg(test)]
@@ -478,6 +683,256 @@ mod tests {
             .await
             .expect("cancellation should make run_art_cli_with_progress return promptly, not hang for the full sleep 30");
         assert_eq!(result, Err(CANCELLED_BY_USER.to_string()));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A stub script whose behavior depends on how many times it's been
+    /// invoked so far, tracked via a counter file (its own process restarts
+    /// fresh every attempt, so state can't live in-process) - lets these
+    /// tests simulate ART-cli's real "crashes for its first N runs, then
+    /// succeeds" flakiness without an actual flaky binary.
+    fn write_counting_stub_script(dir: &Path, name: &str, counter: &Path, crash_until_attempt: u32) -> PathBuf {
+        write_stub_script(
+            dir,
+            name,
+            &format!(
+                "#!/bin/sh\n\
+                 n=$(cat '{counter}' 2>/dev/null || echo 0)\n\
+                 n=$((n+1))\n\
+                 echo $n > '{counter}'\n\
+                 if [ $n -le {crash_until_attempt} ]; then\n\
+                 echo \"terminate called after throwing an instance of 'Exiv2::Error'\" >&2\n\
+                 echo '  what():  Failed to read input data' >&2\n\
+                 exit 134\n\
+                 fi\n\
+                 echo '100'\n\
+                 exit 0\n",
+                counter = counter.display(),
+            ),
+        )
+    }
+
+    #[tokio::test]
+    async fn run_art_cli_with_progress_and_retry_succeeds_after_crashing_within_the_retry_budget() {
+        let dir = tmp_dir("retry-eventual-success");
+        let counter = dir.join("attempts");
+        // Crashes on every attempt up to `EXIV2_CRASH_RETRIES`, succeeds on
+        // the last one the budget allows - the edge of what should still
+        // succeed rather than give up.
+        let script = write_counting_stub_script(&dir, "art-cli-eventual-success.sh", &counter, EXIV2_CRASH_RETRIES);
+        let result = retrying_on_text_file_busy(|| run_art_cli_with_progress_and_retry(script.to_str().unwrap(), &[], |_| {}, no_cancel())).await;
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            fs::read_to_string(&counter).unwrap().trim(),
+            (EXIV2_CRASH_RETRIES + 1).to_string(),
+            "expected exactly {} attempts (1 + {} retries)",
+            EXIV2_CRASH_RETRIES + 1,
+            EXIV2_CRASH_RETRIES
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn run_art_cli_with_progress_and_retry_gives_up_after_exhausting_the_retry_budget() {
+        let dir = tmp_dir("retry-exhausted");
+        let counter = dir.join("attempts");
+        // Never stops crashing - exercises the "still failing after every
+        // retry" path, not just eventual success.
+        let script = write_counting_stub_script(&dir, "art-cli-always-crash.sh", &counter, u32::MAX);
+        let result = retrying_on_text_file_busy(|| run_art_cli_with_progress_and_retry(script.to_str().unwrap(), &[], |_| {}, no_cancel())).await;
+        let err = result.unwrap_err();
+        assert!(err.starts_with(EXIV2_CRASH_ERROR_PREFIX), "{err}");
+        assert_eq!(
+            fs::read_to_string(&counter).unwrap().trim(),
+            (EXIV2_CRASH_RETRIES + 1).to_string(),
+            "expected exactly {} attempts total (1 initial + {} retries), then giving up",
+            EXIV2_CRASH_RETRIES + 1,
+            EXIV2_CRASH_RETRIES
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn run_art_cli_with_progress_and_retry_does_not_retry_a_non_crash_failure() {
+        let dir = tmp_dir("retry-not-applicable");
+        let counter = dir.join("attempts");
+        // Fails deterministically (not the Exiv2 crash signature) - retrying
+        // this would just waste time before failing identically again, so it
+        // should return after exactly one attempt.
+        let script = write_stub_script(
+            &dir,
+            "art-cli-deterministic-fail.sh",
+            &format!("#!/bin/sh\nn=$(cat '{c}' 2>/dev/null || echo 0)\necho $((n+1)) > '{c}'\necho 'some other error' >&2\nexit 1\n", c = counter.display()),
+        );
+        let result = retrying_on_text_file_busy(|| run_art_cli_with_progress_and_retry(script.to_str().unwrap(), &[], |_| {}, no_cancel())).await;
+        assert_eq!(result, Err("some other error".to_string()));
+        assert_eq!(fs::read_to_string(&counter).unwrap().trim(), "1", "a non-crash failure should not be retried");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn patch_metadata_mode_off_flips_mode_inside_the_metadata_section_only() {
+        let sidecar = "[Other]\nMode=1\n\n[MetaData]\nMode=1\nExifKeys=Exif.Image.Make;\nNotes=\n\n[Exif]\nLens=\n";
+        let patched = patch_metadata_mode_off(sidecar);
+        // The [MetaData] section's own Mode flips...
+        assert!(patched.contains("[MetaData]\nMode=0\n"), "{patched}");
+        // ...but an unrelated section's identically-named key does not, and
+        // every other line is untouched.
+        assert!(patched.contains("[Other]\nMode=1\n"), "{patched}");
+        assert!(patched.contains("ExifKeys=Exif.Image.Make;\n"), "{patched}");
+        assert!(patched.contains("[Exif]\nLens=\n"), "{patched}");
+    }
+
+    #[test]
+    fn patch_metadata_mode_off_is_a_no_op_without_a_metadata_section() {
+        let sidecar = "[Exif]\nLens=\n";
+        assert_eq!(patch_metadata_mode_off(sidecar), "[Exif]\nLens=\n");
+    }
+
+    #[test]
+    fn build_art_cli_args_for_profile_uses_p_not_s_or_d() {
+        let args = build_art_cli_args_for_profile(Path::new("/tmp/patched.arp"), Path::new("/out/x.jpg"), Path::new("/raw/x.DNG"));
+        assert_eq!(
+            args,
+            vec![
+                "-o".to_string(),
+                "/out/x.jpg".to_string(),
+                "-j92".to_string(),
+                "-Y".to_string(),
+                "-V".to_string(),
+                "--progress".to_string(),
+                "-p".to_string(),
+                "/tmp/patched.arp".to_string(),
+                "-c".to_string(),
+                "/raw/x.DNG".to_string(),
+            ]
+        );
+    }
+
+    /// A stub `ART-cli` that crashes with the Exiv2 signature whenever `-s`
+    /// is on its argv (simulating the real sidecar's `Mode=1` crashing) and
+    /// succeeds otherwise (simulating the patched `-p` fallback profile
+    /// working) - logs every invocation's argv, and copies whatever file
+    /// follows a `-p` flag out to `profile_copy` so a test can inspect what
+    /// `run_art_cli_with_metadata_fallback` actually substituted in before
+    /// the real function deletes its temp copy.
+    fn write_fallback_aware_stub(dir: &Path, calls_log: &Path, profile_copy: &Path) -> PathBuf {
+        write_stub_script(
+            dir,
+            "art-cli-fallback-aware.sh",
+            &format!(
+                "#!/bin/sh\n\
+                 echo \"$@\" >> '{calls_log}'\n\
+                 prev=\"\"\n\
+                 for a in \"$@\"; do\n\
+                 if [ \"$prev\" = \"-p\" ]; then cp \"$a\" '{profile_copy}'; fi\n\
+                 prev=\"$a\"\n\
+                 done\n\
+                 for a in \"$@\"; do\n\
+                 if [ \"$a\" = \"-s\" ]; then\n\
+                 echo \"terminate called after throwing an instance of 'Exiv2::Error'\" >&2\n\
+                 echo '  what():  Failed to read input data' >&2\n\
+                 exit 134\n\
+                 fi\n\
+                 done\n\
+                 echo '100'\n\
+                 exit 0\n",
+                calls_log = calls_log.display(),
+                profile_copy = profile_copy.display(),
+            ),
+        )
+    }
+
+    #[tokio::test]
+    async fn run_art_cli_with_metadata_fallback_patches_the_sidecar_and_restores_metadata_via_exiftool() {
+        let dir = tmp_dir("fallback-success");
+        let raw_path = dir.join("photo.DNG");
+        fs::write(&raw_path, b"raw").unwrap();
+        // `arp_sidecar_path`'s append form - what `paths::find_processing_sidecar` looks for first.
+        let sidecar_path = dir.join("photo.DNG.arp");
+        fs::write(&sidecar_path, "[MetaData]\nMode=1\nExifKeys=Exif.Image.Make;\nNotes=\n\n[Exif]\nLens=\n").unwrap();
+        let export_path = dir.join("out.jpg");
+
+        let calls_log = dir.join("art-cli-calls.log");
+        let profile_copy = dir.join("profile-used-by-fallback.arp");
+        let art_cli = write_fallback_aware_stub(&dir, &calls_log, &profile_copy);
+
+        let exiftool_log = dir.join("exiftool-calls.log");
+        let exiftool_stub = write_stub_script(&dir, "exiftool-stub.sh", &format!("#!/bin/sh\necho \"$@\" >> '{log}'\nexit 0\n", log = exiftool_log.display()));
+
+        let result = retrying_on_text_file_busy(|| {
+            run_art_cli_with_metadata_fallback(
+                art_cli.to_str().unwrap(),
+                exiftool_stub.to_str().unwrap(),
+                &raw_path,
+                &export_path,
+                ArtCliMode::ApplySidecar,
+                |_| {},
+                no_cancel(),
+            )
+        })
+        .await;
+        assert!(result.is_ok(), "{result:?}");
+
+        let calls = fs::read_to_string(&calls_log).unwrap();
+        let s_attempts = calls.lines().filter(|l| l.split_whitespace().any(|a| a == "-s")).count();
+        assert_eq!(s_attempts, 1, "the original Mode=1 attempt should not be retried before falling back: {calls}");
+        assert!(calls.contains(" -p "), "expected a fallback -p attempt: {calls}");
+
+        let used_profile = fs::read_to_string(&profile_copy).unwrap();
+        assert!(used_profile.contains("Mode=0"), "{used_profile}");
+        assert!(!used_profile.contains("Mode=1"), "{used_profile}");
+
+        let exif_calls = fs::read_to_string(&exiftool_log).unwrap();
+        assert!(exif_calls.contains("-TagsFromFile"), "{exif_calls}");
+        assert!(exif_calls.contains(raw_path.to_str().unwrap()), "{exif_calls}");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn run_art_cli_with_metadata_fallback_returns_the_original_crash_when_the_fallback_also_fails() {
+        let dir = tmp_dir("fallback-still-fails");
+        let raw_path = dir.join("photo.DNG");
+        fs::write(&raw_path, b"raw").unwrap();
+        let sidecar_path = dir.join("photo.DNG.arp");
+        fs::write(&sidecar_path, "[MetaData]\nMode=1\n").unwrap();
+        let export_path = dir.join("out.jpg");
+
+        // Crashes unconditionally, regardless of -s vs -p - so both the
+        // primary attempts and the patched-profile fallback fail.
+        let script = write_stub_script(
+            &dir,
+            "art-cli-always-crash.sh",
+            "#!/bin/sh\necho \"terminate called after throwing an instance of 'Exiv2::Error'\" >&2\necho '  what():  Failed to read input data' >&2\nexit 134\n",
+        );
+
+        let result = retrying_on_text_file_busy(|| {
+            run_art_cli_with_metadata_fallback(script.to_str().unwrap(), "", &raw_path, &export_path, ArtCliMode::ApplySidecar, |_| {}, no_cancel())
+        })
+        .await;
+        let err = result.unwrap_err();
+        assert!(err.starts_with(EXIV2_CRASH_ERROR_PREFIX), "{err}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn run_art_cli_with_metadata_fallback_does_not_attempt_a_fallback_for_a_non_crash_failure() {
+        let dir = tmp_dir("fallback-not-applicable");
+        let raw_path = dir.join("photo.DNG");
+        fs::write(&raw_path, b"raw").unwrap();
+        // No sidecar written at all - if the fallback were (incorrectly)
+        // attempted here, `paths::find_processing_sidecar` would find
+        // nothing and it would still fall through to the original error, so
+        // this also exercises that defensive path.
+        let export_path = dir.join("out.jpg");
+        let script = write_stub_script(&dir, "art-cli-deterministic-fail.sh", "#!/bin/sh\necho 'some other error' >&2\nexit 1\n");
+
+        let result = retrying_on_text_file_busy(|| {
+            run_art_cli_with_metadata_fallback(script.to_str().unwrap(), "", &raw_path, &export_path, ArtCliMode::ApplySidecar, |_| {}, no_cancel())
+        })
+        .await;
+        assert_eq!(result, Err("some other error".to_string()));
         let _ = fs::remove_dir_all(&dir);
     }
 }

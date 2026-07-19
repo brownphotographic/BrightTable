@@ -51,6 +51,12 @@ export interface ApplicationsConfig {
   // "Headless RAW Roundtrip" action over to the ART CLI round trip - see
   // lib/applications.tsx's derived `artRoundTripEnabled`.
   artCliPath: string;
+  // Path to the `exiftool` binary - same shape as artCliPath. Required by
+  // the Export to Folder/Share to Flickr dialogs' "Keep all metadata"/
+  // "Remove GPS only" options (see lib/applications.tsx's derived
+  // `exiftoolConfigured`); "Strip all metadata" needs no external tool for a
+  // JPEG-format rendition.
+  exiftoolPath: string;
 }
 
 export type FolderDepth = 'flat' | 'yearMonth';
@@ -768,9 +774,22 @@ export interface ExportAssetTarget {
   originalPath: string | null;
   fileName: string;
   fileExtension: string;
+  // Computed by isRawAsset() (lib/filters.ts) rather than re-derived
+  // backend-side from fileExtension alone - only the frontend knows about a
+  // per-asset isRawOverride exception. `format: 'jpeg'` + `isRaw: true`
+  // routes through a headless ART-cli conversion instead of Immich's preview
+  // rendition.
+  isRaw: boolean;
 }
 
 export type ExportFormat = 'jpeg' | 'original';
+
+// Keep: preserve all metadata (copying it onto a JPEG rendition, which has
+// none of its own until this is applied). RemoveGps: keep everything except
+// GPS/location tags. StripAll: no metadata at all. Both apply to `original`
+// format too - see export_queue.rs's `apply_metadata_policy` for exactly
+// which combinations are no-ops.
+export type MetadataPolicy = 'keep' | 'removeGps' | 'stripAll';
 
 export interface FolderExportOptions {
   destination: string;
@@ -781,6 +800,7 @@ export interface FolderExportOptions {
   sizePx: number | null;
   // 1-100, ignored for `original` format.
   quality: number;
+  metadata: MetadataPolicy;
 }
 
 // Enqueues one ExportJob per asset onto the backend's background
@@ -800,6 +820,7 @@ export interface FlickrExportOptions {
   format: ExportFormat;
   sizePx: number | null;
   quality: number;
+  metadata: MetadataPolicy;
 }
 
 export function exportToFlickr(assets: ExportAssetTarget[], options: FlickrExportOptions): Promise<number[]> {
