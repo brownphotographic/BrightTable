@@ -4,8 +4,8 @@ import { Heart, RejectIcon, Star } from './MetadataRows';
 // Floating action bar shown above the grid whenever the selection is
 // non-empty - ported from the design prototype's selection bar (§1.2/§6 in
 // requirements.md), scoped to only the actions that are real today: Stack,
-// Smart Stack, Favorite, Paste Image Processing/Metadata, and Move to Trash.
-// Add to Album is left out since Albums doesn't exist in the real app yet.
+// Smart Stack, Favorite, Add/Remove to/from Album, Paste Image Processing/
+// Metadata, and Move to Trash.
 // No Copy buttons here - Copy Image Processing/Metadata is inherently
 // single-source, so it lives in the context menu/Viewer toolbar instead.
 export default function SelectionBar({
@@ -29,12 +29,16 @@ export default function SelectionBar({
   rawSelectedCount,
   onBatchArtRoundTrip,
   rawEditorBusy,
-  rawEditorProgress,
+  onAddToAlbum,
+  onRemoveFromAlbum,
 }: {
   count: number;
   onCancel: () => void;
-  onStack: () => void;
-  onSmartStack: () => void;
+  // Stack/Smart Stack aren't a meaningful concept everywhere this bar is
+  // reused (e.g. AlbumsBrowser's album-detail grid) - omit to hide both
+  // buttons entirely rather than just disabling them.
+  onStack?: () => void;
+  onSmartStack?: () => void;
   onFavorite: () => void;
   allFavorited: boolean;
   onRate: (rating: number) => void;
@@ -49,26 +53,37 @@ export default function SelectionBar({
   // assets.
   canOpenInRawEditor: boolean;
   onOpenInRawEditor: () => void;
-  onOpenInExternalEditor: () => void;
+  // Omit to hide "Open in Ext. Editor" entirely - same reasoning as
+  // onStack/onSmartStack above.
+  onOpenInExternalEditor?: () => void;
   // Something's been Copy Image Processing'd AND at least one selected asset
   // is RAW - a non-RAW member of the selection is just silently skipped as a
-  // paste target, not a reason to disable the whole button.
-  canPasteImageProcessing: boolean;
-  onPasteImageProcessing: () => void;
-  canPasteMetadata: boolean;
-  onPasteMetadata: () => void;
+  // paste target, not a reason to disable the whole button. Omitting
+  // onPasteImageProcessing/onPasteMetadata hides those buttons entirely.
+  canPasteImageProcessing?: boolean;
+  onPasteImageProcessing?: () => void;
+  canPasteMetadata?: boolean;
+  onPasteMetadata?: () => void;
   // How many of the current selection are RAW - "Headless RAW Roundtrip"
   // (only shown when artRoundTripEnabled, gated by the caller) needs 1+ RAW
   // assets selected, whether that's a single photo or a batch.
   rawSelectedCount?: number;
   onBatchArtRoundTrip?: () => void;
-  // True while the ART CLI round trip (Variant 1) is running for the
-  // selected asset - disables/relabels "Tweak RAW Roundtrip" so a second
-  // click can't overlap a second export, same as Viewer.tsx's own artBusy.
+  // True while ART itself is open for the selected asset (and briefly after,
+  // while the export is resolved and handed off to the background) -
+  // disables/relabels "Tweak RAW Roundtrip" so a second click can't overlap
+  // a second launch for the *same* asset, same as Viewer.tsx's own artBusy.
+  // Not held for the ART-cli conversion itself - see Viewer.tsx's artBusy
+  // doc comment.
   rawEditorBusy?: boolean;
-  // Live 0-100 percentage while rawEditorBusy - see Viewer.tsx's identical
-  // artProgress for where this comes from.
-  rawEditorProgress?: number | null;
+  // Opens AddToAlbumDialog for the current selection - shown in Photos/
+  // Folders (add to any album) and AlbumsBrowser's album detail (add to a
+  // *different* album than the one currently open).
+  onAddToAlbum?: () => void;
+  // Only ever provided by AlbumsBrowser's album detail view - removes the
+  // selection from the album currently open (the assets themselves aren't
+  // touched, unlike onDelete's Move to Trash).
+  onRemoveFromAlbum?: () => void;
 }) {
   const canStack = count >= 2;
   // Both editors are a single-file launch (see Viewer.tsx's handleLaunch) -
@@ -121,17 +136,27 @@ export default function SelectionBar({
         <Heart filled={allFavorited} size={13} />
         Favorite
       </BarButton>
-      <BarButton onClick={onStack} disabled={!canStack}>
-        <StackIcon />
-        Stack {count} Photos
-      </BarButton>
-      <BarButton onClick={onSmartStack} disabled={!canStack}>
-        <StackIcon />
-        Smart Stack
-      </BarButton>
+      {onAddToAlbum && (
+        <BarButton onClick={onAddToAlbum} title="Add this selection to an album">
+          <AlbumIcon />
+          Add to Album
+        </BarButton>
+      )}
+      {onStack && (
+        <BarButton onClick={onStack} disabled={!canStack}>
+          <StackIcon />
+          Stack {count} Photos
+        </BarButton>
+      )}
+      {onSmartStack && (
+        <BarButton onClick={onSmartStack} disabled={!canStack}>
+          <StackIcon />
+          Smart Stack
+        </BarButton>
+      )}
       {singleSelected && canOpenInRawEditor && (
         <BarButton onClick={onOpenInRawEditor} disabled={rawEditorBusy} title={rawEditorBusy ? 'Waiting on ART…' : undefined}>
-          {rawEditorBusy ? (rawEditorProgress != null ? `Working… ${rawEditorProgress}%` : 'Working…') : 'Tweak RAW Roundtrip'}
+          {rawEditorBusy ? 'Working…' : 'Tweak RAW Roundtrip'}
         </BarButton>
       )}
       {onBatchArtRoundTrip && (
@@ -143,17 +168,32 @@ export default function SelectionBar({
           Headless RAW Roundtrip
         </BarButton>
       )}
-      <BarButton onClick={onOpenInExternalEditor} disabled={!singleSelected} title={singleSelected ? undefined : 'Select a single photo to open it in an editor'}>
-        Open in Ext. Editor
-      </BarButton>
+      {onOpenInExternalEditor && (
+        <BarButton onClick={onOpenInExternalEditor} disabled={!singleSelected} title={singleSelected ? undefined : 'Select a single photo to open it in an editor'}>
+          Open in Ext. Editor
+        </BarButton>
+      )}
+      {(onPasteImageProcessing || onPasteMetadata) && (
+        <>
+          <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)' }} />
+          {onPasteImageProcessing && (
+            <BarButton onClick={onPasteImageProcessing} disabled={!canPasteImageProcessing} title="Paste image processing onto the RAW photos in this selection">
+              Paste Image Processing
+            </BarButton>
+          )}
+          {onPasteMetadata && (
+            <BarButton onClick={onPasteMetadata} disabled={!canPasteMetadata} title="Paste rating/favorite/description onto this selection">
+              Paste Metadata
+            </BarButton>
+          )}
+        </>
+      )}
       <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)' }} />
-      <BarButton onClick={onPasteImageProcessing} disabled={!canPasteImageProcessing} title="Paste image processing onto the RAW photos in this selection">
-        Paste Image Processing
-      </BarButton>
-      <BarButton onClick={onPasteMetadata} disabled={!canPasteMetadata} title="Paste rating/favorite/description onto this selection">
-        Paste Metadata
-      </BarButton>
-      <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)' }} />
+      {onRemoveFromAlbum && (
+        <BarButton onClick={onRemoveFromAlbum} color="#ff8080">
+          Remove from Album
+        </BarButton>
+      )}
       <BarButton onClick={onDelete} color="#ff8080">
         Move to Trash
       </BarButton>
@@ -281,6 +321,16 @@ function SyncIcon() {
           transform: 'rotate(140deg)',
         }}
       />
+    </div>
+  );
+}
+
+function AlbumIcon() {
+  return (
+    <div style={{ position: 'relative', width: 13, height: 12, flexShrink: 0 }}>
+      <div style={{ position: 'absolute', left: 0, top: 0, width: 13, height: 12, border: '1.6px solid currentColor', borderRadius: 3 }} />
+      <div style={{ position: 'absolute', left: 3, top: 5.2, width: 7, height: 1.6, background: 'currentColor', borderRadius: 1 }} />
+      <div style={{ position: 'absolute', left: 5.7, top: 2.5, width: 1.6, height: 7, background: 'currentColor', borderRadius: 1 }} />
     </div>
   );
 }

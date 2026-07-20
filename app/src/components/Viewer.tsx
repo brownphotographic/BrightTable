@@ -20,8 +20,6 @@ import { overlayRawOverrides, useRawOverrides } from '../lib/rawOverrides';
 import { isRawAsset } from '../lib/filters';
 import { useApplications } from '../lib/applications';
 import { useClipboard } from '../lib/clipboard';
-import { ingestRoundTripExport, type RoundTripIngestOutcome } from '../lib/roundTrip';
-import { useArtRoundTripProgress } from '../lib/useArtRoundTripProgress';
 import { useNoSidecarChoice } from '../lib/useNoSidecarChoice';
 import { useProcessingQueue } from '../lib/processingQueue';
 import { useProcessingJobReconciliation } from '../lib/useProcessingJobReconciliation';
@@ -77,7 +75,7 @@ export default function Viewer({
   onUnstack,
   onSetStackPick,
   onOpenApplicationsPreferences,
-  onRoundTripExported,
+  onArtRoundTripQueued,
   onProcessingSidecarCreated,
 }: {
   asset: AssetSummary;
@@ -97,18 +95,19 @@ export default function Viewer({
   // Opens Preferences straight to the Applications tab - used when the user
   // clicks an editor button with no app chosen for that role yet.
   onOpenApplicationsPreferences?: () => void;
-  // Fired once the ART CLI round trip (Variant 1) actually produced and
-  // ingested a new asset - the parent (PhotosBrowser/FoldersBrowser) applies
-  // the outcome to its own assetCache/stackByAssetId, the same way it
-  // already does for the generic round trip's 'round-trip-file-detected'
-  // listener.
-  onRoundTripExported?: (original: AssetSummary, outcome: RoundTripIngestOutcome) => void;
+  // Fired once the ART CLI round trip (Variant 1) has handed its export off
+  // to the background ArtQueue (see launch_art_round_trip's doc comment) -
+  // the parent (PhotosBrowser/FoldersBrowser) tracks jobId via its own
+  // trackArtJobs the same way it already does for a Variant 2 (Headless RAW
+  // Roundtrip) job, applying the outcome to its assetCache/stackByAssetId
+  // once the job actually settles rather than while this call is in flight.
+  onArtRoundTripQueued?: (jobId: number) => void;
   // Fired once a Paste Image Processing job started from this viewer
   // actually settles as `done` - lets the parent (PhotosBrowser/
   // FoldersBrowser) mark the target as having a sidecar in its own
-  // processingSidecarAssets cache, the same way onRoundTripExported does for
-  // a round trip. Without this, hasProcessingSidecar stays stale on the
-  // grid behind the viewer until the next full bucket/folder reload.
+  // processingSidecarAssets cache, the same way a round trip does. Without
+  // this, hasProcessingSidecar stays stale on the grid behind the viewer
+  // until the next full bucket/folder reload.
   onProcessingSidecarCreated?: (assetId: string) => void;
 }) {
   const [zoom, setZoom] = useState(100);
@@ -131,15 +130,14 @@ export default function Viewer({
   const [stackMembers, setStackMembers] = useState<AssetSummary[] | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const { resolve: resolveArtRoundTripOutcome, dialog: noSidecarDialog } = useNoSidecarChoice();
-  // True while the ART CLI round trip (Variant 1) is open in ART and/or
-  // running ART-cli's export - disables/relabels the Tweak RAW Roundtrip
-  // button so a second click can't overlap a second export for the same
-  // asset.
+  // True while ART itself is open for this asset (and briefly after, while
+  // the export path/sidecar are resolved) - disables/relabels the Tweak RAW
+  // Roundtrip button so a second click can't overlap a second launch for the
+  // *same* asset. Not held for the ART-cli conversion itself - that runs in
+  // the background once kicked off (see launch_art_round_trip's doc
+  // comment), which is what lets this button be used again for a *different*
+  // asset right away instead of waiting on the whole export to finish.
   const [artBusy, setArtBusy] = useState(false);
-  // Live 0-100 percentage while artBusy, parsed backend-side from ART-cli's
-  // own --progress output - null until the first progress line arrives (or
-  // whenever artBusy is false).
-  const artProgress = useArtRoundTripProgress(artBusy);
   const { applications, artRoundTripEnabled } = useApplications();
   const { copiedProcessingSource, setCopiedProcessingSource, copiedMetadata, setCopiedMetadata } = useClipboard();
   // Clicking a non-pick stack member in the info panel "peeks" at it in the
@@ -215,10 +213,11 @@ export default function Viewer({
   //
   // When ART round trip is configured (artRoundTripEnabled), the rawEditor
   // role becomes "Tweak RAW Roundtrip" and branches to the ART CLI flow
-  // instead: awaits ART's own process exit (launchArtRoundTrip), then ingests
-  // the deterministic export it produced and hands the outcome to the parent
-  // via onRoundTripExported - no dependency on round_trip.rs's passive file
-  // watcher for this path.
+  // instead: awaits ART's own process exit (launchArtRoundTrip), then hands
+  // the resulting jobId to the parent via onArtRoundTripQueued as soon as the
+  // export is running in the background, rather than waiting for it to
+  // finish - no dependency on round_trip.rs's passive file watcher for this
+  // path.
   const handleLaunch = useCallback(
     async (role: 'rawEditor' | 'externalEditor') => {
       const choice = applications[role];
@@ -231,16 +230,8 @@ export default function Viewer({
         setArtBusy(true);
         try {
           const rtOutcome = await launchArtRoundTrip(shown.id, shown.originalPath, shown.fileName, shown.fileExtension, choice);
-          const exportFileName = await resolveArtRoundTripOutcome(rtOutcome);
-          const outcome = await ingestRoundTripExport(shown, exportFileName);
-          if (outcome) {
-            onRoundTripExported?.(shown, outcome);
-          } else {
-            // The export itself succeeded (ART-cli already wrote the file) -
-            // this only means Immich hasn't indexed it yet within the
-            // polling budget, not that anything actually failed.
-            throw new Error(`Exported "${exportFileName}", but it hasn't shown up in Immich yet — try Refresh Timeline in a moment.`);
-          }
+          const jobId = await resolveArtRoundTripOutcome(rtOutcome);
+          onArtRoundTripQueued?.(jobId);
         } catch (e) {
           setLaunchError(String(e));
         } finally {
@@ -254,7 +245,7 @@ export default function Viewer({
         setLaunchError(String(e));
       }
     },
-    [applications, artRoundTripEnabled, shown, onOpenApplicationsPreferences, onRoundTripExported, resolveArtRoundTripOutcome],
+    [applications, artRoundTripEnabled, shown, onOpenApplicationsPreferences, onArtRoundTripQueued, resolveArtRoundTripOutcome],
   );
 
   // Same clipboard, same fields, as the grid's Copy/Paste Image Processing/
@@ -280,7 +271,7 @@ export default function Viewer({
     handleEdit(shown.id, copiedMetadata).catch(() => {});
   }, [copiedMetadata, handleEdit, shown.id]);
 
-  const { jobs: processingJobs } = useProcessingQueue();
+  const { jobs: processingJobs, refresh: refreshProcessingQueue } = useProcessingQueue();
   const reconcileProcessingJob = useCallback(
     (job: ProcessingJob) => {
       if (job.status === 'failed') {
@@ -298,7 +289,11 @@ export default function Viewer({
     const targets: MetadataEditTarget[] = [{ id: shown.id, originalPath: shown.originalPath }];
     const jobIds = await pasteImageProcessing(copiedProcessingSource.originalPath, targets);
     trackProcessingJobs(jobIds);
-  }, [copiedProcessingSource, shown.id, shown.originalPath, trackProcessingJobs]);
+    // See processingQueue.tsx's doc comment on `refresh` - without this, a
+    // fast paste can complete entirely between two scheduled polls, leaving
+    // the TitleBar pill never shown at all.
+    refreshProcessingQueue();
+  }, [copiedProcessingSource, shown.id, shown.originalPath, trackProcessingJobs, refreshProcessingQueue]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -478,7 +473,7 @@ export default function Viewer({
             title={artBusy ? 'Waiting on ART…' : undefined}
             style={{ ...headerButtonStyle(false), opacity: artBusy ? 0.5 : 1 }}
           >
-            {artBusy ? (artProgress != null ? `Working… ${artProgress}%` : 'Working…') : 'Tweak RAW Roundtrip'}
+            {artBusy ? 'Working…' : 'Tweak RAW Roundtrip'}
           </div>
         )}
         <div onClick={() => handleLaunch('externalEditor')} style={headerButtonStyle(false)}>

@@ -134,31 +134,44 @@ impl ProcessingKind {
 }
 
 /// Resolves whichever processing sidecar actually exists on disk for an
-/// asset, and which naming form it used. `.arp` checked first (ART is the
-/// confirmed real workflow, see `xmp_sidecar_path_replaced`'s doc comment
-/// and the Smart Stack Version mode's own doc comment), append-form before
-/// replaced-form for each kind, then `.pp3`. If more than one candidate
-/// exists (e.g. the user tried both tools, or both naming forms are present)
-/// the first match in that order wins - a known v1 simplification, not
-/// disambiguated further.
+/// asset, and which naming form it used. If more than one candidate exists
+/// (e.g. the user tried both tools, or both naming forms are present for the
+/// same tool) the most recently *modified* one wins, falling back to `.arp`
+/// before `.pp3` and append-form before replaced-form (this function's
+/// original, mtime-blind priority order) only to break an exact mtime tie.
+///
+/// Picking by mtime instead of a fixed priority is deliberate, not
+/// cosmetic: `sidecar_path_with_form` already means Paste Image Processing
+/// can write a destination sidecar in a *different* form than a later
+/// direct Tweak from that same ART/RawTherapee install uses (e.g. a paste
+/// lands `IMG_1234.CR2.arp` - append form - and a later Tweak on that same
+/// original writes `IMG_1234.arp` - replaced form, if that's what this
+/// user's ART build actually does). With the old fixed-priority order,
+/// append-form `.arp` always won regardless of which one was actually
+/// written most recently, so once both forms existed for one original, Copy
+/// Image Processing would silently and permanently keep reading the older
+/// one - found live: "Copy Image Processing" pulling a stale prior edit
+/// after a fresh Tweak RAW Roundtrip, with no way to fix it short of
+/// deleting the stale file by hand.
 pub fn find_processing_sidecar(original: &Path) -> Option<(PathBuf, ProcessingKind, SidecarForm)> {
-    let arp_append = arp_sidecar_path(original);
-    if arp_append.exists() {
-        return Some((arp_append, ProcessingKind::Arp, SidecarForm::Append));
-    }
-    let arp_replaced = arp_sidecar_path_replaced(original);
-    if arp_replaced.exists() {
-        return Some((arp_replaced, ProcessingKind::Arp, SidecarForm::Replaced));
-    }
-    let pp3_append = pp3_sidecar_path(original);
-    if pp3_append.exists() {
-        return Some((pp3_append, ProcessingKind::Pp3, SidecarForm::Append));
-    }
-    let pp3_replaced = pp3_sidecar_path_replaced(original);
-    if pp3_replaced.exists() {
-        return Some((pp3_replaced, ProcessingKind::Pp3, SidecarForm::Replaced));
-    }
-    None
+    let candidates = [
+        (arp_sidecar_path(original), ProcessingKind::Arp, SidecarForm::Append),
+        (arp_sidecar_path_replaced(original), ProcessingKind::Arp, SidecarForm::Replaced),
+        (pp3_sidecar_path(original), ProcessingKind::Pp3, SidecarForm::Append),
+        (pp3_sidecar_path_replaced(original), ProcessingKind::Pp3, SidecarForm::Replaced),
+    ];
+    candidates
+        .into_iter()
+        .enumerate()
+        .filter_map(|(priority, (path, kind, form))| {
+            let modified = fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+            // Reverse(priority) so that on an exact mtime tie, the lowest
+            // original-priority index (Arp/Append first) wins - same
+            // tie-break the old fixed order always gave.
+            Some((modified, std::cmp::Reverse(priority), path, kind, form))
+        })
+        .max_by_key(|(modified, rev_priority, ..)| (*modified, *rev_priority))
+        .map(|(_, _, path, kind, form)| (path, kind, form))
 }
 
 /// Which `.xmp` path a write should target: whichever naming convention
@@ -495,6 +508,29 @@ mod tests {
             find_processing_sidecar(&original),
             Some((arp_sidecar_path_replaced(&original), ProcessingKind::Arp, SidecarForm::Replaced))
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_processing_sidecar_prefers_the_more_recently_modified_form() {
+        let dir = std::env::temp_dir().join(format!("immature-test-proc-recency-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        // Simulates a paste landing an append-form `.arp` (old, fixed
+        // priority order would always prefer this one), followed by a real
+        // Tweak from this install writing the replaced-extension form -
+        // that later write should win even though append-form still ranks
+        // higher in the tie-break order.
+        let original = dir.join("img.CR2");
+        let older = arp_sidecar_path(&original);
+        let newer = arp_sidecar_path_replaced(&original);
+        fs::write(&older, "old\n").unwrap();
+        let past = std::time::SystemTime::now() - std::time::Duration::from_secs(120);
+        fs::File::open(&older).unwrap().set_modified(past).unwrap();
+        fs::write(&newer, "new\n").unwrap();
+
+        assert_eq!(find_processing_sidecar(&original), Some((newer, ProcessingKind::Arp, SidecarForm::Replaced)));
 
         let _ = fs::remove_dir_all(&dir);
     }

@@ -182,6 +182,26 @@ export interface StackInfo {
   assets: AssetSummary[];
 }
 
+// GET /albums (list) - just enough to render a cover + count, not every
+// album's full asset array (see AlbumDetail below for that).
+export interface AlbumSummary {
+  id: string;
+  albumName: string;
+  description: string;
+  albumThumbnailAssetId: string | null;
+  assetCount: number;
+}
+
+// GET /albums/{id} (and the create response) - the frontend browses an
+// album's contents with this, unlike the list-only AlbumSummary above.
+export interface AlbumDetail {
+  id: string;
+  albumName: string;
+  description: string;
+  albumThumbnailAssetId: string | null;
+  assets: AssetSummary[];
+}
+
 // Payload of the 'round-trip-file-detected' Tauri event (see round_trip.rs)
 // - emitted whenever a new, non-junk file settles into a folder ImmAture is
 // watching for round-trip output. `candidates` lists every asset currently
@@ -410,6 +430,34 @@ export function deleteStack(stackId: string): Promise<void> {
   return invoke('delete_stack', { stackId });
 }
 
+export function listAlbums(): Promise<AlbumSummary[]> {
+  return invoke('list_albums');
+}
+
+export function getAlbum(albumId: string): Promise<AlbumDetail> {
+  return invoke('get_album', { albumId });
+}
+
+export function createAlbum(name: string, assetIds: string[] = []): Promise<AlbumDetail> {
+  return invoke('create_album', { name, assetIds });
+}
+
+export function renameAlbum(albumId: string, name: string): Promise<void> {
+  return invoke('rename_album', { albumId, name });
+}
+
+export function deleteAlbum(albumId: string): Promise<void> {
+  return invoke('delete_album', { albumId });
+}
+
+export function addAssetsToAlbum(albumId: string, assetIds: string[]): Promise<void> {
+  return invoke('add_assets_to_album', { albumId, assetIds });
+}
+
+export function removeAssetsFromAlbum(albumId: string, assetIds: string[]): Promise<void> {
+  return invoke('remove_assets_from_album', { albumId, assetIds });
+}
+
 export interface UnsyncedMetadata {
   rating?: number;
   description?: string;
@@ -479,21 +527,24 @@ export function clearCompletedProcessingJobs(): Promise<void> {
 // Variant 1 of the ART CLI round trip (see the feature plan): opens ART
 // itself (launchArtRoundTrip awaits ART's own process exit as the "done
 // editing" signal - a long-running invoke, not fire-and-forget like
-// launchEditor), then runs ART-cli to produce the export deterministically
-// and returns its generated filename. Only reachable when
+// launchEditor), then - once a sidecar confirms there's something to export -
+// hands the actual ART-cli run off to the backend's ArtQueue and returns
+// immediately, rather than waiting for it to finish too. Only reachable when
 // applications.artCliPath is non-empty (see useApplications' derived
 // artRoundTripEnabled) - the generic (non-ART) "Tweak RAW Roundtrip" flow
 // keeps calling launchEditor unchanged. `id` is only used backend-side to
 // label/thumbnail this export's row in the shared ArtQueue board (see
 // art_queue.rs's `start_manual`), so it shows up in ActivityIndicator/
 // ActivityPanel alongside Headless RAW Roundtrip jobs.
-// Mirrors commands.rs's ArtRoundTripOutcome: either the export actually
-// happened, or ART closed with no `.arp`/`.pp3` ever written (no edit made or
-// saved) - in which case the caller is expected to show a choice ("use ART's
-// default profile anyway" vs. "cancel") via finishArtRoundTripWithDefaultProfile/
-// cancelArtRoundTrip rather than treating this as a hard failure.
+// Mirrors commands.rs's ArtRoundTripOutcome: either the export is now running
+// in the background under jobId (track it the same way a Headless RAW
+// Roundtrip job is - see useArtJobReconciliation), or ART closed with no
+// `.arp`/`.pp3` ever written (no edit made or saved) - in which case the
+// caller is expected to show a choice ("use ART's default profile anyway" vs.
+// "cancel") via finishArtRoundTripWithDefaultProfile/cancelArtRoundTrip
+// rather than treating this as a hard failure.
 export type ArtRoundTripOutcome =
-  | { kind: 'exported'; exportFileName: string }
+  | { kind: 'processing'; jobId: number }
   | { kind: 'noSidecar'; jobId: number; rawPath: string; exportPath: string };
 
 export function launchArtRoundTrip(
@@ -506,10 +557,13 @@ export function launchArtRoundTrip(
   return invoke('launch_art_round_trip', { id, originalPath, fileName, fileExtension, rawEditor });
 }
 
-// Second half of the no-sidecar choice - runs ART-cli against the
-// already-resolved rawPath/exportPath (from a `noSidecar` outcome) using
-// ART's default profile, the user's alternative to cancelling.
-export function finishArtRoundTripWithDefaultProfile(jobId: number, rawPath: string, exportPath: string): Promise<string> {
+// Second half of the no-sidecar choice - kicks off ART-cli in the background
+// against the already-resolved rawPath/exportPath (from a `noSidecar`
+// outcome) using ART's default profile, the user's alternative to
+// cancelling. Returns immediately, same as launchArtRoundTrip's own
+// background export - the caller already has jobId from the `noSidecar`
+// outcome, so it tracks completion via useArtJobReconciliation the same way.
+export function finishArtRoundTripWithDefaultProfile(jobId: number, rawPath: string, exportPath: string): Promise<void> {
   return invoke('finish_art_round_trip_with_default_profile', { jobId, rawPath, exportPath });
 }
 

@@ -327,3 +327,67 @@ impl From<RawLibraryResponse> for LibraryInfo {
         Self { id: r.id, import_paths: r.import_paths }
     }
 }
+
+/// `GET /albums` (list) and `GET /albums/{id}` (detail) both return Immich's
+/// full `AlbumResponseDto` - `assets` is always present (even on the list
+/// call), but `AlbumSummary::from` below only keeps `asset_count` for the
+/// list view rather than carrying every album's full asset array over to the
+/// frontend just to show a cover + count.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawAlbumResponse {
+    pub id: String,
+    #[serde(rename = "albumName")]
+    pub album_name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(rename = "albumThumbnailAssetId", default)]
+    pub album_thumbnail_asset_id: Option<String>,
+    #[serde(rename = "assetCount", default)]
+    pub asset_count: i64,
+    #[serde(default)]
+    pub assets: Vec<RawSearchAsset>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlbumSummary {
+    pub id: String,
+    pub album_name: String,
+    pub description: String,
+    pub album_thumbnail_asset_id: Option<String>,
+    pub asset_count: i64,
+}
+
+impl From<&RawAlbumResponse> for AlbumSummary {
+    fn from(r: &RawAlbumResponse) -> Self {
+        Self {
+            id: r.id.clone(),
+            album_name: r.album_name.clone(),
+            description: r.description.clone(),
+            album_thumbnail_asset_id: r.album_thumbnail_asset_id.clone(),
+            asset_count: r.asset_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlbumDetail {
+    pub id: String,
+    pub album_name: String,
+    pub description: String,
+    pub album_thumbnail_asset_id: Option<String>,
+    pub assets: Vec<AssetSummary>,
+}
+
+impl From<RawAlbumResponse> for AlbumDetail {
+    fn from(r: RawAlbumResponse) -> Self {
+        Self {
+            id: r.id,
+            album_name: r.album_name,
+            description: r.description,
+            album_thumbnail_asset_id: r.album_thumbnail_asset_id,
+            assets: r.assets.into_iter().map(Into::into).collect(),
+        }
+    }
+}

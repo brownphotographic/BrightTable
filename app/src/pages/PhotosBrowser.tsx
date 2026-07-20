@@ -32,12 +32,14 @@ import {
 import Viewer from '../components/Viewer';
 import AssetTile, { type ClickMods } from '../components/AssetTile';
 import SelectionBar from '../components/SelectionBar';
+import AddToAlbumDialog from '../components/AddToAlbumDialog';
 import StackBand from '../components/StackBand';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import SmartStackDialog from '../components/SmartStackDialog';
 import ExportToFolderDialog from '../components/ExportToFolderDialog';
 import ExportToFlickrDialog from '../components/ExportToFlickrDialog';
 import MetadataPanel from '../components/MetadataPanel';
+import TimelineRail from '../components/TimelineRail';
 import ConfirmDialog from '../components/ConfirmDialog';
 import NoSidecarDialog from '../components/NoSidecarDialog';
 import InlineWarningBanner from '../components/InlineWarningBanner';
@@ -57,8 +59,7 @@ import { useArtJobReconciliation } from '../lib/useArtJobReconciliation';
 import { useProcessingQueue } from '../lib/processingQueue';
 import { useProcessingJobReconciliation } from '../lib/useProcessingJobReconciliation';
 import { useBucketMemo } from '../lib/bucketMemo';
-import { ingestRoundTripExport, type RoundTripIngestOutcome } from '../lib/roundTrip';
-import { useArtRoundTripProgress } from '../lib/useArtRoundTripProgress';
+import { ingestRoundTripExport, subscribeLateRoundTripOutcome, type RoundTripIngestOutcome } from '../lib/roundTrip';
 import { useNoSidecarChoice } from '../lib/useNoSidecarChoice';
 
 // Snapshots whichever AssetSummary fields a patch is about to touch, so a
@@ -140,6 +141,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   const [smartStackOpen, setSmartStackOpen] = useState(false);
   const [exportFolderAssets, setExportFolderAssets] = useState<AssetSummary[] | null>(null);
   const [exportFlickrAssets, setExportFlickrAssets] = useState<AssetSummary[] | null>(null);
+  const [addToAlbumTargets, setAddToAlbumTargets] = useState<string[] | null>(null);
   // This server version doesn't populate `stack` on /search/metadata or
   // /timeline/bucket at all (confirmed live - it's a newer-server-only
   // optimization), so stack membership is cross-referenced here from a
@@ -408,8 +410,8 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
 
   // Applies an ingestRoundTripExport outcome (lib/roundTrip.ts) to local
   // state - shared by the generic round trip's 'round-trip-file-detected'
-  // listener below and both ART CLI round-trip variants (Viewer.tsx's
-  // onRoundTripExported for Variant 1, reconcileArtJob for Variant 2).
+  // listener below and reconcileArtJob (both ART CLI round-trip variants
+  // funnel through the same ArtQueue job reconciliation now).
   const applyRoundTripOutcome = useCallback(
     (outcome: RoundTripIngestOutcome) => {
       addAssetLocal(outcome.asset, outcome.originalAssetId);
@@ -421,6 +423,17 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           return next;
         });
       }
+      // Tracks the rating/favorite/description copy roundTrip.ts's
+      // finishIngest already enqueued onto the EditQueue - without this, a
+      // real write failure (racing the freshly-created asset, batch
+      // contention, ...) was previously invisible: the enqueue call itself
+      // almost always succeeds, so nothing ever caught the actual failure.
+      // Reuses the exact same rollbackById/reconcileJob machinery a normal
+      // in-place edit does.
+      for (const jobId of outcome.metadataJobIds) {
+        rollbackById.current.set(jobId, { id: outcome.asset.id, prevValues: outcome.metadataPrevValues });
+      }
+      trackJobs(outcome.metadataJobIds);
       // Every round trip (Tweak or Headless) writes ART's own `.arp`
       // develop-settings sidecar back next to the *original* RAW - but
       // processingSidecarAssets is otherwise only ever populated once, the
@@ -430,9 +443,13 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       // live: a Tweak RAW Roundtrip produced a real 12KB `.arp` on disk, but
       // "Copy Image Processing" stayed hidden for that asset for the rest of
       // the session. Re-runs the same one-asset check the bucket effect
-      // does, rather than waiting on a full Refresh Timeline.
-      const original = assetByIdAll.get(outcome.originalAssetId);
-      if (original?.originalPath) {
+      // does, rather than waiting on a full Refresh Timeline. Uses
+      // outcome.original (the caller's own snapshot) rather than
+      // assetByIdAll.get(outcome.originalAssetId) - that lookup silently
+      // no-ops whenever the original's bucket isn't loaded here, which is
+      // routine for the late/background outcome path (see roundTrip.ts).
+      const original = outcome.original;
+      if (original.originalPath) {
         checkSidecarMetadata([
           {
             assetId: original.id,
@@ -457,7 +474,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           .catch(() => {});
       }
     },
-    [addAssetLocal, assetByIdAll],
+    [addAssetLocal, trackJobs],
   );
 
   // Watches for the round-trip file the backend detected (see round_trip.rs)
@@ -488,6 +505,15 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       unlisten.then((fn) => fn());
     };
   }, [assetByIdAll, smartStackSettings.suffix, applyRoundTripOutcome]);
+
+  // Applies a round-trip outcome that only finished after its own foreground
+  // poll budget already gave up (see roundTrip.ts's retryIngestInBackground) -
+  // without this, an export whose Immich indexing was slow enough to miss
+  // the initial ~2-minute window would get correctly stacked server-side by
+  // the background retry, but this page would never learn about it and the
+  // asset would only show up (still unstacked-looking, until the next full
+  // reload) via a manual Refresh Timeline.
+  useEffect(() => subscribeLateRoundTripOutcome(applyRoundTripOutcome), [applyRoundTripOutcome]);
 
   // Dissolves a stack server-side and purges *every* one of its members from
   // the local stackByAssetId cache - not just whichever subset the caller
@@ -706,16 +732,57 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     commitEditMany([...selected], { isFavorite: !allSelectedFavorited }).catch(() => {});
   }, [selected, allSelectedFavorited, commitEditMany]);
 
+  // Shared by every ART CLI round trip job (Variant 1's single "Tweak RAW
+  // Roundtrip" and Variant 2's Headless RAW Roundtrip batch) - a `done` job
+  // ingests its deterministic export (via ingestRoundTripExport)
+  // incrementally rather than waiting for a whole batch to finish; a
+  // `failed` job surfaces its error in the same banner a synchronous
+  // rejection would. Declared before launchEditorForSelection since Variant
+  // 1's own launch now just kicks the export off in the background
+  // (launch_art_round_trip returns as soon as it's running, not once it's
+  // done - see its own doc comment) and relies on this same reconciliation
+  // to pick up the result, instead of awaiting the export inline.
+  const { jobs: artJobs } = useArtQueue();
+  const reconcileArtJob = useCallback(
+    (job: ArtJob) => {
+      if (job.status === 'failed') {
+        setEnqueueError(job.error ?? "Couldn't complete a RAW Roundtrip export.");
+        return;
+      }
+      if (!job.exportFileName) return;
+      const original = assetByIdAll.get(job.assetId);
+      if (!original) return;
+      const exportFileName = job.exportFileName;
+      ingestRoundTripExport(original, exportFileName).then((outcome) => {
+        if (outcome) {
+          applyRoundTripOutcome(outcome);
+        } else {
+          // The export itself succeeded (ART-cli already wrote the file) -
+          // this only means Immich hasn't indexed it yet within the polling
+          // budget, not that the export actually failed.
+          setEnqueueError(
+            `Exported "${exportFileName}", but it hasn't shown up in Immich yet — ImmAture will keep checking in the background and stack it automatically once it does.`,
+          );
+        }
+      });
+    },
+    [assetByIdAll, applyRoundTripOutcome],
+  );
+  const { trackJobs: trackArtJobs } = useArtJobReconciliation(artJobs, reconcileArtJob);
+
   // Launch-only, single-asset - mirrors Viewer.tsx's handleLaunch exactly
   // (same redirect-to-Preferences-when-unconfigured behavior and ART CLI
   // round-trip branch), just sourced from the selection bar's one selected
   // asset instead of the open asset.
   const { applications, artRoundTripEnabled } = useApplications();
-  // True while the ART CLI round trip (Variant 1) is running for the
-  // selection bar's single selected asset - see SelectionBar.tsx's
-  // rawEditorBusy prop.
+  // True while ART itself is open for the selection bar's single selected
+  // asset (and briefly after, while the export path/sidecar are resolved) -
+  // see SelectionBar.tsx's rawEditorBusy prop. Cleared as soon as the
+  // ART-cli export is handed off to the background (or immediately on the
+  // generic editor / noSidecar-cancel paths), not once that export finishes -
+  // trackArtJobs above (not this flag) is what the actual conversion's
+  // completion drives.
   const [artLaunchBusy, setArtLaunchBusy] = useState(false);
-  const artLaunchProgress = useArtRoundTripProgress(artLaunchBusy);
   const { resolve: resolveArtRoundTripOutcome, dialog: noSidecarDialog } = useNoSidecarChoice();
   const launchEditorForSelection = useCallback(
     async (role: 'rawEditor' | 'externalEditor') => {
@@ -730,16 +797,8 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
         setArtLaunchBusy(true);
         try {
           const rtOutcome = await launchArtRoundTrip(asset.id, asset.originalPath, asset.fileName, asset.fileExtension, choice);
-          const exportFileName = await resolveArtRoundTripOutcome(rtOutcome);
-          const outcome = await ingestRoundTripExport(asset, exportFileName);
-          if (outcome) {
-            applyRoundTripOutcome(outcome);
-          } else {
-            // The export itself succeeded (ART-cli already wrote the file) -
-            // this only means Immich hasn't indexed it yet within the
-            // polling budget, not that anything actually failed.
-            throw new Error(`Exported "${exportFileName}", but it hasn't shown up in Immich yet — try Refresh Timeline in a moment.`);
-          }
+          const jobId = await resolveArtRoundTripOutcome(rtOutcome);
+          trackArtJobs([jobId]);
         } finally {
           setArtLaunchBusy(false);
         }
@@ -747,7 +806,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       }
       await launchEditor(asset.originalPath, choice, asset.id, asset.fileName);
     },
-    [selectedAssets, applications, artRoundTripEnabled, onOpenApplicationsPreferences, applyRoundTripOutcome, resolveArtRoundTripOutcome],
+    [selectedAssets, applications, artRoundTripEnabled, onOpenApplicationsPreferences, resolveArtRoundTripOutcome, trackArtJobs],
   );
 
   // Writes each id's sidecar/embedded-discovered rating and/or description
@@ -819,7 +878,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     [copiedProcessingSource, assetByIdAll],
   );
 
-  const { jobs: processingJobs } = useProcessingQueue();
+  const { jobs: processingJobs, refresh: refreshProcessingQueue } = useProcessingQueue();
 
   // Fires once per queued Paste Image Processing job as it settles - a
   // `done` job really did write a fresh `.arp`/`.pp3` to disk (see
@@ -845,15 +904,20 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     }));
     const jobIds = await pasteImageProcessing(copiedProcessingSource.originalPath, targets);
     trackProcessingJobs(jobIds);
-  }, [copiedProcessingSource, pasteProcessingTargets, assetByIdAll, trackProcessingJobs]);
+    // See processingQueue.tsx's doc comment on `refresh` - without this, a
+    // fast batch paste can complete entirely between two scheduled polls,
+    // leaving the TitleBar pill never shown at all.
+    refreshProcessingQueue();
+  }, [copiedProcessingSource, pasteProcessingTargets, assetByIdAll, trackProcessingJobs, refreshProcessingQueue]);
 
   // Headless RAW Roundtrip (ART CLI round trip Variant 2) - fully headless,
   // background-queued export of one or more RAW assets at once. Only
   // reachable when artRoundTripEnabled (see PreferencesApplications.tsx).
   // RAW-filtered here (not left to the backend) for the same reason
   // requestPasteImageProcessing is: the confirm dialog's count should
-  // reflect what's really about to be exported.
-  const { jobs: artJobs } = useArtQueue();
+  // reflect what's really about to be exported. artJobs/reconcileArtJob/
+  // trackArtJobs (shared with Variant 1's own launch above) are declared
+  // earlier, before launchEditorForSelection.
   const [batchArtTargets, setBatchArtTargets] = useState<string[] | null>(null);
   const requestBatchArtRoundTrip = useCallback(
     (ids: string[]) => {
@@ -866,36 +930,6 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     },
     [assetByIdAll],
   );
-
-  // Fires once per queued job as it settles - a `done` job ingests its
-  // deterministic export (same tail as Variant 1/the generic round trip,
-  // via ingestRoundTripExport) incrementally rather than waiting for the
-  // whole batch to finish; a `failed` job surfaces its error in the same
-  // banner a synchronous enqueue rejection would.
-  const reconcileArtJob = useCallback(
-    (job: ArtJob) => {
-      if (job.status === 'failed') {
-        setEnqueueError(job.error ?? "Couldn't complete a Headless RAW Roundtrip export.");
-        return;
-      }
-      if (!job.exportFileName) return;
-      const original = assetByIdAll.get(job.assetId);
-      if (!original) return;
-      const exportFileName = job.exportFileName;
-      ingestRoundTripExport(original, exportFileName).then((outcome) => {
-        if (outcome) {
-          applyRoundTripOutcome(outcome);
-        } else {
-          // The export itself succeeded (ART-cli already wrote the file) -
-          // this only means Immich hasn't indexed it yet within the polling
-          // budget, not that the export actually failed.
-          setEnqueueError(`Exported "${exportFileName}", but it hasn't shown up in Immich yet — try Refresh Timeline in a moment.`);
-        }
-      });
-    },
-    [assetByIdAll, applyRoundTripOutcome],
-  );
-  const { trackJobs: trackArtJobs } = useArtJobReconciliation(artJobs, reconcileArtJob);
 
   const runBatchArtRoundTrip = useCallback(
     async (ids: string[]) => {
@@ -1048,6 +1082,10 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       });
     }
     if (pasteTargetIds.length > 0) {
+      items.push({
+        label: pasteTargetIds.length > 1 ? `Add ${pasteTargetIds.length} Photos to Album…` : 'Add to Album…',
+        onClick: () => setAddToAlbumTargets(pasteTargetIds),
+      });
       const exportAssets = pasteTargetIds.map((id) => assetByIdAll.get(id)).filter((a): a is AssetSummary => !!a);
       items.push({ label: 'Export to Folder…', onClick: () => setExportFolderAssets(exportAssets) });
       items.push({ label: 'Share to Flickr…', onClick: () => setExportFlickrAssets(exportAssets) });
@@ -1422,7 +1460,6 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           onOpenInRawEditor={() => launchEditorForSelection('rawEditor').catch((e) => setEnqueueError(String(e)))}
           onOpenInExternalEditor={() => launchEditorForSelection('externalEditor').catch((e) => setEnqueueError(String(e)))}
           rawEditorBusy={artLaunchBusy}
-          rawEditorProgress={artLaunchProgress}
           canPasteImageProcessing={
             !!copiedProcessingSource &&
             [...selected].some((id) => {
@@ -1442,47 +1479,53 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
               : undefined
           }
           onBatchArtRoundTrip={artRoundTripEnabled ? () => requestBatchArtRoundTrip([...selected]) : undefined}
+          onAddToAlbum={() => setAddToAlbumTargets([...selected])}
         />
       )}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div ref={containerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: '0 24px', ...pendingStyle(isFiltering) }}>
-          <div style={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
-            {virtualizer.getVirtualItems().map((item) => {
-              const bucket = buckets[item.index];
-              return (
-                <div
-                  key={bucket.timeBucket}
-                  ref={virtualizer.measureElement}
-                  data-index={item.index}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    transform: `translateY(${item.start}px)`,
-                    paddingTop: 16,
-                  }}
-                >
-                  <BucketContent
-                    bucket={bucket}
-                    assets={filteredAssetCache[bucket.timeBucket]}
-                    selected={selected}
-                    onToggleSelect={handleThumbClick}
-                    onToggleOne={toggleOne}
-                    onOpen={setOpenId}
-                    onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
-                    thumbSize={thumbSize}
-                    expandedStacks={expandedStacks}
-                    onToggleStackExpand={toggleStackExpand}
-                    onUnstack={unstack}
-                    onSetPick={setStackPickAction}
-                    onRate={(id, rating) => commitEdit(id, { rating })}
-                    resolveAsset={(id) => assetByIdAll.get(id)}
-                  />
-                </div>
-              );
-            })}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
+          <div ref={containerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: '0 76px 0 24px', ...pendingStyle(isFiltering) }}>
+            <div style={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
+              {virtualizer.getVirtualItems().map((item) => {
+                const bucket = buckets[item.index];
+                return (
+                  <div
+                    key={bucket.timeBucket}
+                    ref={virtualizer.measureElement}
+                    data-index={item.index}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${item.start}px)`,
+                      paddingTop: 16,
+                    }}
+                  >
+                    <BucketContent
+                      bucket={bucket}
+                      assets={filteredAssetCache[bucket.timeBucket]}
+                      selected={selected}
+                      onToggleSelect={handleThumbClick}
+                      onToggleOne={toggleOne}
+                      onOpen={setOpenId}
+                      onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
+                      thumbSize={thumbSize}
+                      expandedStacks={expandedStacks}
+                      onToggleStackExpand={toggleStackExpand}
+                      onUnstack={unstack}
+                      onSetPick={setStackPickAction}
+                      onRate={(id, rating) => commitEdit(id, { rating })}
+                      resolveAsset={(id) => assetByIdAll.get(id)}
+                    />
+                  </div>
+                );
+              })}
+            </div>
           </div>
+          {selected.size === 0 && (
+            <TimelineRail buckets={buckets} virtualizer={virtualizer} />
+          )}
         </div>
         {metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
       </div>
@@ -1520,7 +1563,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
               : undefined
           }
           onOpenApplicationsPreferences={onOpenApplicationsPreferences}
-          onRoundTripExported={(_original, outcome) => applyRoundTripOutcome(outcome)}
+          onArtRoundTripQueued={(jobId) => trackArtJobs([jobId])}
           onProcessingSidecarCreated={(id) => setProcessingSidecarAssets((s) => (s.has(id) ? s : new Set(s).add(id)))}
         />
       )}
@@ -1594,6 +1637,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       {exportFlickrAssets && (
         <ExportToFlickrDialog assets={exportFlickrAssets} onClose={() => setExportFlickrAssets(null)} onExported={() => {}} />
       )}
+      {addToAlbumTargets && <AddToAlbumDialog assetIds={addToAlbumTargets} onClose={() => setAddToAlbumTargets(null)} />}
     </div>
   );
 });

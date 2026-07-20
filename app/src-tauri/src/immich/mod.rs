@@ -4,9 +4,9 @@ use std::sync::Mutex;
 
 use crate::config::{AutoResolution, ConnMode, LibraryConfig};
 use models::{
-    ConnectionStatus, LibraryInfo, RawLibraryResponse, RawSearchAsset, RawSearchMetadataResponse,
-    RawStackResponse, RawTimeBucket, RawTimeBucketAssets, ServerVersion, StackInfo, UserInfo,
-    MIN_TESTED_SERVER_VERSION,
+    AlbumDetail, AlbumSummary, ConnectionStatus, LibraryInfo, RawAlbumResponse, RawLibraryResponse,
+    RawSearchAsset, RawSearchMetadataResponse, RawStackResponse, RawTimeBucket,
+    RawTimeBucketAssets, ServerVersion, StackInfo, UserInfo, MIN_TESTED_SERVER_VERSION,
 };
 
 pub struct ImmichClient {
@@ -591,6 +591,140 @@ impl ImmichClient {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
             return Err(format!("Delete stack returned {status}: {text}"));
+        }
+        Ok(())
+    }
+
+    /// GET /albums - every album owned by (or shared with) this account.
+    /// Immich's `AlbumResponseDto` always includes a full `assets` array even
+    /// here, but `AlbumSummary::from` only keeps `asset_count` - a listing
+    /// page has no reason to ship every album's whole asset list to the
+    /// frontend just to render a cover thumbnail + count.
+    pub async fn list_albums(&self) -> Result<Vec<AlbumSummary>, String> {
+        let raw: Vec<RawAlbumResponse> = self.get_json("/albums", &[]).await?;
+        Ok(raw.iter().map(AlbumSummary::from).collect())
+    }
+
+    /// GET /albums/{id} for the album's own name/description/thumbnail, plus
+    /// `POST /search/metadata` (`albumIds: [id]`, `withExif: true`) for its
+    /// assets. Confirmed live against a real Immich 3.0.3 server: unlike
+    /// what Immich's `AlbumResponseDto` schema implies, `GET /albums/{id}`'s
+    /// `assets` field is simply absent from the response on this version -
+    /// not just empty - even with `withoutAssets=false` explicitly passed.
+    /// Same class of "documented field isn't actually populated on this
+    /// server version" surprise as `/search/metadata`'s `stack` field (see
+    /// `list_stacks`'s doc comment) - `/search/metadata`'s own `albumIds`
+    /// filter is confirmed live to return the album's full, correct asset
+    /// list (with real EXIF/rating) instead.
+    pub async fn get_album(&self, album_id: &str) -> Result<AlbumDetail, String> {
+        let raw: RawAlbumResponse = self.get_json(&format!("/albums/{album_id}"), &[]).await?;
+        let mut body = serde_json::Map::new();
+        body.insert("albumIds".into(), serde_json::json!([album_id]));
+        body.insert("withExif".into(), serde_json::json!(true));
+        body.insert("size".into(), serde_json::json!(1000));
+        let assets = self.search_metadata_paginated(body).await?;
+        Ok(AlbumDetail {
+            id: raw.id,
+            album_name: raw.album_name,
+            description: raw.description,
+            album_thumbnail_asset_id: raw.album_thumbnail_asset_id,
+            assets,
+        })
+    }
+
+    /// POST /albums - `asset_ids` may be empty (an album can be created with
+    /// no assets yet, then populated via `add_assets_to_album`). The create
+    /// response has the same missing-`assets`-field quirk as `GET
+    /// /albums/{id}` (see `get_album`'s doc comment) - confirmed live, so
+    /// this re-fetches via `get_album` rather than trusting `raw.assets`
+    /// (always empty) whenever `asset_ids` was non-empty.
+    pub async fn create_album(&self, name: &str, asset_ids: &[String]) -> Result<AlbumDetail, String> {
+        let body = serde_json::json!({ "albumName": name, "assetIds": asset_ids });
+        let raw: RawAlbumResponse = self.post_json("/albums", &body).await?;
+        if asset_ids.is_empty() {
+            return Ok(raw.into());
+        }
+        self.get_album(&raw.id).await
+    }
+
+    /// PATCH /albums/{id} - only renames; description/thumbnail/order aren't
+    /// exposed anywhere in this app yet.
+    pub async fn rename_album(&self, album_id: &str, name: &str) -> Result<(), String> {
+        let body = serde_json::json!({ "albumName": name });
+        let resp = self
+            .http
+            .patch(self.url(&format!("/albums/{album_id}")))
+            .header("x-api-key", &self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Rename album request failed: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("Rename album returned {status}: {text}"));
+        }
+        Ok(())
+    }
+
+    /// DELETE /albums/{id} - deletes the album itself (not its assets, which
+    /// stay in the library untouched).
+    pub async fn delete_album(&self, album_id: &str) -> Result<(), String> {
+        let resp = self
+            .http
+            .delete(self.url(&format!("/albums/{album_id}")))
+            .header("x-api-key", &self.api_key)
+            .send()
+            .await
+            .map_err(|e| format!("Delete album request failed: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("Delete album returned {status}: {text}"));
+        }
+        Ok(())
+    }
+
+    /// PUT /albums/{id}/assets - adds assets to an existing album. Immich
+    /// silently no-ops an id that's already a member (per-id `success: false`
+    /// in the response body, not a request-level error), so the response
+    /// itself isn't inspected here - same "fire and trust" treatment as
+    /// `add_assets_to_album`'s sibling below.
+    pub async fn add_assets_to_album(&self, album_id: &str, asset_ids: &[String]) -> Result<(), String> {
+        let body = serde_json::json!({ "ids": asset_ids });
+        let resp = self
+            .http
+            .put(self.url(&format!("/albums/{album_id}/assets")))
+            .header("x-api-key", &self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Add-to-album request failed: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("Add-to-album returned {status}: {text}"));
+        }
+        Ok(())
+    }
+
+    /// DELETE /albums/{id}/assets - removes assets from the album; the assets
+    /// themselves are untouched (still in the library, just no longer a
+    /// member of this album).
+    pub async fn remove_assets_from_album(&self, album_id: &str, asset_ids: &[String]) -> Result<(), String> {
+        let body = serde_json::json!({ "ids": asset_ids });
+        let resp = self
+            .http
+            .delete(self.url(&format!("/albums/{album_id}/assets")))
+            .header("x-api-key", &self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Remove-from-album request failed: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("Remove-from-album returned {status}: {text}"));
         }
         Ok(())
     }

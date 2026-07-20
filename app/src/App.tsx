@@ -24,6 +24,7 @@ import ConfirmDialog from './components/ConfirmDialog';
 import PhotosBrowser, { type PhotosBrowserHandle } from './pages/PhotosBrowser';
 import FoldersBrowser, { type FoldersBrowserHandle } from './pages/FoldersBrowser';
 import TrashBrowser from './pages/TrashBrowser';
+import AlbumsBrowser from './pages/AlbumsBrowser';
 import { DEFAULT_FILTERS } from './lib/filters';
 
 export default function App() {
@@ -76,6 +77,14 @@ function AppShell() {
   useEffect(() => {
     if (leftTab === 'folders') setFoldersVisited(true);
   }, [leftTab]);
+  // Same lazy-mount-once-then-stay-mounted treatment as Folders, for the same
+  // reason - avoids firing listAlbums before the user has ever asked to see
+  // the Albums tab.
+  const [albumsVisited, setAlbumsVisited] = useState(false);
+  useEffect(() => {
+    if (leftTab === 'albums') setAlbumsVisited(true);
+  }, [leftTab]);
+  const [albumsCount, setAlbumsCount] = useState(0);
   const [photosCount, setPhotosCount] = useState(0);
   // Shared by both PhotosBrowser and FoldersBrowser - bumping it forces
   // whichever is currently mounted to fully remount (clearing its
@@ -161,7 +170,7 @@ function AppShell() {
       />
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0, background: '#242424', position: 'relative' }}>
-        <Sidebar active={leftTab} onSelect={setLeftTab} photosCount={photosCount} trashCount={trashCount} />
+        <Sidebar active={leftTab} onSelect={setLeftTab} photosCount={photosCount} trashCount={trashCount} albumsCount={albumsCount} />
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: '#1c1c1c', position: 'relative' }}>
           {/* Photos and Folders stay mounted (just hidden) once visited, rather
@@ -185,7 +194,16 @@ function AppShell() {
               onOpenApplicationsPreferences={() => openPreferencesTab('applications')}
             />
           </div>
-          {leftTab === 'albums' && <PlaceholderView label="Albums" />}
+          {albumsVisited && (
+            <div style={{ display: leftTab === 'albums' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
+              <AlbumsBrowser
+                metaOpen={metaOpen}
+                onCloseMetadata={() => setMetaOpen(false)}
+                onCount={setAlbumsCount}
+                active={leftTab === 'albums'}
+              />
+            </div>
+          )}
           {leftTab === 'people' && <PlaceholderView label="People" />}
           {foldersVisited && (
             <div style={{ display: leftTab === 'folders' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>

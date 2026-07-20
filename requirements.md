@@ -20,15 +20,16 @@
 
 ### 1.1 Library & navigation
 - 🟡 Left sidebar with Photos, Albums, People, Folders, Trash, plus a connection-status
-  indicator — all real (§7.1–§7.10). Live asset **counts** are real for Photos, Folders,
-  and Trash; Albums/People show no count (they're placeholders, below). The mockup's
-  "Stacks" sidebar tab is gone even there (removed per §5 feedback) and was never part of
-  the real app.
+  indicator — all real (§7.1–§7.10, §7.26). Live asset **counts** are real for Photos,
+  Folders, Trash, and now **Albums** (album count, §7.26); People still shows no count
+  (still a placeholder, below). The mockup's "Stacks" sidebar tab is gone even there
+  (removed per §5 feedback) and was never part of the real app.
 - ✅ **Photos** timeline grouped by day, with date / place / count headers, newest-first (§7.3).
 - ✅ **Folders** view: the real server-side folder tree (Immich's `/view/folder*`
   endpoints, same as Immich's own web UI) with its own thumbnail grid (§7.10).
-- ⬜ Albums and People are pure placeholders in the real app (no fake grid data like the
-  prototype shows — just a "not built yet" message). Prototype only.
+- ✅ **Albums**: real Immich albums, replacing the old placeholder (§7.26) — list/create/
+  rename/delete an album, browse its assets, add/remove assets. People is still a pure
+  placeholder (no fake grid data like the prototype shows — just a "not built yet" message).
 - 🟡 Menu bar (File / Edit / View / Help) is real, but only some items are wired: Select
   All / Deselect All, Refresh Timeline, Preferences, Quit, Stack Selected (§7.13), Smart
   Stack… (§7.14), and the Filters dropdown (§7.11) are real; Upload…, Print…, Recent
@@ -43,9 +44,11 @@
   click target now, not just a keyboard shortcut), Smart Stack, Stack N Photos, and Move to
   Trash. The bottom status bar's redundant text links for the same two actions were removed
   once the bar covered them (§7.17). A right-click **context menu** (**Stack N Photos**,
-  **Smart Stack N Photos**, **Unstack** — §7.13) remains for per-tile access. Paste Settings
-  and Add to Album from the prototype's bar are deliberately left out — no Copy/Paste Image
-  Processing, Copy/Paste Metadata, or Albums feature exists in the real app yet (§1.5, §7.15).
+  **Smart Stack N Photos**, **Unstack** — §7.13) remains for per-tile access. **Add to
+  Album** is now real too, in both the selection bar and context menu (§7.26). Paste
+  Settings from the prototype's bar is still deliberately left out — no Copy/Paste Image
+  Processing/Metadata "Settings" combined concept exists in the real app (§1.5); those two
+  are separate real actions elsewhere (§7.24).
 - ✅ Detail view (`Viewer.tsx`) with zoomable preview, EXIF info panel, and a filmstrip of
   the current set (§7.5).
 - 🟡 Adjustable thumbnail size and file-type badges are real and always-on. They are **not**
@@ -176,8 +179,10 @@
 ### 2.2 Immich integration
 - ✅ Connect to an Immich server via endpoint URL + API key (§7.2).
 - ✅ `stack.*` scope: create/read/update/delete stacks are real (§7.13).
+- ✅ `album.*` scope: create/read/update/delete albums and add/remove assets are real
+  (§7.26).
 - ✅ Read assets/timeline (§7.3); real writes so far are asset metadata (rating/favorite/
-  description, §7.6), delete/restore/trash (§7.7), and stacks (§7.13).
+  description, §7.6), delete/restore/trash (§7.7), stacks (§7.13), and albums (§7.26).
 - ⬜ Wire Search field to Immich search.
 
 ### 2.3 Filesystem & round-trip
@@ -484,8 +489,12 @@
   in the local timezone — shifting the displayed month/day back one for any timezone behind
   UTC. Fixed via manual y/m/d parsing (`parseCalendarDate` in `PhotosBrowser.tsx`); worth
   remembering as a general trap anywhere else a bare date string gets displayed.
-- ⬜ The right-hand year-rail scrubber (§1.1/§6) has **not** been built in the real app yet —
-  Photos is a plain scrollable grid for now.
+- ✅ The right-hand year-rail scrubber (§1.1/§6) is now built in the real app —
+  `TimelineRail.tsx`, driven off the same `TanStack` virtualizer instance the grid already
+  uses for its month buckets (`getOffsetForIndex`/`measurementsCache`), rather than the
+  prototype's DOM-measured day-group refs. Year ticks, hover month bubble, and a
+  scroll-synced draggable thumb; hidden while a selection is active, matching the
+  prototype's `selN===0` condition.
 
 ### 7.4 Known real-world finding
 - A batch of ~34 assets (and a handful of stragglers elsewhere) return a **persistent,
@@ -779,9 +788,9 @@
      stack(s) first, then creates one unified stack with the full merged membership.
 
 ### 7.15 Not yet started in the real app
-- **Albums, People** tabs are pure placeholders (`PlaceholderView.tsx`: "Not built in the
-  real app yet — placeholder data only in the design prototype"). **Folders** is now real
-  (§7.10).
+- **People** tab is still a pure placeholder (`PlaceholderView.tsx`: "Not built in the real
+  app yet — placeholder data only in the design prototype"). **Folders** (§7.10) and now
+  **Albums** (§7.26) are real.
 - **Preferences** — **Library**, **Shortcuts**, and now **Applications** (§7.21) are real;
   Sharing / Configuration each still render the same literal placeholder as before.
 - **Sharing, printing, "Create Version" round-trip/versions lineage** — all still only exist
@@ -896,10 +905,10 @@
   `MetadataRows`.
 - ✅ **Scoped to real functionality only** — the prototype's bar also had **Paste Settings**
   (needs a clipboard/copy-paste-settings feature, §1.5, prototype-only at the time) and
-  **Add to Album** (needs Albums, still a placeholder, §7.15); both intentionally left out
-  rather than wired to dead ends, per an explicit decision with the user. **Paste Settings
-  is now real, split into Paste Image Processing and Paste Metadata (§7.24)** — Add to
-  Album remains out, Albums is still unbuilt.
+  **Add to Album** (needs Albums, then still a placeholder, §7.15); both were intentionally
+  left out rather than wired to dead ends, per an explicit decision with the user at the
+  time. **Both are now real**: Paste Settings split into Paste Image Processing and Paste
+  Metadata (§7.24); Add to Album is real once Albums itself was built (§7.26).
 - ✅ **Favorite is now a real click target**, not just a keyboard shortcut (§7.8's gap) — a
   shared `toggleFavoriteForSelection` callback (same "any non-favorited member flips
   everything on" convention the `f` shortcut already used) is now the single implementation
@@ -1847,5 +1856,60 @@
   *earlier* committed round against a real ART-cli 1.26.7 binary and a real Leica M10-R DNG,
   but cancellation, the no-sidecar dialogs, and Show in File Manager across different desktop
   environments are untested beyond `cargo test`/`tsc`/static checks so far.
+
+### 7.26 Albums (real, July 2026)
+- ✅ **Backend** (`immich/mod.rs`/`models.rs`, `commands.rs`): `list_albums` (`GET
+  /albums`), `get_album` (`GET /albums/{id}` for name/description/thumbnail), `create_album`
+  (`POST /albums`), `rename_album` (`PATCH /albums/{id}`, name only — description/thumbnail/
+  order aren't exposed anywhere in this app), `delete_album` (`DELETE /albums/{id}` —
+  deletes the album only, never the assets in it), `add_assets_to_album`/
+  `remove_assets_from_album` (`PUT`/`DELETE /albums/{id}/assets`). All gated by the same
+  read-only + max-writes-per-batch safety net as every other write (§7.2).
+- 🐛 **Real bug found and fixed, confirmed live against the user's Immich 3.0.3 server**:
+  Immich's own `AlbumResponseDto` schema implies `GET /albums/{id}` returns the album's
+  `assets` array inline, matching how `GET /stacks/{id}` already works (§7.13) — but on this
+  server version that field is simply **absent** from the response, not just empty, even
+  with `withoutAssets=false` explicitly passed. Same class of "documented field isn't
+  actually populated on this server version" surprise as `/search/metadata`'s missing
+  `stack` field (§7.13's compatibility note). Fixed by fetching an album's assets via `POST
+  /search/metadata` with an `albumIds: [id]` filter instead (confirmed live: returns the
+  full, correct asset list with real EXIF/rating, same "one call, full data" shape the
+  timeline/trash listings already use) — `get_album` now combines that with the plain `GET
+  /albums/{id}` call for the album's own name/description/thumbnail. `create_album` has the
+  identical gap on its response body when `assetIds` was non-empty, so it re-fetches via
+  `get_album` in that case rather than trusting the (always-empty) create response.
+- ✅ **Frontend** (`AlbumsBrowser.tsx`, new, replacing the old `PlaceholderView`): a list view
+  (grid of album cards — cover thumbnail via `albumThumbnailAssetId`, name, asset count;
+  inline "New Album" name field; hover Rename/Delete per card) and a detail view (back
+  button, rename/delete-album actions, a flat asset grid reusing the shared `AssetTile`).
+  Deliberately scoped down from Photos/Folders' full feature set — no Stacks, Smart Stack,
+  ART round trip, or Copy/Paste Image Processing/Metadata here, since those are all
+  RAW-culling-pipeline concepts orthogonal to "which photos are in this album". Selection
+  (click/Ctrl-click/Shift-range), rating/favorite (bulk keyboard shortcuts + the selection
+  bar, going through the same background `EditQueue` as every other view for the XMP-sidecar
+  reason §7.20 established), the Metadata panel, and the Viewer (prev/next across the
+  album's own asset list) are all real and consistent with the rest of the app. The
+  `Delete`/Trash keyboard shortcut and the selection bar's destructive action mean **Remove
+  from Album** here (not Move to Trash, which is a separate, secondary action) — a
+  deliberate departure from Photos/Folders' convention, matching Immich's own web UI: removal
+  from an album is the safer, more expected default for an album-scoped view, and doesn't
+  touch the asset itself.
+- ✅ **Add to Album** is now real everywhere it was previously stubbed out (§7.17's original
+  cut, §1.2): a new `AddToAlbumDialog.tsx` (search existing albums or create a new one
+  inline, either one click/Enter away) is wired into Photos' and Folders' selection bars and
+  right-click context menus, and into the Albums detail view itself (for adding the current
+  selection to a *different* album, alongside its own **Remove from Album**).
+- ✅ **`SelectionBar.tsx`** gained `onAddToAlbum`/`onRemoveFromAlbum` (new, optional) and had
+  `onStack`/`onSmartStack`/`onOpenInExternalEditor`/`onPasteImageProcessing`/
+  `onPasteMetadata` changed from required to optional, each now hidden entirely (not just
+  disabled) when the caller omits it — the mechanism that lets Albums' detail view reuse the
+  same shared bar as Photos/Folders without wiring up no-ops for the RAW-pipeline actions it
+  deliberately doesn't support.
+- ✅ **Sidebar** album count is real (`onCount` callback from `AlbumsBrowser`, same pattern as
+  Trash's live count) — the one remaining placeholder count is People.
+- ✅ Full create → add-asset → rename → remove-asset → delete round trip confirmed live via
+  direct API calls against the user's real Immich 3.0.3 server (a throwaway, clearly-named
+  test album, cleaned up immediately after) before wiring the GUI, which is how the
+  missing-`assets`-field bug above was actually caught.
 
 <!-- Paste further decisions, rationale, rejected ideas, or transcripts below; ask Claude to fold them in. -->

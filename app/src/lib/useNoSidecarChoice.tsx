@@ -10,22 +10,22 @@ interface PendingChoice {
 
 // Shared by Viewer.tsx/PhotosBrowser.tsx/FoldersBrowser.tsx's single "Tweak
 // RAW Roundtrip" flow (Variant 1 of the ART CLI round trip): `resolve` turns
-// launchArtRoundTrip's ArtRoundTripOutcome into the final export file name,
-// same as callers used to get back directly from the old bare-string return -
-// except when the outcome is `noSidecar` (ART closed with no edit made or
-// saved), where it shows NoSidecarDialog and waits for the user's choice
-// instead of resolving immediately. Rejects with a clear message if the user
-// cancels; a failed "use default profile" retry propagates its own real error
-// instead - either way, callers' existing try/catch around the old
+// launchArtRoundTrip's ArtRoundTripOutcome into the id of the ArtQueue job
+// now running the export in the background - the caller tracks it via
+// useArtJobReconciliation exactly like a Variant 2 job, same as when the
+// outcome is `processing` already - except when the outcome is `noSidecar`
+// (ART closed with no edit made or saved), where it shows NoSidecarDialog and
+// waits for the user's choice before kicking that job off. Rejects with a
+// clear message if the user cancels - callers' existing try/catch around the
 // launchArtRoundTrip call handles it exactly like any other launch failure.
 export function useNoSidecarChoice() {
   const [pending, setPending] = useState<PendingChoice | null>(null);
-  const settleRef = useRef<{ resolve: (name: string) => void; reject: (e: unknown) => void } | null>(null);
+  const settleRef = useRef<{ resolve: (jobId: number) => void; reject: (e: unknown) => void } | null>(null);
 
-  const resolve = useCallback((outcome: ArtRoundTripOutcome): Promise<string> => {
-    if (outcome.kind === 'exported') return Promise.resolve(outcome.exportFileName);
+  const resolve = useCallback((outcome: ArtRoundTripOutcome): Promise<number> => {
+    if (outcome.kind === 'processing') return Promise.resolve(outcome.jobId);
     setPending({ jobId: outcome.jobId, rawPath: outcome.rawPath, exportPath: outcome.exportPath });
-    return new Promise<string>((res, rej) => {
+    return new Promise<number>((res, rej) => {
       settleRef.current = { resolve: res, reject: rej };
     });
   }, []);
@@ -37,9 +37,9 @@ export function useNoSidecarChoice() {
   const handlePrimary = useCallback(async () => {
     if (!pending) return;
     const { jobId, rawPath, exportPath } = pending;
-    const exportFileName = await finishArtRoundTripWithDefaultProfile(jobId, rawPath, exportPath);
+    await finishArtRoundTripWithDefaultProfile(jobId, rawPath, exportPath);
     setPending(null);
-    settleRef.current?.resolve(exportFileName);
+    settleRef.current?.resolve(jobId);
   }, [pending]);
 
   const handleSecondary = useCallback(async () => {

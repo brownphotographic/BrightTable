@@ -16,18 +16,20 @@ export default function Sidebar({
   onSelect,
   photosCount,
   trashCount,
+  albumsCount,
 }: {
   active: LeftTab;
   onSelect: (tab: LeftTab) => void;
   photosCount: number;
   trashCount: number;
+  albumsCount?: number;
 }) {
   const { status, checking, error } = useLibraryStatus();
   const { rssBytes, ratePerHour } = useMemoryUsage();
 
   const counts: Record<LeftTab, string> = {
     photos: photosCount ? String(photosCount) : '',
-    albums: '',
+    albums: albumsCount ? String(albumsCount) : '',
     people: '',
     folders: photosCount ? String(photosCount) : '',
     trash: trashCount ? String(trashCount) : '',
