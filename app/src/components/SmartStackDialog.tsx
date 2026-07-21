@@ -188,7 +188,7 @@ export default function SmartStackDialog({
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9 }}>
                 <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.85)' }}>Time tolerance</span>
                 <span style={{ font: '600 13px ui-monospace,monospace', color: '#7fb0f0' }}>
-                  Within {toleranceSeconds(settings.tolerance) < 1 ? toleranceSeconds(settings.tolerance).toFixed(1) : toleranceSeconds(settings.tolerance)} s
+                  Within {formatTolerance(toleranceSeconds(settings.tolerance))}
                 </span>
               </div>
               <input
@@ -201,9 +201,8 @@ export default function SmartStackDialog({
                 style={{ width: '100%' }}
               />
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: 'rgba(255,255,255,0.35)', marginTop: 5 }}>
-                <span>0.1 s</span>
-                <span>1 s</span>
-                <span>10 s</span>
+                <span>{formatTolerance(TOL[0])}</span>
+                <span>{formatTolerance(TOL[TOL.length - 1])}</span>
               </div>
             </div>
           )}
@@ -330,6 +329,12 @@ function GroupCard({ group, mode }: { group: SmartStackGroup; mode: SmartStackMo
       </div>
     </div>
   );
+}
+
+function formatTolerance(seconds: number): string {
+  if (seconds >= 60) return `${seconds / 60} m`;
+  if (seconds < 1) return `${seconds.toFixed(1)} s`;
+  return `${seconds} s`;
 }
 
 function segStyle(active: boolean): CSSProperties {

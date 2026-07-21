@@ -380,6 +380,7 @@ async fn run_one(
         &immich,
         library_cfg,
         &applications_cfg.art_cli_path,
+        &applications_cfg.exiftool_path,
         art_queue,
         &work.asset_id,
         &work.original_path,
@@ -434,6 +435,7 @@ async fn resolve_rendition(
     immich: &ImmichClient,
     library_cfg: &LibraryConfig,
     art_cli_path: &str,
+    exiftool_path: &str,
     art_queue: &ArtQueue,
     asset_id: &str,
     original_path: &Option<String>,
@@ -459,7 +461,7 @@ async fn resolve_rendition(
                     .as_deref()
                     .and_then(|op| paths::resolve_local_path(op, library_cfg))
                     .ok_or_else(|| format!("No local path mapping configured for {file_name} — set up External Library mapping in Preferences → Library"))?;
-                convert_raw_to_jpeg(art_cli_path, art_queue, &raw_path, job_id, cancel_rx).await?
+                convert_raw_to_jpeg(art_cli_path, exiftool_path, art_queue, &raw_path, job_id, cancel_rx).await?
             } else {
                 let (bytes, _mime) = immich.get_thumbnail_bytes(asset_id, "preview").await?;
                 bytes
@@ -509,12 +511,18 @@ async fn fetch_true_original(
 /// memory ceiling. `cancel_rx` is threaded into `ART-cli`'s own run so a
 /// cancelled export actually kills a multi-minute conversion in progress,
 /// not just a queued-but-not-yet-started one (see the module doc comment).
-async fn convert_raw_to_jpeg(art_cli_path: &str, art_queue: &ArtQueue, raw_path: &Path, job_id: u64, cancel_rx: watch::Receiver<bool>) -> Result<Vec<u8>, String> {
+///
+/// Goes through `run_art_cli_with_metadata_fallback` (not the bare
+/// `run_art_cli_with_progress`) for the same Exiv2-crash `Mode=0` retry
+/// Headless RAW Roundtrip's worker (`art_queue::run`) already gets - this was
+/// previously the one `ART-cli` call site without it, so a `Mode=1` crash
+/// here failed the export outright instead of recovering like the other two
+/// call sites do.
+async fn convert_raw_to_jpeg(art_cli_path: &str, exiftool_path: &str, art_queue: &ArtQueue, raw_path: &Path, job_id: u64, cancel_rx: watch::Receiver<bool>) -> Result<Vec<u8>, String> {
     let raw_path_owned = raw_path.to_path_buf();
     let has_sidecar = tokio::task::spawn_blocking(move || paths::find_processing_sidecar(&raw_path_owned).is_some()).await.map_err(|e| e.to_string())?;
     let mode = art_queue::mode_for_sidecar(has_sidecar);
     let temp_path = std::env::temp_dir().join(format!("immature-export-raw-{job_id}.jpg"));
-    let args = art::build_art_cli_args(mode, &temp_path, raw_path);
 
     let _permit = art_queue.acquire_permit().await;
     // Re-checked here (not just wherever the caller last checked it) since
@@ -524,7 +532,7 @@ async fn convert_raw_to_jpeg(art_cli_path: &str, art_queue: &ArtQueue, raw_path:
     if *cancel_rx.borrow() {
         return Err(art::CANCELLED_BY_USER.to_string());
     }
-    let run = art::run_art_cli_with_progress(art_cli_path, &args, |_percent| {}, cancel_rx);
+    let run = art::run_art_cli_with_metadata_fallback(art_cli_path, exiftool_path, raw_path, &temp_path, mode, |_percent| {}, cancel_rx);
     let outcome = match tokio::time::timeout(art::ART_CLI_RUN_TIMEOUT, run).await {
         Ok(r) => r,
         Err(_) => Err(format!("Timed out after {}s running ART-cli", art::ART_CLI_RUN_TIMEOUT.as_secs())),

@@ -9,9 +9,10 @@ export interface SmartStackGroup {
   pickId: string;
 }
 
-// 19 steps: tenths of a second up to 1s, then whole seconds up to 10s -
-// ported verbatim from the design prototype's TOL scale.
-export const TOL = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+// 23 steps: tenths of a second up to 1s, then whole seconds up to 10s, then
+// 15s/20s/30s/1min - the first 19 are ported verbatim from the design
+// prototype's TOL scale; 15/20/30/60 extend it for slower-cadence bursts.
+export const TOL = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 30, 60];
 
 export function toleranceSeconds(index: number): number {
   return TOL[Math.max(0, Math.min(TOL.length - 1, index))];

@@ -510,19 +510,27 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // "first selected" default), then updates the local stackByAssetId map so
   // the non-primary members immediately hide from the grid without needing
   // to refetch anything. Any id already belonging to a different stack (e.g.
-  // merging two existing stacks' picks together) has its old stack dissolved
-  // first, so members left behind by the merge don't keep a stale reference
-  // to a stack that's about to disappear.
+  // merging two existing stacks' picks together, or adding new assets to a
+  // stack whose non-primary members are hidden/unselected in the grid) has
+  // its old stack dissolved first - dissolveStack's returned member list is
+  // unioned into the new stack's ids so those hidden siblings get carried
+  // over instead of silently dropped, and so they don't keep a stale
+  // reference to a stack that's about to disappear.
   const createStackForSelection = useCallback(
     async (ids: string[]) => {
       if (ids.length < 2) return;
       const oldStackIds = new Set(ids.map((id) => stackByAssetId.get(id)?.id).filter((id): id is string => !!id));
-      for (const oldId of oldStackIds) await dissolveStack(oldId);
-      const stack = await createStack(ids);
-      const info: AssetStackInfo = { id: stack.id, primaryAssetId: stack.primaryAssetId, assetCount: ids.length };
+      const allIds = new Set(ids);
+      for (const oldId of oldStackIds) {
+        const memberIds = await dissolveStack(oldId);
+        for (const id of memberIds) allIds.add(id);
+      }
+      const finalIds = [ids[0], ...[...allIds].filter((id) => id !== ids[0])];
+      const stack = await createStack(finalIds);
+      const info: AssetStackInfo = { id: stack.id, primaryAssetId: stack.primaryAssetId, assetCount: finalIds.length };
       setStackByAssetId((m) => {
         const next = new Map(m);
-        for (const id of ids) next.set(id, info);
+        for (const id of finalIds) next.set(id, info);
         return next;
       });
       setSelected(new Set());
