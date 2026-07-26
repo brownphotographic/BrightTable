@@ -479,8 +479,10 @@ async fn resolve_rendition(
 /// path mapping resolves it, otherwise Immich's `/assets/{id}/original`
 /// download. Shared by the `Original` export format (`resolve_rendition`)
 /// and `apply_metadata_policy`'s need for a full-metadata source to copy tags
-/// from onto an otherwise metadata-free `Jpeg`-format rendition.
-async fn fetch_true_original(
+/// from onto an otherwise metadata-free `Jpeg`-format rendition. `pub(crate)`
+/// so `print.rs` can reuse the same source-resolution logic for a
+/// print-quality image instead of duplicating it.
+pub(crate) async fn fetch_true_original(
     immich: &ImmichClient,
     library_cfg: &LibraryConfig,
     asset_id: &str,

@@ -37,6 +37,7 @@ import StackBand from '../components/StackBand';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import SmartStackDialog from '../components/SmartStackDialog';
 import ExportToFolderDialog from '../components/ExportToFolderDialog';
+import PrintDialog from '../components/PrintDialog';
 import ExportToFlickrDialog from '../components/ExportToFlickrDialog';
 import MetadataPanel from '../components/MetadataPanel';
 import TimelineRail from '../components/TimelineRail';
@@ -99,6 +100,7 @@ export interface PhotosBrowserHandle {
   pasteImageProcessing: () => void;
   copyMetadata: () => void;
   pasteMetadata: () => void;
+  openPrint: () => void;
 }
 
 const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
@@ -140,6 +142,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; assetId: string } | null>(null);
   const [smartStackOpen, setSmartStackOpen] = useState(false);
   const [exportFolderAssets, setExportFolderAssets] = useState<AssetSummary[] | null>(null);
+  const [printAsset, setPrintAsset] = useState<AssetSummary | null>(null);
   const [exportFlickrAssets, setExportFlickrAssets] = useState<AssetSummary[] | null>(null);
   const [addToAlbumTargets, setAddToAlbumTargets] = useState<string[] | null>(null);
   // This server version doesn't populate `stack` on /search/metadata or
@@ -1041,6 +1044,12 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     if (asset?.originalPath) {
       items.push({ label: 'Show in File Manager', onClick: () => handleShowInFileManager(asset) });
     }
+    // Print is single-asset only in v1 - omitted (not just disabled) when
+    // multiple are selected or the target is RAW, matching the Viewer
+    // toolbar button's identical gating.
+    if (asset && selected.size <= 1 && !isRawAsset(asset)) {
+      items.push({ label: 'Print…', onClick: () => setPrintAsset(asset) });
+    }
     if (asset && unsyncedMetadata.has(asset.id)) {
       items.push({
         label: 'Sync Metadata from Sidecar',
@@ -1206,6 +1215,21 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       pasteMetadata: () => {
         handlePasteMetadata([...selected]);
       },
+      // Single-asset resolution, matching the design mockup's own
+      // printTargetAsset(): the lone selected asset, else the open Viewer
+      // asset, else the first currently-visible one. A RAW-resolved target
+      // is a silent no-op (there's no toast system to explain why) - the
+      // menu item/Viewer button/context menu are the actual gates in the
+      // common case; this is just the same defense-in-depth backing them.
+      openPrint: () => {
+        const target =
+          selectedAssets.length === 1
+            ? selectedAssets[0]
+            : openId
+              ? (assetByIdAll.get(openId) ?? null)
+              : (assetByIdAll.get(flatIds[0]) ?? null);
+        if (target && !isRawAsset(target)) setPrintAsset(target);
+      },
     }),
     [
       selectAll,
@@ -1220,6 +1244,9 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       requestPasteImageProcessing,
       handleCopyMetadata,
       handlePasteMetadata,
+      openId,
+      assetByIdAll,
+      flatIds,
     ],
   );
 
@@ -1573,8 +1600,10 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           onOpenApplicationsPreferences={onOpenApplicationsPreferences}
           onArtRoundTripQueued={(jobId) => trackArtJobs([jobId])}
           onProcessingSidecarCreated={(id) => setProcessingSidecarAssets((s) => (s.has(id) ? s : new Set(s).add(id)))}
+          onPrint={setPrintAsset}
         />
       )}
+      {printAsset && <PrintDialog asset={printAsset} onClose={() => setPrintAsset(null)} />}
       {confirmDeleteSelection && (
         <ConfirmDialog
           title="Move to trash?"

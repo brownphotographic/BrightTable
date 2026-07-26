@@ -10,7 +10,7 @@ use crate::art_queue::{ArtJob, ArtJobStatus, ArtQueue};
 use crate::config::{self, AppConfig, ApplicationsConfig, ImportSettings, LibraryConfig, SharingConfig, SmartStackSettings};
 use crate::edit_queue::EditJob;
 use crate::export_naming;
-use crate::export_queue::{ExportDelivery, ExportFormat, ExportJob, ExportTarget, FlickrAlbumChoice, RenditionOptions};
+use crate::export_queue::{self, ExportDelivery, ExportFormat, ExportJob, ExportTarget, FlickrAlbumChoice, RenditionOptions};
 use crate::exiftool::MetadataPolicy;
 use crate::flickr::{self, FlickrPrivacy};
 use crate::immich::models::{AlbumDetail, AlbumSummary, AssetSummary, ConnectionStatus, StackInfo, TimeBucketInfo};
@@ -18,6 +18,7 @@ use crate::immich::ImmichClient;
 use crate::import::{self, FolderDepth, ImportJob, ScannedGroup};
 use crate::io_guard;
 use crate::paths;
+use crate::print;
 use crate::state::AppState;
 
 #[tauri::command]
@@ -1706,6 +1707,59 @@ pub fn cancel_export_job(state: State<AppState>, job_id: u64) -> bool {
 #[tauri::command]
 pub fn clear_completed_export_jobs(state: State<AppState>) {
     state.export_queue.clear_completed();
+}
+
+/// Real OS printer enumeration (see `print.rs`'s module doc comment for the
+/// CUPS-CLI-shelling approach and its Linux/macOS-only scope).
+#[tauri::command]
+pub async fn list_printers() -> Vec<print::Printer> {
+    print::list_printers().await
+}
+
+/// Prints a single (non-RAW) asset. Single-asset only - no batch/multi-select
+/// printing in v1, matching the design mockup's own `printTargetAsset()`
+/// scope. RAW assets are rejected outright: unlike Export to Folder, there's
+/// no ART-cli conversion path for Print at all, so `asset.is_raw` (trusted
+/// from the frontend's `isRawAsset()`, same shape as `ExportAssetTarget`) is
+/// a hard error here rather than a routing decision - the frontend's entry
+/// points (menu item, context menu, Viewer button) are expected to keep this
+/// from being reachable in the common case; this is defense in depth.
+#[tauri::command]
+pub async fn print_asset(state: State<'_, AppState>, asset: print::PrintAssetTarget, options: print::PrintOptions) -> Result<(), String> {
+    if asset.is_raw {
+        return Err("RAW photos can't be printed yet — open the edited version or export a JPEG first".to_string());
+    }
+    let copies = options.copies.clamp(1, 99);
+    let options = print::PrintOptions { copies, ..options };
+
+    let cfg = state.library_config();
+    let (bytes, _filename) = {
+        let immich = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
+        export_queue::fetch_true_original(&immich, &cfg, &asset.id, &asset.original_path, &asset.file_name).await?
+    };
+
+    let paper_w = options.paper_width_in;
+    let paper_h = options.paper_height_in;
+    let image_w = options.image_width_in;
+    let image_h = options.image_height_in;
+    let dpi = options.dpi;
+    let fit_mode = options.fit_mode;
+    let composited = tokio::task::spawn_blocking(move || print::composite_for_print(&bytes, paper_w, paper_h, image_w, image_h, dpi, fit_mode))
+        .await
+        .map_err(|e| e.to_string())??;
+
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    let temp_path = std::env::temp_dir().join(format!("immature-print-{}-{}.jpg", asset.id, ts));
+    let write_path = temp_path.clone();
+    tokio::task::spawn_blocking(move || std::fs::write(&write_path, &composited))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("Could not write temporary print file: {e}"))?;
+
+    let result = print::submit_print_job(&temp_path, &options).await;
+    let cleanup_path = temp_path.clone();
+    let _ = tokio::task::spawn_blocking(move || std::fs::remove_file(&cleanup_path)).await;
+    result
 }
 
 #[cfg(test)]

@@ -13,6 +13,7 @@ mod immich;
 mod import;
 mod io_guard;
 mod paths;
+mod print;
 mod processing_queue;
 mod protocol;
 mod reveal;
@@ -192,6 +193,8 @@ pub fn run() {
             commands::get_export_queue_status,
             commands::cancel_export_job,
             commands::clear_completed_export_jobs,
+            commands::list_printers,
+            commands::print_asset,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

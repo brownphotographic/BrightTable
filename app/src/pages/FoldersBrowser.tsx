@@ -35,6 +35,7 @@ import StackBand from '../components/StackBand';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import SmartStackDialog from '../components/SmartStackDialog';
 import ExportToFolderDialog from '../components/ExportToFolderDialog';
+import PrintDialog from '../components/PrintDialog';
 import ExportToFlickrDialog from '../components/ExportToFlickrDialog';
 import MetadataPanel from '../components/MetadataPanel';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -82,6 +83,7 @@ export interface FoldersBrowserHandle {
   pasteImageProcessing: () => void;
   copyMetadata: () => void;
   pasteMetadata: () => void;
+  openPrint: () => void;
 }
 
 // Backed by Immich's real server-side folder structure (GET
@@ -124,6 +126,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; assetId: string } | null>(null);
   const [smartStackOpen, setSmartStackOpen] = useState(false);
   const [exportFolderAssets, setExportFolderAssets] = useState<AssetSummary[] | null>(null);
+  const [printAsset, setPrintAsset] = useState<AssetSummary | null>(null);
   const [exportFlickrAssets, setExportFlickrAssets] = useState<AssetSummary[] | null>(null);
   const [addToAlbumTargets, setAddToAlbumTargets] = useState<string[] | null>(null);
   // This server version doesn't populate `stack` on /search/metadata or
@@ -918,6 +921,12 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     if (asset?.originalPath) {
       items.push({ label: 'Show in File Manager', onClick: () => handleShowInFileManager(asset) });
     }
+    // Print is single-asset only in v1 - omitted (not just disabled) when
+    // multiple are selected or the target is RAW, matching the Viewer
+    // toolbar button's identical gating.
+    if (asset && selected.size <= 1 && !isRawAsset(asset)) {
+      items.push({ label: 'Print…', onClick: () => setPrintAsset(asset) });
+    }
     if (asset && unsyncedMetadata.has(asset.id)) {
       items.push({
         label: 'Sync Metadata from Sidecar',
@@ -1070,6 +1079,20 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       pasteMetadata: () => {
         handlePasteMetadata([...selected]);
       },
+      // Single-asset resolution, matching PhotosBrowser's identical
+      // openPrint - the lone selected asset, else the open Viewer asset,
+      // else the first currently-visible one. A RAW-resolved target is a
+      // silent no-op (defense in depth; the real gates are the menu item/
+      // Viewer button/context menu).
+      openPrint: () => {
+        const target =
+          selectedAssets.length === 1
+            ? selectedAssets[0]
+            : openId
+              ? (assetByIdAll.get(openId) ?? null)
+              : (assetByIdAll.get(flatIds[0]) ?? null);
+        if (target && !isRawAsset(target)) setPrintAsset(target);
+      },
     }),
     [
       selectAll,
@@ -1082,6 +1105,9 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       selectedAssets,
       handleCopyImageProcessing,
       requestPasteImageProcessing,
+      openId,
+      assetByIdAll,
+      flatIds,
       handleCopyMetadata,
       handlePasteMetadata,
     ],
@@ -1498,8 +1524,10 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           onOpenApplicationsPreferences={onOpenApplicationsPreferences}
           onArtRoundTripQueued={(jobId) => trackArtJobs([jobId])}
           onProcessingSidecarCreated={(id) => setProcessingSidecarAssets((s) => (s.has(id) ? s : new Set(s).add(id)))}
+          onPrint={setPrintAsset}
         />
       )}
+      {printAsset && <PrintDialog asset={printAsset} onClose={() => setPrintAsset(null)} />}
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}

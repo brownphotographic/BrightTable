@@ -925,3 +925,82 @@ export function cancelExportJob(jobId: number): Promise<boolean> {
 export function clearCompletedExportJobs(): Promise<void> {
   return invoke('clear_completed_export_jobs');
 }
+
+// ── Print ────────────────────────────────────────────────────────────────
+// Real OS printer enumeration/submission via CUPS (Linux/macOS) — see
+// print.rs. Single-asset only in v1 (no batch printing), and RAW assets are
+// never sent here at all — the entry points that open PrintDialog gate on
+// !isRawAsset() first, matching the "Print unavailable for RAW" v1 scope.
+
+export type PrinterStatus = 'ready' | 'disabled' | 'unknown';
+
+export interface PaperSize {
+  id: string;
+  name: string;
+  widthIn: number;
+  heightIn: number;
+  // Largest uniform margin that stays within the printer driver's real
+  // printable area on every side (derived from the PPD's ImageableArea when
+  // available, else a flat 0.25in guess) — see print.rs's module doc
+  // comment for why this replaced a single hardcoded margin for every paper.
+  marginIn: number;
+}
+
+export interface Printer {
+  id: string;
+  name: string;
+  connection: string;
+  isDefault: boolean;
+  status: PrinterStatus;
+  papers: PaperSize[];
+  // Highest DPI first (index 0 = "Highest quality", last = "Draft / fast").
+  dpis: number[];
+}
+
+export function listPrinters(): Promise<Printer[]> {
+  return invoke('list_printers');
+}
+
+export type PrintOrientation = 'landscape' | 'portrait';
+
+// Mirrors ExportAssetTarget's isRaw shape — trusted from isRawAsset()
+// rather than re-derived backend-side. print_asset rejects isRaw: true
+// outright (no ART-cli conversion path for Print, unlike Export's jpeg
+// format).
+export interface PrintAssetTarget {
+  id: string;
+  originalPath: string | null;
+  fileName: string;
+  isRaw: boolean;
+}
+
+// 'crop' (default) fills imageWidthIn x imageHeightIn completely, center-
+// cropping the source's longer relative edge (no whitespace) — matches
+// print.rs's FitMode::Crop, which needs no aspect relationship between the
+// source photo and the requested size. 'fit' never crops — the frontend
+// keeps the size fields aspect-locked to the source photo in that mode, so
+// the whole image lands within the printable area, with white space on one
+// axis if the paper's aspect doesn't match the photo's.
+export type PrintFitMode = 'crop' | 'fit';
+
+export interface PrintOptions {
+  printerId: string;
+  paperId: string;
+  copies: number;
+  dpi: number;
+  orientation: PrintOrientation;
+  fitMode: PrintFitMode;
+  // Already orientation-adjusted (width/height swapped so orientation and
+  // these dimensions always agree) — mirrors the mockup's printPaperWH().
+  paperWidthIn: number;
+  paperHeightIn: number;
+  // The "printed image size" fields — already fit/clamped client-side to
+  // the paper's printable area. Aspect-locked to the source photo when
+  // fitMode is 'fit'; independently chosen when 'crop'.
+  imageWidthIn: number;
+  imageHeightIn: number;
+}
+
+export function printAsset(asset: PrintAssetTarget, options: PrintOptions): Promise<void> {
+  return invoke('print_asset', { asset, options });
+}

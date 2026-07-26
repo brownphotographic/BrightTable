@@ -165,6 +165,7 @@ function AppShell() {
         onPasteImageProcessing={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.pasteImageProcessing()}
         onCopyMetadata={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.copyMetadata()}
         onPasteMetadata={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.pasteMetadata()}
+        onPrint={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.openPrint()}
         filters={filters}
         onFiltersChange={setFilters}
       />

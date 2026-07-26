@@ -1,4 +1,4 @@
-# ImAture / ImView — Requirements
+# ImmAture — Requirements
 
 > A desktop Digital Asset Management (DAM) client for an **Immich** server, focused on
 > culling, rating, stacking, and round-tripping RAW files to external editors.
@@ -149,7 +149,12 @@
 - ⬜ Activity (recent writes) panel.
 
 ### 1.8 Printing
-- ⬜ Print dialog — prototype only; no printing anywhere in the real app.
+- 🟡 **Print dialog is real** (§7.27) — real OS printers, papers, and print resolutions
+  (enumerated live via CUPS), a physical "printed image size" independent of paper size
+  (always aspect-locked), orientation, and copies, submitted as an actual print job. Ported
+  from the mockup's layout/interaction design, not its mock `PRINTERS` data. Single-asset
+  only (matches the mockup's own `printTargetAsset()` scope — no batch printing yet), and
+  RAW photos can't be printed at all (deliberate v1 cut, not a bug — see §7.27).
 
 ### 1.9 Preferences
 - 🟡 Tabs: **Library**, **Shortcuts**, and now **Applications** are real and fully
@@ -502,6 +507,21 @@
   retrying the same asset IDs multiple times over several minutes with identical results.
   Likely a stuck/failed Immich thumbnail-generation job for that batch. Not fixable
   client-side — needs checking Immich's own **Administration → Jobs → Generate Thumbnails**.
+- **Recurrence, root cause found (July 2026)**: the same symptom reappeared at much larger
+  scale — the entire Photos timeline showed blank/retry thumbnails (real 404s from Immich,
+  confirmed via the app's own log:
+  `[app_lib::protocol][WARN] thumbnail fetch failed for <id> (size=thumbnail): Thumbnail
+  request returned 404 Not Found`, one line per affected asset). Folders' "All Originals"
+  view (same library, same code) looked unaffected at first only because Photos defaults to
+  newest-first and the broken batch happened to be the most recently imported assets.
+  **Cause: the user opened Shotwell against the same NFS share Immich's library lives on**,
+  which appears to have disturbed Immich's thumbnail-generation state (own `.thumbnails`
+  cache and/or touched the underlying files) for whatever it read while both apps had the
+  share open concurrently. Not an app bug on either the real app or this Print-feature work
+  (verified via full diff review) — confirmed purely server/filesystem-side. Fix is the same
+  as above: Immich Administration → Jobs → Generate Thumbnails. **Takeaway: don't run
+  Shotwell (or likely any other photo manager) against the same NFS share while Immich is
+  live** — re-running the thumbnail job afterward is the recovery path if it happens again.
 
 ### 7.5 Detail viewer (`Viewer.tsx`)
 - ✅ Full-screen lightbox opened by double-click (grid) or a hover "⤢" icon. Fit-width
@@ -1911,5 +1931,104 @@
   direct API calls against the user's real Immich 3.0.3 server (a throwaway, clearly-named
   test album, cleaned up immediately after) before wiring the GUI, which is how the
   missing-`assets`-field bug above was actually caught.
+
+### 7.27 Print (real, July 2026)
+> Ported from the mockup's Print dialog (layout, printer/paper/DPI/orientation/printed-image-
+> size fields, live paper+photo preview) with real data throughout instead of its hardcoded
+> `PRINTERS` mock. Two scope decisions locked in during planning: **single-asset only** (no
+> batch/multi-select printing in v1, matching the mockup's own `printTargetAsset()`) and
+> **RAW photos can't be printed at all** (no ART-cli conversion path the way Export to Folder
+> has one — user's explicit call, not a limitation to revisit casually).
+- ✅ **Backend** (`print.rs`, new): real printer/paper/DPI enumeration by shelling CUPS'
+  own CLI (`lpstat -p -d -v`, `lpoptions -p <name> -l`) rather than any Rust printing crate —
+  none actively-maintained/cross-platform enough to trust. Linux and macOS share one
+  implementation (both run CUPS); Windows explicitly returns an empty printer list /
+  a clear "not supported yet" error rather than a half-built spooler integration. A static
+  paper-keyword lookup table (Letter/Legal/A3/A4/A5/A6/4×6/5×7/8×10/etc., plus a
+  `Custom.WWxHHin`/`Custom.WWxHHmm` parser) maps CUPS `PageSize` keywords to physical
+  sizes — unrecognized keywords are silently dropped, not guessed, same posture as
+  `apps.rs`'s `.desktop` scanning. `composite_for_print` pre-renders the source image onto a
+  white, page-sized canvas at the exact requested physical size/DPI/orientation (via the
+  `image` crate, features widened to `png`/`tiff`) rather than trusting CUPS' own
+  scale-to-fit options, which are inconsistent across drivers — the print job is submitted
+  via `lp` with `print-scaling=none` and an explicit `orientation-requested` so the driver
+  rotates the pre-composited canvas onto the physically-fed page correctly. Source image
+  bytes are fetched via `export_queue::fetch_true_original` (now `pub(crate)`), the same
+  local-path-first/Immich-original-fallback logic Export to Folder's "Original" format
+  already used — no separate download path invented. 11 unit tests cover the CUPS output
+  parsers, paper/DPI keyword mapping, `lp` argv construction, and compositing pixel
+  dimensions; all pass, plus the full existing suite (2 pre-existing, unrelated flaky
+  failures confirmed under parallel test execution — both pass in isolation).
+- ✅ **`print_asset` command** rejects RAW assets outright server-side (trusting the
+  frontend's `isRawAsset()`, same shape as `ExportAssetTarget::is_raw`) as defense in depth —
+  the real gate is the frontend never offering Print for a RAW asset in the first place.
+- ✅ **Frontend** (`PrintDialog.tsx`, new): real printer/paper/DPI dropdowns (populated from
+  `list_printers`), Copies stepper, Orientation toggle, and aspect-locked "Printed image
+  size" W×H fields (in/cm) with a live paper+photo proportions preview — all the mockup's
+  own fit/clamp/orientation math ported 1:1. RAW assets render a plain blocking message
+  ("RAW photos can't be printed yet…") instead of the form. Reuses `ExportToFolderDialog`'s
+  shared button/close styles rather than reimplementing them.
+- ✅ **Entry points**, all gated on `!isRawAsset()` (omitted entirely for RAW, not just
+  disabled): Photos/Folders context menu "Print…" (single-asset only — hidden when 2+ are
+  selected), a new Viewer toolbar "Print" button, and the File menu's "Print…" item (now
+  real — was a dead stub with a hardcoded "Ctrl+P" label). `print` is now a real, rebindable
+  shortcut (`Ctrl+P` default) in Preferences → Shortcuts. Target-asset resolution (both
+  Photos and Folders' new `openPrint` handle) mirrors the mockup's own
+  `printTargetAsset()`: the lone selected asset, else the open Viewer asset, else the first
+  currently-visible one — a RAW-resolved target is a silent no-op there (defense in depth;
+  the menu/context-menu/Viewer-button gates above are what actually prevent reaching it).
+- 🐛 **Real bug found and fixed, live against the user's real printer**: the paper-size
+  keyword-guessing table (`paper_size_from_keyword`) recognized only 4 of a real printer's
+  ~30 defined sizes (a TurboPrint-driven Epson SC-3880) — third-party/vendor drivers
+  routinely name sizes with **no dimension encoded in the keyword at all** (`USB`, `USC`,
+  `A3+-USB+`, `Custom1000`/`Custom1001`), which `lpoptions -p <name> -l` only ever exposes as
+  a bare keyword, not a physical size, so no amount of keyword-guessing could ever recover
+  them. Fixed by reading the printer's **real PPD** instead: `fetch_ppd` retrieves it over
+  `http://localhost:631/printers/<name>.ppd` (CUPS serves this to any local client through
+  the scheduler, confirmed live to work even though this user's own session can't read
+  `/etc/cups/ppd/*.ppd` directly — root:lp-only file permissions), and
+  `parse_ppd_paper_sizes` reads the PPD's own `*PaperDimension`/`*ImageableArea` directives —
+  the driver's authoritative width/height and printable margins for every size it defines,
+  keyword or not. Confirmed live: recovers all 31 real sizes (matching what Chrome's own
+  print dialog shows for the same printer, including `13"×19"`, `16×20"`, `17×22"`, every
+  borderless variant, and the two opaque `Custom1000`/`Custom1001` presets) versus the old
+  4. Keyword-guessing (`paper_size_from_keyword`) is kept only as a fallback for a
+  PPD-less/driverless printer where the PPD fetch itself comes back empty.
+- ✅ **Real per-paper printable margin**, not a flat guess — `PaperSize.marginIn` is now the
+  largest uniform margin that stays within the PPD's real `*ImageableArea` on every side
+  (conservative under an asymmetric driver margin), falling back to a flat `0.25in` only for
+  a keyword-guessed fallback size with no PPD data at all. A borderless paper choice
+  correctly reports `0in` and can use its full physical size — confirmed live: 8 of this
+  printer's real margins are exactly `0in` (every "borderless" choice and the two `Custom*`
+  presets), the rest are a real `0.12in` from the driver, not the old assumed `0.25in` for
+  every paper on every printer.
+- ✅ **Default print resolution is now 720dpi** (`PREFERRED_DEFAULT_DPI` in `PrintDialog.tsx`)
+  when a printer offers it, not its highest (was defaulting to `dpis[0]`, e.g. 1440dpi on the
+  user's Epson — a real quality/speed sweet spot for photo printers, imperceptible extra
+  resolution at normal viewing distance for a multi-minute-per-page cost). Falls back to the
+  printer's own highest when 720 isn't offered.
+- ✅ **Preview pane shows the real photo**, not a striped gray placeholder — an `<img
+  src={thumbnailSrc(asset.id, 'preview')}>` with `object-fit: cover` inside the
+  proportionally-sized photo rect, matching (not just visually resembling) what
+  `composite_for_print` actually does server-side in both fit modes below.
+- ✅ **Image fit toggle**: **Fill Paper** (crop, now the default) vs **Fit Whole Image** —
+  the user's own explicit ask, since a 2:3 photo on 5×7 borderless paper previously always
+  letterboxed with white space (the old, only behavior, ported unchanged from the mockup).
+  `print.rs` gained `FitMode::{Crop, Fit}`: `Fit` is the original contain-within-area
+  behavior (frontend keeps the size fields aspect-locked to the source photo, so nothing
+  needs cropping); `Crop` (default) lets the frontend choose *any* target rectangle — default
+  is the full printable area — and `composite_for_print`'s new `crop_to_aspect` center-crops
+  whichever source dimension is relatively longer to match that rectangle's aspect *before*
+  the resize, so the final print fills it with zero white space (same idea as CSS
+  `object-fit: cover`). In the dialog, **Fit** mode keeps the W/H fields aspect-locked
+  together (editing one recomputes the other, as before); **Crop** mode makes them
+  independently editable (each just clamped to the printable area) since any rectangle is
+  valid when the source can be cropped to match it. 6 new backend unit tests (`crop_to_aspect`
+  dimensions in both crop directions and the no-op case, plus a `composite_for_print`
+  integration check under `Crop`) — all passing alongside the full existing suite.
+- Not yet live-tested for an actual submitted print job (ink on paper, or a CUPS-PDF virtual
+  printer's output file) — the fixes above were verified against this printer's real,
+  fetched PPD and confirmed to recover the same paper list its own OS print dialog shows,
+  but the `lp` submission step itself is still outstanding manual verification.
 
 <!-- Paste further decisions, rationale, rejected ideas, or transcripts below; ask Claude to fold them in. -->

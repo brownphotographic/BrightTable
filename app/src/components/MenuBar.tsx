@@ -24,6 +24,7 @@ export default function MenuBar({
   onPasteImageProcessing,
   onCopyMetadata,
   onPasteMetadata,
+  onPrint,
   filters,
   onFiltersChange,
 }: {
@@ -44,6 +45,7 @@ export default function MenuBar({
   onPasteImageProcessing: () => void;
   onCopyMetadata: () => void;
   onPasteMetadata: () => void;
+  onPrint: () => void;
   filters: Filters;
   onFiltersChange: (next: Filters) => void;
 }) {
@@ -92,7 +94,14 @@ export default function MenuBar({
           }}
         />
         <Divider />
-        <MenuItem label="Print…" shortcut="Ctrl+P" onClick={close} />
+        <MenuItem
+          label="Print…"
+          shortcut={prettyShortcut(shortcuts.print)}
+          onClick={() => {
+            close();
+            onPrint();
+          }}
+        />
         <MenuItem
           label="Recent Activity…"
           onClick={() => {

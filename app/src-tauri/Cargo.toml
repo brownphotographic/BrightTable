@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Tauri App"
 authors = ["you"]
 license = ""
@@ -36,8 +36,10 @@ time = { version = "0.3.41", features = ["std"] }
 mimalloc = "0.1"
 notify = "8.2.0"
 notify-debouncer-mini = "0.7.0"
-# Export to Folder's JPEG rendition resize/re-encode (export_queue.rs).
-image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# Export to Folder's JPEG rendition resize/re-encode (export_queue.rs), and
+# Print's page compositing (print.rs) - png/tiff cover ordinary non-RAW true
+# originals that aren't JPEG.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "tiff"] }
 # Flickr's OAuth 1.0a request signing (flickr.rs) - no maintained OAuth1/
 # Flickr crate to lean on, so signing is hand-rolled HMAC-SHA1 over these.
 hmac = "0.12"

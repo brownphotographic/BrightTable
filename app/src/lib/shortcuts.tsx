@@ -24,6 +24,7 @@ export type ShortcutId =
   | 'openPreferences'
   | 'openInRawEditor'
   | 'openInExternalEditor'
+  | 'print'
   | 'copyMetadata'
   | 'pasteMetadata'
   | 'copyImageProcessing'
@@ -52,6 +53,7 @@ export const SHORTCUT_DEFS: { id: ShortcutId; label: string }[] = [
   { id: 'openPreferences', label: 'Open preferences' },
   { id: 'openInRawEditor', label: 'Tweak RAW Roundtrip' },
   { id: 'openInExternalEditor', label: 'Open in Ext. Editor' },
+  { id: 'print', label: 'Print' },
   { id: 'copyMetadata', label: 'Copy Metadata' },
   { id: 'pasteMetadata', label: 'Paste Metadata' },
   { id: 'copyImageProcessing', label: 'Copy Image Processing' },
@@ -84,6 +86,7 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutId, string> = {
   openPreferences: 'Ctrl+,',
   openInRawEditor: 'Ctrl+Enter',
   openInExternalEditor: 'Ctrl+E',
+  print: 'Ctrl+P',
   copyImageProcessing: 'Ctrl+C',
   pasteImageProcessing: 'Ctrl+V',
   copyMetadata: 'Ctrl+Shift+C',

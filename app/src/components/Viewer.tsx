@@ -77,6 +77,7 @@ export default function Viewer({
   onOpenApplicationsPreferences,
   onArtRoundTripQueued,
   onProcessingSidecarCreated,
+  onPrint,
 }: {
   asset: AssetSummary;
   hasPrev: boolean;
@@ -109,6 +110,9 @@ export default function Viewer({
   // this, hasProcessingSidecar stays stale on the grid behind the viewer
   // until the next full bucket/folder reload.
   onProcessingSidecarCreated?: (assetId: string) => void;
+  // Prints the currently-open (non-RAW) asset - omitted (no button shown)
+  // for RAW assets, matching Print's "no RAW support in v1" scope.
+  onPrint?: (asset: AssetSummary) => void;
 }) {
   const [zoom, setZoom] = useState(100);
   const [infoOpen, setInfoOpen] = useState(true);
@@ -328,6 +332,7 @@ export default function Viewer({
       else if (matchesShortcut(e, shortcuts.delete)) setConfirmDelete(true);
       else if (matchesShortcut(e, shortcuts.openInRawEditor) && isRawAsset(shown) && !artBusy) handleLaunch('rawEditor').catch(() => {});
       else if (matchesShortcut(e, shortcuts.openInExternalEditor)) handleLaunch('externalEditor').catch(() => {});
+      else if (matchesShortcut(e, shortcuts.print) && onPrint && !isRawAsset(shown)) onPrint(shown);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -351,6 +356,7 @@ export default function Viewer({
     handleCopyImageProcessing,
     copiedMetadata,
     copiedProcessingSource,
+    onPrint,
   ]);
 
   const previewSrc = thumbnailSrc(shown.id, 'preview');
@@ -479,6 +485,11 @@ export default function Viewer({
         <div onClick={() => handleLaunch('externalEditor')} style={headerButtonStyle(false)}>
           Open in Ext. Editor
         </div>
+        {onPrint && !isRawAsset(shown) && (
+          <div onClick={() => onPrint(shown)} style={headerButtonStyle(false)}>
+            Print
+          </div>
+        )}
         {shown.originalPath && (
           <div onClick={handleShowInFileManager} style={headerButtonStyle(false)}>
             Show in File Manager
