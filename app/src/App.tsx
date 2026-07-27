@@ -24,7 +24,7 @@ import ConfirmDialog from './components/ConfirmDialog';
 import PhotosBrowser, { type PhotosBrowserHandle } from './pages/PhotosBrowser';
 import FoldersBrowser, { type FoldersBrowserHandle } from './pages/FoldersBrowser';
 import TrashBrowser from './pages/TrashBrowser';
-import AlbumsBrowser from './pages/AlbumsBrowser';
+import AlbumsBrowser, { type AlbumsBrowserHandle } from './pages/AlbumsBrowser';
 import { DEFAULT_FILTERS } from './lib/filters';
 
 export default function App() {
@@ -105,6 +105,7 @@ function AppShell() {
   const [closeBlockedCount, setCloseBlockedCount] = useState<number | null>(null);
   const photosRef = useRef<PhotosBrowserHandle>(null);
   const foldersRef = useRef<FoldersBrowserHandle>(null);
+  const albumsRef = useRef<AlbumsBrowserHandle>(null);
   const { shortcuts, capturing } = useShortcuts();
 
   const refreshTimeline = () => setDataKey((k) => k + 1);
@@ -166,6 +167,12 @@ function AppShell() {
         onCopyMetadata={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.copyMetadata()}
         onPasteMetadata={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.pasteMetadata()}
         onPrint={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.openPrint()}
+        onExportToFolder={() =>
+          (leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : photosRef).current?.openExportToFolder()
+        }
+        onShareToFlickr={() =>
+          (leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : photosRef).current?.openExportToFlickr()
+        }
         filters={filters}
         onFiltersChange={setFilters}
       />
@@ -198,6 +205,7 @@ function AppShell() {
           {albumsVisited && (
             <div style={{ display: leftTab === 'albums' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
               <AlbumsBrowser
+                ref={albumsRef}
                 metaOpen={metaOpen}
                 onCloseMetadata={() => setMetaOpen(false)}
                 onCount={setAlbumsCount}

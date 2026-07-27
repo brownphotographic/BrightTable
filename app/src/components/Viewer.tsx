@@ -158,6 +158,7 @@ export default function Viewer({
   const { overrideIds } = useRawOverrides();
   const placeholder = useMemo(() => (shown.thumbHash ? decodeThumbHash(shown.thumbHash) : null), [shown.thumbHash]);
   const stageRef = useRef<HTMLDivElement>(null);
+  const previewImgRef = useRef<HTMLImageElement>(null);
   const stackId = asset.stack?.id ?? null;
 
   // Fetches the full member list whenever the open asset's stack changes (or
@@ -369,10 +370,18 @@ export default function Viewer({
   // <img> has finished fetching it would race a second, independent request
   // for the same bytes over a possibly-slow remote connection instead of
   // hitting the now-warm local disk cache from the first request.
+  // Uses the loaded <img>'s own naturalWidth/naturalHeight (not
+  // shown.exifImageWidth/Height) - EXIF dimensions are frequently absent
+  // (screenshots, assets Immich hasn't finished metadata-extracting) and,
+  // when present, describe the *original* file rather than the possibly
+  // reoriented preview rendition actually on screen, which silently broke
+  // the loupe (or misaligned it) for exactly those assets.
   let loupeStyle: React.CSSProperties | null = null;
-  if (loupeOn && loaded && loupePos && stageRef.current && shown.exifImageWidth && shown.exifImageHeight) {
+  const natW = previewImgRef.current?.naturalWidth;
+  const natH = previewImgRef.current?.naturalHeight;
+  if (loupeOn && loaded && loupePos && stageRef.current && natW && natH) {
     const rect = stageRef.current.getBoundingClientRect();
-    const { w, h, x, y } = containRect(rect.width, rect.height, shown.exifImageWidth, shown.exifImageHeight);
+    const { w, h, x, y } = containRect(rect.width, rect.height, natW, natH);
     const cx = loupePos.x - x;
     const cy = loupePos.y - y;
     if (cx >= 0 && cy >= 0 && cx <= w && cy <= h) {
@@ -658,6 +667,7 @@ export default function Viewer({
                 }}
               />
               <img
+                ref={previewImgRef}
                 src={previewSrc}
                 alt=""
                 onLoad={() => setLoadedId(shown.id)}

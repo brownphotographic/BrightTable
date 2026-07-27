@@ -25,6 +25,8 @@ export default function MenuBar({
   onCopyMetadata,
   onPasteMetadata,
   onPrint,
+  onExportToFolder,
+  onShareToFlickr,
   filters,
   onFiltersChange,
 }: {
@@ -46,6 +48,8 @@ export default function MenuBar({
   onCopyMetadata: () => void;
   onPasteMetadata: () => void;
   onPrint: () => void;
+  onExportToFolder: () => void;
+  onShareToFlickr: () => void;
   filters: Filters;
   onFiltersChange: (next: Filters) => void;
 }) {
@@ -100,6 +104,20 @@ export default function MenuBar({
           onClick={() => {
             close();
             onPrint();
+          }}
+        />
+        <MenuItem
+          label="Export to Folder…"
+          onClick={() => {
+            close();
+            onExportToFolder();
+          }}
+        />
+        <MenuItem
+          label="Share to Flickr…"
+          onClick={() => {
+            close();
+            onShareToFlickr();
           }}
         />
         <MenuItem

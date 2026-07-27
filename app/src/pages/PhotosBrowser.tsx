@@ -101,6 +101,8 @@ export interface PhotosBrowserHandle {
   copyMetadata: () => void;
   pasteMetadata: () => void;
   openPrint: () => void;
+  openExportToFolder: () => void;
+  openExportToFlickr: () => void;
 }
 
 const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
@@ -1229,6 +1231,19 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
               ? (assetByIdAll.get(openId) ?? null)
               : (assetByIdAll.get(flatIds[0]) ?? null);
         if (target && !isRawAsset(target)) setPrintAsset(target);
+      },
+      // Matches openPrint's fallback shape: the current selection, else the
+      // asset open in the Viewer, else nothing (silent no-op - there's no
+      // selection to disable the File-menu item on).
+      openExportToFolder: () => {
+        const openAsset = openId ? assetByIdAll.get(openId) : undefined;
+        const target = selectedAssets.length > 0 ? selectedAssets : openAsset ? [openAsset] : [];
+        if (target.length > 0) setExportFolderAssets(target);
+      },
+      openExportToFlickr: () => {
+        const openAsset = openId ? assetByIdAll.get(openId) : undefined;
+        const target = selectedAssets.length > 0 ? selectedAssets : openAsset ? [openAsset] : [];
+        if (target.length > 0) setExportFlickrAssets(target);
       },
     }),
     [

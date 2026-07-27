@@ -2,26 +2,34 @@ import { useEditQueue } from '../lib/editQueue';
 import { useImportQueue } from '../lib/importQueue';
 import { useProcessingQueue } from '../lib/processingQueue';
 import { useArtQueue } from '../lib/artQueue';
+import { useExportQueue } from '../lib/exportQueue';
 
-// Combines the edit queue, import queue, processing queue, and ART queue's
-// independent, already-tested polls (editQueue.tsx/importQueue.tsx
-// untouched; processingQueue.tsx/artQueue.tsx structurally identical) into
-// one TitleBar pill - four simultaneously-spinning pills for what's
-// conceptually the same "background job queue" idea would be redundant
-// chrome. Mounted in place of the old EditQueueIndicator (kept as its own
-// file, just no longer mounted directly).
+// Combines the edit queue, import queue, processing queue, ART queue, and
+// export queue's independent, already-tested polls (editQueue.tsx/
+// importQueue.tsx untouched; processingQueue.tsx/artQueue.tsx/exportQueue.tsx
+// structurally identical) into one TitleBar pill - five simultaneously-
+// spinning pills for what's conceptually the same "background job queue"
+// idea would be redundant chrome. Mounted in place of the old
+// EditQueueIndicator (kept as its own file, just no longer mounted directly).
+//
+// exportQueue was left out of this originally, so a folder/Flickr export
+// that failed after being enqueued (the dialog closes as soon as jobs are
+// queued, not once they finish) produced literally no visible signal
+// anywhere unless the user happened to have the Activity panel open already.
 export default function ActivityIndicator({ onClick }: { onClick: () => void }) {
   const { jobs: editJobs, pendingCount: editPending } = useEditQueue();
   const { jobs: importJobs, pendingCount: importPending, nudgeError } = useImportQueue();
   const { jobs: processingJobs, pendingCount: processingPending } = useProcessingQueue();
   const { jobs: artJobs, pendingCount: artPending } = useArtQueue();
+  const { jobs: exportJobs, pendingCount: exportPending } = useExportQueue();
 
-  const pendingCount = editPending + importPending + processingPending + artPending;
+  const pendingCount = editPending + importPending + processingPending + artPending + exportPending;
   const failedCount =
     editJobs.filter((j) => j.status === 'failed').length +
     importJobs.filter((j) => j.status === 'failed').length +
     processingJobs.filter((j) => j.status === 'failed').length +
-    artJobs.filter((j) => j.status === 'failed').length;
+    artJobs.filter((j) => j.status === 'failed').length +
+    exportJobs.filter((j) => j.status === 'failed').length;
 
   if (pendingCount === 0 && failedCount === 0 && !nudgeError) return null;
 

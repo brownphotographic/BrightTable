@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   createAlbum,
   deleteAlbum,
@@ -21,6 +21,8 @@ import AssetTile, { type ClickMods } from '../components/AssetTile';
 import SelectionBar from '../components/SelectionBar';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import AddToAlbumDialog from '../components/AddToAlbumDialog';
+import ExportToFolderDialog from '../components/ExportToFolderDialog';
+import ExportToFlickrDialog from '../components/ExportToFlickrDialog';
 import MetadataPanel from '../components/MetadataPanel';
 import ConfirmDialog from '../components/ConfirmDialog';
 import InlineWarningBanner from '../components/InlineWarningBanner';
@@ -38,6 +40,11 @@ function prevValuesFor(asset: AssetSummary | undefined, patch: AssetMetadataPatc
   return prev;
 }
 
+export interface AlbumsBrowserHandle {
+  openExportToFolder: () => void;
+  openExportToFlickr: () => void;
+}
+
 // Real Immich albums (GET/POST/PATCH/DELETE /albums, PUT/DELETE
 // /albums/{id}/assets) - replaces the old placeholder. Deliberately scoped
 // down from Photos/Folders' full feature set: no Stacks, Smart Stack, ART
@@ -46,19 +53,21 @@ function prevValuesFor(asset: AssetSummary | undefined, patch: AssetMetadataPatc
 // album", and SelectionBar's relevant props are now optional specifically so
 // this view can omit them rather than wiring up no-ops. Rating/favorite
 // edits still go through the same background EditQueue as every other view,
-// for the same XMP-sidecar-write reason (see FoldersBrowser.tsx).
-export default function AlbumsBrowser({
-  metaOpen,
-  onCloseMetadata,
-  onCount,
-  active = true,
-}: {
+// for the same XMP-sidecar-write reason (see FoldersBrowser.tsx). Export to
+// Folder/Flickr are the exception - those are shared with Photos/Folders via
+// the File menu, so this view exposes just enough of a handle for that.
+const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
   metaOpen: boolean;
   onCloseMetadata: () => void;
   // Number of albums, for the sidebar row - only meaningful in the list view.
   onCount?: (n: number) => void;
   active?: boolean;
-}) {
+}>(function AlbumsBrowser({
+  metaOpen,
+  onCloseMetadata,
+  onCount,
+  active = true,
+}, ref) {
   const [albums, setAlbums] = useState<AlbumSummary[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [newAlbumName, setNewAlbumName] = useState('');
@@ -78,6 +87,8 @@ export default function AlbumsBrowser({
   const [confirmDeleteSelection, setConfirmDeleteSelection] = useState(false);
   const [confirmRemoveSelection, setConfirmRemoveSelection] = useState(false);
   const [addToAlbumTargets, setAddToAlbumTargets] = useState<string[] | null>(null);
+  const [exportFolderAssets, setExportFolderAssets] = useState<AssetSummary[] | null>(null);
+  const [exportFlickrAssets, setExportFlickrAssets] = useState<AssetSummary[] | null>(null);
   const { shortcuts, capturing } = useShortcuts();
 
   const refreshAlbumList = useCallback(() => {
@@ -302,6 +313,11 @@ export default function AlbumsBrowser({
       items.push({ label: 'Show in File Manager', onClick: () => handleShowInFileManager(asset) });
     }
     if (targetIds.length > 0) {
+      const exportAssets = targetIds.map((id) => assetById.get(id)).filter((a): a is AssetSummary => !!a);
+      items.push({ label: 'Export to Folder…', onClick: () => setExportFolderAssets(exportAssets) });
+      items.push({ label: 'Share to Flickr…', onClick: () => setExportFlickrAssets(exportAssets) });
+    }
+    if (targetIds.length > 0) {
       items.push({
         label: targetIds.length > 1 ? `Move ${targetIds.length} Photos to Trash` : 'Move to Trash',
         onClick: () => trashAssets(targetIds).catch((e) => setEnqueueError(String(e))),
@@ -309,6 +325,24 @@ export default function AlbumsBrowser({
     }
     return items;
   }, [contextMenu, assetById, selected, removeFromAlbum, handleShowInFileManager, trashAssets]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      // Matches Photos/Folders' File-menu export handlers: the current
+      // selection, else the asset open in the Viewer, else nothing (a
+      // silent no-op - there's no selection to disable the menu item on).
+      openExportToFolder: () => {
+        const target = selectedAssets.length > 0 ? selectedAssets : openAsset ? [openAsset] : [];
+        if (target.length > 0) setExportFolderAssets(target);
+      },
+      openExportToFlickr: () => {
+        const target = selectedAssets.length > 0 ? selectedAssets : openAsset ? [openAsset] : [];
+        if (target.length > 0) setExportFlickrAssets(target);
+      },
+    }),
+    [selectedAssets, openAsset],
+  );
 
   useEffect(() => {
     if (!openAlbumId || openId || !active) return;
@@ -554,6 +588,12 @@ export default function AlbumsBrowser({
         />
       )}
       {addToAlbumTargets && <AddToAlbumDialog assetIds={addToAlbumTargets} onClose={() => setAddToAlbumTargets(null)} />}
+      {exportFolderAssets && (
+        <ExportToFolderDialog assets={exportFolderAssets} onClose={() => setExportFolderAssets(null)} onExported={() => {}} />
+      )}
+      {exportFlickrAssets && (
+        <ExportToFlickrDialog assets={exportFlickrAssets} onClose={() => setExportFlickrAssets(null)} onExported={() => {}} />
+      )}
       {renamingAlbum && (
         <RenameAlbumDialog
           album={renamingAlbum}
@@ -579,7 +619,9 @@ export default function AlbumsBrowser({
       )}
     </div>
   );
-}
+});
+
+export default AlbumsBrowser;
 
 function AlbumCard({
   album,

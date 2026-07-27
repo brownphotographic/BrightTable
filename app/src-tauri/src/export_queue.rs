@@ -463,8 +463,23 @@ async fn resolve_rendition(
                     .ok_or_else(|| format!("No local path mapping configured for {file_name} — set up External Library mapping in Preferences → Library"))?;
                 convert_raw_to_jpeg(art_cli_path, exiftool_path, art_queue, &raw_path, job_id, cancel_rx).await?
             } else {
-                let (bytes, _mime) = immich.get_thumbnail_bytes(asset_id, "preview").await?;
-                bytes
+                // Prefer the true original over Immich's `preview` rendition -
+                // `preview` is a server-side-capped size (whatever the Immich
+                // instance is configured to generate, often ~1440-2048px on
+                // the long edge), so sourcing from it made "Full size" (and
+                // any size larger than that cap) silently downsized no matter
+                // what the user picked. Only falls back to `preview` when the
+                // original isn't something `encode_jpeg_rendition` can decode
+                // (the `image` crate here only has jpeg/png/tiff features -
+                // e.g. HEIC/HEIF originals - or the original fetch itself
+                // fails), so those cases keep working exactly as before.
+                match fetch_true_original(immich, library_cfg, asset_id, original_path, file_name).await {
+                    Ok((original_bytes, _filename)) if decodable_by_image_crate(&original_bytes) => original_bytes,
+                    _ => {
+                        let (bytes, _mime) = immich.get_thumbnail_bytes(asset_id, "preview").await?;
+                        bytes
+                    }
+                }
             };
             let size_px = rendition.size_px;
             let quality = rendition.quality;
@@ -644,6 +659,15 @@ fn encode_jpeg_rendition(bytes: &[u8], size_px: Option<u32>, quality: u8) -> Res
     let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, quality);
     img.write_with_encoder(encoder).map_err(|e| format!("Could not encode JPEG: {e}"))?;
     Ok(out)
+}
+
+/// Whether `image::load_from_memory` can actually decode `bytes` - a cheap
+/// magic-bytes sniff against the formats this crate is built with (see the
+/// `jpeg`/`png`/`tiff` features in Cargo.toml), used to decide whether the
+/// true original is usable as a `Jpeg`-format export source or whether
+/// `resolve_rendition` needs to fall back to Immich's `preview` rendition.
+fn decodable_by_image_crate(bytes: &[u8]) -> bool {
+    matches!(image::guess_format(bytes), Ok(image::ImageFormat::Jpeg | image::ImageFormat::Png | image::ImageFormat::Tiff))
 }
 
 fn guess_mime(filename: &str) -> String {
