@@ -1110,18 +1110,21 @@ pub fn list_removable_volumes() -> Vec<RemovableVolume> {
         .collect()
 }
 
-/// Bounds how long `scan_import_source`/`start_import` will wait on their
-/// blocking work before giving up and returning an error - both touch a
-/// user-chosen source/destination folder that can be an unreachable NFS/
-/// network mount, which can otherwise hang the underlying blocking task
-/// forever (found live: the Import dialog's "Scanning…"/"Starting…" button
-/// never resolving, with the OS eventually reporting the app itself as not
-/// responding). The abandoned task still leaks a blocking-pool thread on
-/// timeout, but the command itself returns promptly either way.
+/// Bounds how long `scan_import_source`/`check_import_duplicates`/
+/// `start_import` will wait on their blocking work before giving up and
+/// returning an error - all three touch a user-chosen source/destination
+/// folder that can be an unreachable NFS/network mount, which can otherwise
+/// hang the underlying blocking task forever (found live: the Import
+/// dialog's "Scanning…"/"Starting…" button never resolving, with the OS
+/// eventually reporting the app itself as not responding). The abandoned
+/// task still leaks a blocking-pool thread on timeout, but the command
+/// itself returns promptly either way.
 ///
-/// Two different budgets: scanning hashes every file it finds (up to ~4MB
-/// each, see `hash.rs`), which for a real card with thousands of files over
-/// a slow USB2 reader can legitimately take minutes even when nothing's
+/// Different budgets: `scan_import_source` itself is now cheap (a
+/// directory walk plus an EXIF-header read per file, no hashing - see
+/// `scan.rs`), but `check_import_duplicates` hashes every file it's given
+/// (up to ~4MB each, see `hash.rs`), which for a large date-range selection
+/// over a slow USB2 reader can legitimately take minutes even when nothing's
 /// wrong - generous, matching `queue::COPY_TIMEOUT`'s order of magnitude.
 /// Enqueueing only does cheap metadata operations (directory listings for
 /// collision checks), so a much shorter budget is enough to still be
@@ -1139,39 +1142,43 @@ pub struct ImportScanSummary {
     pub total_files: usize,
 }
 
-/// Scans the chosen source folder and marks which groups are already fully
-/// imported, checked against the queue's own in-memory dedupe cache (not a
-/// fresh disk read of `import_history.json` - the queue may hold very
-/// recent completions not yet flushed there, see `queue.rs`'s debounced
-/// save). Returns the full group plan (not just counts) so `start_import`
-/// doesn't need a second scan/hash pass over what could be a slow card
-/// reader.
+fn summarize(groups: Vec<ScannedGroup>) -> ImportScanSummary {
+    let already_imported_count = groups.iter().filter(|g| g.already_imported).count();
+    let paired_count = groups.iter().filter(|g| g.files.len() > 1).count();
+    let total_files = groups.iter().map(|g| g.files.len()).sum();
+    ImportScanSummary {
+        new_count: groups.len() - already_imported_count,
+        already_imported_count,
+        paired_count,
+        total_files,
+        groups,
+    }
+}
+
+/// Scans the chosen source folder - a directory walk plus, per file, a
+/// cheap stat and an EXIF-header-only read for capture time (see
+/// `capture_time.rs`). Deliberately does **not** hash anything yet, so
+/// `alreadyImportedCount` is always 0 here - real dedupe checking happens
+/// in `check_import_duplicates`, run only over whatever subset (typically a
+/// user-narrowed date range) is actually about to be imported. Splitting
+/// this out is what makes the "date range first, hash second" flow fast:
+/// hashing every file on a full card up front (the old, single-step
+/// behavior) meant paying the slow part even for the 95% of files the user
+/// only wanted to skip past.
 ///
 /// Runs through `io_guard::guarded_spawn_blocking`, not directly on the
-/// calling task - `import::scan_source` does a full recursive directory
-/// walk plus a partial hash read of every file it finds, which for a real
-/// SD card (hundreds of files) is real blocking work. Without this, that
-/// work ran straight on the async runtime's worker thread, starving the
-/// IPC channel long enough that the OS reported the whole app as "not
-/// responding" - a real bug found live, not a hypothetical.
+/// calling task - even without hashing, a full recursive directory walk
+/// plus an EXIF read of every file it finds is real blocking work for a
+/// card with thousands of files. Without this, that work ran straight on
+/// the async runtime's worker thread, starving the IPC channel long enough
+/// that the OS reported the whole app as not responding - a real bug found
+/// live, not a hypothetical.
 #[tauri::command]
 pub async fn scan_import_source(state: State<'_, AppState>, source_path: String) -> Result<ImportScanSummary, String> {
-    let queue = state.import_queue.clone();
     let source_display = source_path.clone();
     let Some(handle) = io_guard::guarded_spawn_blocking(&state.io_guard, move || -> Result<ImportScanSummary, String> {
-        let mut groups = import::scan_source(std::path::Path::new(&source_path))?;
-        queue.mark_already_imported(&mut groups);
-
-        let already_imported_count = groups.iter().filter(|g| g.already_imported).count();
-        let paired_count = groups.iter().filter(|g| g.files.len() > 1).count();
-        let total_files = groups.iter().map(|g| g.files.len()).sum();
-        Ok(ImportScanSummary {
-            new_count: groups.len() - already_imported_count,
-            already_imported_count,
-            paired_count,
-            total_files,
-            groups,
-        })
+        let groups = import::scan_source(std::path::Path::new(&source_path))?;
+        Ok(summarize(groups))
     }) else {
         return Err("Skipped: system is about to suspend, try again after it wakes".to_string());
     };
@@ -1179,6 +1186,37 @@ pub async fn scan_import_source(state: State<'_, AppState>, source_path: String)
         Ok(join_result) => join_result.map_err(|e| e.to_string())?,
         Err(_) => Err(format!(
             "Timed out after {}s scanning \"{source_display}\" — check it's actually connected/reachable",
+            IMPORT_SCAN_TIMEOUT.as_secs()
+        )),
+    }
+}
+
+/// The other half of `scan_import_source`: hashes every file in the given
+/// groups (skipping any that already have a hash - see `hash_groups`) and
+/// marks which are already fully imported, checked against the queue's own
+/// in-memory dedupe cache (not a fresh disk read of `import_history.json` -
+/// the queue may hold very recent completions not yet flushed there, see
+/// `queue.rs`'s debounced save). Meant to be called with a subset of a
+/// prior `scan_import_source` result - typically whatever the user's date
+/// range narrowed down to - not the full scan, so the expensive part only
+/// runs over files actually in play. Returns the same groups back with
+/// `partialHash`/`alreadyImported` now filled in, so `start_import` doesn't
+/// need a second scan/hash pass over what could be a slow card reader.
+#[tauri::command]
+pub async fn check_import_duplicates(state: State<'_, AppState>, groups: Vec<ScannedGroup>) -> Result<ImportScanSummary, String> {
+    let queue = state.import_queue.clone();
+    let Some(handle) = io_guard::guarded_spawn_blocking(&state.io_guard, move || -> ImportScanSummary {
+        let mut groups = groups;
+        import::hash_groups(&mut groups);
+        queue.mark_already_imported(&mut groups);
+        summarize(groups)
+    }) else {
+        return Err("Skipped: system is about to suspend, try again after it wakes".to_string());
+    };
+    match tokio::time::timeout(IMPORT_SCAN_TIMEOUT, handle).await {
+        Ok(join_result) => Ok(join_result.map_err(|e| e.to_string())?),
+        Err(_) => Err(format!(
+            "Timed out after {}s checking for duplicates — check the source is actually connected/reachable",
             IMPORT_SCAN_TIMEOUT.as_secs()
         )),
     }

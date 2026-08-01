@@ -14,4 +14,4 @@ pub mod scan;
 pub use library_match::{find_matching_library, LibraryMatch};
 pub use naming::FolderDepth;
 pub use queue::{ImportJob, ImportQueue};
-pub use scan::{scan_source, ScannedGroup};
+pub use scan::{hash_groups, scan_source, ScannedGroup};

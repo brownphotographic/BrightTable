@@ -15,10 +15,20 @@ pub struct ThumbCacheStats {
     pub file_count: u64,
 }
 
+// Immich's own `preview`/`thumbnail` renditions are always transcoded
+// server-side to jpeg/webp/png, so those three used to be the only cases that
+// mattered here. `size=original` (see protocol.rs) streams the untouched
+// source file instead, which can legitimately be gif/bmp/avif too - mapping
+// one of those to the "jpg" fallback would cache it under the wrong
+// extension and, on a later cache hit, serve it back with a lying
+// Content-Type that the webview can't decode against the real bytes.
 fn ext_for_content_type(ct: &str) -> &'static str {
     match ct {
         "image/webp" => "webp",
         "image/png" => "png",
+        "image/gif" => "gif",
+        "image/bmp" => "bmp",
+        "image/avif" => "avif",
         _ => "jpg",
     }
 }
@@ -27,6 +37,9 @@ fn mime_for_ext(ext: &str) -> &'static str {
     match ext {
         "webp" => "image/webp",
         "png" => "image/png",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        "avif" => "image/avif",
         _ => "image/jpeg",
     }
 }
@@ -40,7 +53,7 @@ fn cache_dir(app: &AppHandle) -> Option<PathBuf> {
 /// odds are negligible and out of scope for this cache's first pass.
 pub fn read(app: &AppHandle, asset_id: &str, size: &str) -> Option<(Vec<u8>, String)> {
     let dir = cache_dir(app)?;
-    for ext in ["jpg", "webp", "png"] {
+    for ext in ["jpg", "webp", "png", "gif", "bmp", "avif"] {
         let path = dir.join(format!("{asset_id}_{size}.{ext}"));
         if let Ok(bytes) = fs::read(&path) {
             return Some((bytes, mime_for_ext(ext).to_string()));

@@ -17,7 +17,7 @@ import MetadataRows, { Star } from './MetadataRows';
 import ConfirmDialog from './ConfirmDialog';
 import { isTypingTarget, matchesShortcut, useShortcuts } from '../lib/shortcuts';
 import { overlayRawOverrides, useRawOverrides } from '../lib/rawOverrides';
-import { isRawAsset } from '../lib/filters';
+import { isOriginalZoomable, isRawAsset } from '../lib/filters';
 import { useApplications } from '../lib/applications';
 import { useClipboard } from '../lib/clipboard';
 import { useNoSidecarChoice } from '../lib/useNoSidecarChoice';
@@ -129,6 +129,10 @@ export default function Viewer({
   // less state).
   const [loadedId, setLoadedId] = useState<string | null>(null);
   const [thumbLoadedId, setThumbLoadedId] = useState<string | null>(null);
+  // Set once the full-resolution `original` file (not Immich's fixed-size
+  // `preview` rendition) has loaded for the currently zoomed/loupe'd asset -
+  // see `wantHiRes` below for why `preview` alone isn't enough at high zoom.
+  const [hiResLoadedId, setHiResLoadedId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmPasteProcessing, setConfirmPasteProcessing] = useState(false);
   const [stackMembers, setStackMembers] = useState<AssetSummary[] | null>(null);
@@ -160,6 +164,12 @@ export default function Viewer({
   const stageRef = useRef<HTMLDivElement>(null);
   const previewImgRef = useRef<HTMLImageElement>(null);
   const stackId = asset.stack?.id ?? null;
+  // Tracks the stage's live box size so the hi-res decision below (see
+  // `fitExceedsPreview`) reacts to window resizes, panel toggles, etc. - a
+  // one-off getBoundingClientRect() read during render would go stale the
+  // instant the layout changes without some other state update also
+  // happening to trigger a re-render.
+  const [stageSize, setStageSize] = useState<{ w: number; h: number } | null>(null);
 
   // Fetches the full member list whenever the open asset's stack changes (or
   // stops/starts having one) - StackBand.tsx does the same fetch-on-mount,
@@ -182,6 +192,24 @@ export default function Viewer({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stackId]);
+
+  // The stage element itself never unmounts across the Viewer's lifetime
+  // (only its contents change), so one observer set up on mount covers every
+  // resize - window resizes, the OS window being maximized/restored, and the
+  // Info/Filmstrip panels toggling (both resize the stage without a window
+  // resize event).
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      setStageSize({ w: rect.width, h: rect.height });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // New asset (via prev/next, filmstrip click, or reopen) - reset per-image
   // transient state, and the loupe cursor lands in a stale spot otherwise.
@@ -289,6 +317,27 @@ export default function Viewer({
   );
   const { trackJobs: trackProcessingJobs } = useProcessingJobReconciliation(processingJobs, reconcileProcessingJob);
 
+  // Up/Down (stackPrev/stackNext) walk through the open stack's own members
+  // (peeking each one, same as clicking its tile in the info panel) - Left/
+  // Right stay dedicated to the normal cross-asset onPrev/onNext (the
+  // filmstrip order) so the two navigations don't fight over the same keys.
+  // Without this, a stack's hidden non-pick members could only ever be
+  // reached by clicking their tile in the info panel, since they're excluded
+  // from the flat asset list onPrev/onNext walk.
+  const tryStackNav = useCallback(
+    (dir: -1 | 1): boolean => {
+      if (!stackMembers || stackMembers.length < 2) return false;
+      const idx = stackMembers.findIndex((m) => m.id === shown.id);
+      if (idx === -1) return false;
+      const nextIdx = idx + dir;
+      if (nextIdx < 0 || nextIdx >= stackMembers.length) return false;
+      const target = stackMembers[nextIdx];
+      setPeekAsset(target.id === asset.id ? null : target);
+      return true;
+    },
+    [stackMembers, shown.id, asset.id],
+  );
+
   const confirmPasteImageProcessingAction = useCallback(async () => {
     if (!copiedProcessingSource) return;
     const targets: MetadataEditTarget[] = [{ id: shown.id, originalPath: shown.originalPath }];
@@ -315,6 +364,8 @@ export default function Viewer({
       if (matchesShortcut(e, shortcuts.deselect)) onClose();
       else if (matchesShortcut(e, shortcuts.prev) && hasPrev) onPrev();
       else if (matchesShortcut(e, shortcuts.next) && hasNext) onNext();
+      else if (matchesShortcut(e, shortcuts.stackPrev)) tryStackNav(-1);
+      else if (matchesShortcut(e, shortcuts.stackNext)) tryStackNav(1);
       else if (matchesShortcut(e, shortcuts.toggleInfo)) setInfoOpen((v) => !v);
       else if (matchesShortcut(e, shortcuts.toggleFilmstrip)) setFilmstripOpen((v) => !v);
       else if (matchesShortcut(e, shortcuts.loupe)) setLoupeOn((v) => !v);
@@ -343,6 +394,7 @@ export default function Viewer({
     onNext,
     hasPrev,
     hasNext,
+    tryStackNav,
     confirmDelete,
     confirmPasteProcessing,
     shortcuts,
@@ -362,23 +414,46 @@ export default function Viewer({
 
   const previewSrc = thumbnailSrc(shown.id, 'preview');
 
-  // The loupe magnifies the "fit" (unzoomed) rendering of the already-loaded
-  // preview image - it doesn't compose with the manual zoom slider, and since
-  // it's magnifying the preview rendition (not the full original), it tops
-  // out at that rendition's resolution rather than true pixel-level detail.
-  // Gated on `loaded`: reusing previewSrc as a CSS background before the main
-  // <img> has finished fetching it would race a second, independent request
-  // for the same bytes over a possibly-slow remote connection instead of
-  // hitting the now-warm local disk cache from the first request.
   // Uses the loaded <img>'s own naturalWidth/naturalHeight (not
   // shown.exifImageWidth/Height) - EXIF dimensions are frequently absent
   // (screenshots, assets Immich hasn't finished metadata-extracting) and,
   // when present, describe the *original* file rather than the possibly
   // reoriented preview rendition actually on screen, which silently broke
   // the loupe (or misaligned it) for exactly those assets.
-  let loupeStyle: React.CSSProperties | null = null;
   const natW = previewImgRef.current?.naturalWidth;
   const natH = previewImgRef.current?.naturalHeight;
+
+  // Immich's `preview` rendition is a fixed resolution (~1440px longest
+  // edge). That's soft once stretched past 100% zoom or magnified 3x under
+  // the loupe - but it can *also* be soft at the plain default "fit to
+  // window" zoom, with no zooming involved at all, if the window/screen
+  // alone needs more pixels than `preview` has just to fill itself (a
+  // maximized viewer on a large or high-DPI display easily exceeds 1440px
+  // of *device* pixels along the image's long edge). `fitExceedsPreview`
+  // catches that case by comparing the fitted box's device-pixel size
+  // against the loaded preview's native resolution, so the swap to the full
+  // original kicks in whenever it's actually needed, not just on an
+  // explicit zoom/loupe action.
+  let fitExceedsPreview = false;
+  if (loaded && stageSize && natW && natH) {
+    const dpr = window.devicePixelRatio || 1;
+    const { w, h } = containRect(stageSize.w, stageSize.h, natW, natH);
+    fitExceedsPreview = w * dpr > natW + 1 || h * dpr > natH + 1;
+  }
+  const wantHiRes = (zoom > 100 || loupeOn || fitExceedsPreview) && isOriginalZoomable(shown);
+  const hiResSrc = thumbnailSrc(shown.id, 'original');
+  const hiResReady = wantHiRes && hiResLoadedId === shown.id;
+
+  // The loupe magnifies the "fit" (unzoomed) rendering of the already-loaded
+  // preview image - it doesn't compose with the manual zoom slider. Once
+  // `hiResReady`, it magnifies the full original instead of the
+  // fixed-resolution preview, so 3x magnification still shows real
+  // pixel-level detail rather than an upsampled blur.
+  // Gated on `loaded`: reusing previewSrc as a CSS background before the main
+  // <img> has finished fetching it would race a second, independent request
+  // for the same bytes over a possibly-slow remote connection instead of
+  // hitting the now-warm local disk cache from the first request.
+  let loupeStyle: React.CSSProperties | null = null;
   if (loupeOn && loaded && loupePos && stageRef.current && natW && natH) {
     const rect = stageRef.current.getBoundingClientRect();
     const { w, h, x, y } = containRect(rect.width, rect.height, natW, natH);
@@ -395,7 +470,7 @@ export default function Viewer({
         border: '2px solid rgba(255,255,255,0.5)',
         boxShadow: '0 8px 30px rgba(0,0,0,0.6)',
         backgroundColor: '#000',
-        backgroundImage: `url(${previewSrc})`,
+        backgroundImage: `url(${hiResReady ? hiResSrc : previewSrc})`,
         backgroundRepeat: 'no-repeat',
         backgroundSize: `${w * LOUPE_MAGNIFICATION}px ${h * LOUPE_MAGNIFICATION}px`,
         backgroundPosition: `${-(cx * LOUPE_MAGNIFICATION - LOUPE_SIZE / 2)}px ${-(cy * LOUPE_MAGNIFICATION - LOUPE_SIZE / 2)}px`,
@@ -682,6 +757,28 @@ export default function Viewer({
                   transition: 'opacity 150ms',
                 }}
               />
+              {/* Only mounted while actually needed (zoomed past 100% or the
+                  loupe is on) - fetching the full original for every photo
+                  just to sit at 100% zoom would be wasted bandwidth. Sits on
+                  top of the `preview` layer above, which stays visible as a
+                  (softer) fallback until this one finishes loading. */}
+              {wantHiRes && (
+                <img
+                  src={hiResSrc}
+                  alt=""
+                  onLoad={() => setHiResLoadedId(shown.id)}
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'contain',
+                    transform: `scale(${zoom / 100})`,
+                    opacity: hiResReady ? 1 : 0,
+                    transition: 'opacity 150ms',
+                  }}
+                />
+              )}
               {loupeStyle && <div style={loupeStyle} />}
             </div>
           </div>

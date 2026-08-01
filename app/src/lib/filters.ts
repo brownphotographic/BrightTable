@@ -33,6 +33,18 @@ export function isRawAsset(asset: AssetSummary): boolean {
   return !!asset.isRawOverride || isRawExtension(asset.fileExtension);
 }
 
+// Formats a webview <img> can decode directly, so it's safe to swap in the
+// original file (via thumbnailSrc(id, 'original')) as a crisper source once
+// zoomed past Immich's fixed-resolution `preview` rendition. Deliberately
+// excludes RAW (not browser-decodable at all) and HEIC/TIFF (unreliable
+// native <img> decode support across the Chromium/WebKit webviews Tauri
+// embeds) - those stay on `preview` at every zoom level, same as before.
+const ORIGINAL_ZOOMABLE_EXTENSIONS = new Set(['JPG', 'JPEG', 'PNG', 'WEBP', 'GIF', 'BMP', 'AVIF']);
+
+export function isOriginalZoomable(asset: AssetSummary): boolean {
+  return !isRawAsset(asset) && ORIGINAL_ZOOMABLE_EXTENSIONS.has(asset.fileExtension);
+}
+
 export function matchesFilters(asset: AssetSummary, filters: Filters): boolean {
   if (filters.favOnly && !asset.isFavorite) return false;
   if (filters.minRating > 0 && (asset.rating ?? 0) < filters.minRating) return false;

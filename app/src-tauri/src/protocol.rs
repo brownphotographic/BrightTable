@@ -7,10 +7,18 @@ use crate::thumb_cache;
 
 pub const SCHEME: &str = "immich-thumb";
 
-/// Handles `immich-thumb://thumbnail/{asset_id}?size=preview|thumbnail` requests
-/// from the webview by proxying an authenticated fetch to the configured Immich
-/// server. The API key never reaches the webview's JS or network tab this way -
-/// only this URI ever shows up in devtools.
+/// Handles `immich-thumb://thumbnail/{asset_id}?size=preview|thumbnail|original`
+/// requests from the webview by proxying an authenticated fetch to the
+/// configured Immich server. The API key never reaches the webview's JS or
+/// network tab this way - only this URI ever shows up in devtools.
+///
+/// `size=original` is handled separately from `preview`/`thumbnail`: those two
+/// are Immich's own `/assets/{id}/thumbnail?size=` renditions, but there's no
+/// such thing as an "original" thumbnail size - it's routed to
+/// `/assets/{id}/original` instead (see `get_original_bytes`). The frontend
+/// only ever requests it for the Viewer's zoom/loupe, and only for formats it
+/// has already confirmed a webview can decode (see `isOriginalZoomable` in
+/// filters.ts) - this handler doesn't re-check that itself.
 pub fn handle(
     app: &tauri::AppHandle,
     request: http::Request<Vec<u8>>,
@@ -70,7 +78,11 @@ pub fn handle(
 
         let result = async {
             let client = ImmichClient::from_config(&cfg, http, &auto_resolution).await?;
-            client.get_thumbnail_bytes(&asset_id, &size).await
+            if size == "original" {
+                client.get_original_bytes(&asset_id).await
+            } else {
+                client.get_thumbnail_bytes(&asset_id, &size).await
+            }
         }
         .await;
 

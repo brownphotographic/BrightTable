@@ -41,6 +41,13 @@ pub struct ScannedFile {
     /// Uppercase, no leading dot.
     pub extension: String,
     pub size_bytes: u64,
+    /// Empty straight out of `scan_source` - computing this means actually
+    /// reading up to 4MB of every file, which over a slow card reader or a
+    /// big card is the dominant cost of a scan. Deliberately deferred out
+    /// of the initial (cheap) directory walk so the UI can show capture
+    /// dates and let the user narrow to a date range *before* paying that
+    /// cost - see `hash_groups` below, run only over whatever subset the
+    /// user actually wants to check/import.
     pub partial_hash: String,
     pub capture_time: CaptureTime,
     pub capture_time_is_exif: bool,
@@ -105,16 +112,35 @@ fn scan_one_file(path: &Path) -> Option<ScannedFile> {
         return None;
     }
     let metadata = path.metadata().ok()?;
-    let partial_hash = super::hash::partial_hash(path).ok()?;
     let (capture_time, capture_time_is_exif) = capture_time::file_capture_time(path);
     Some(ScannedFile {
         source_path: path.to_string_lossy().to_string(),
         extension: ext,
         size_bytes: metadata.len(),
-        partial_hash,
+        partial_hash: String::new(),
         capture_time,
         capture_time_is_exif,
     })
+}
+
+/// Fills in `partial_hash` for every file in `groups` that doesn't already
+/// have one - the deferred other half of `scan_one_file`. Meant to run only
+/// over whatever subset (e.g. a user-narrowed date range) is actually about
+/// to be checked/imported, not the full scan. Best-effort like the rest of
+/// this module: a file that fails to hash (bad sector, permissions, card
+/// pulled mid-scan) is left with an empty hash rather than aborting the
+/// whole batch - it just won't dedupe-match anything, same as if it were
+/// genuinely new.
+pub fn hash_groups(groups: &mut [ScannedGroup]) {
+    for group in groups.iter_mut() {
+        for file in group.files.iter_mut() {
+            if file.partial_hash.is_empty() {
+                if let Ok(hash) = super::hash::partial_hash(Path::new(&file.source_path)) {
+                    file.partial_hash = hash;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -191,5 +217,41 @@ mod tests {
         let missing = std::env::temp_dir().join("immature-test-scan-does-not-exist");
         let _ = fs::remove_dir_all(&missing);
         assert!(scan_source(&missing).is_err());
+    }
+
+    #[test]
+    fn scan_source_leaves_partial_hash_empty() {
+        let dir = tmp_dir("no-hash-yet");
+        fs::write(dir.join("IMG_0004.JPG"), b"not hashed at scan time").unwrap();
+
+        let groups = scan_source(&dir).unwrap();
+        assert_eq!(groups[0].files[0].partial_hash, "", "hashing is deferred to hash_groups, not done during scan_source");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hash_groups_fills_in_partial_hash() {
+        let dir = tmp_dir("hash-groups");
+        fs::write(dir.join("IMG_0005.JPG"), b"hash me now").unwrap();
+
+        let mut groups = scan_source(&dir).unwrap();
+        hash_groups(&mut groups);
+        assert!(!groups[0].files[0].partial_hash.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hash_groups_does_not_rehash_a_file_that_already_has_one() {
+        let dir = tmp_dir("hash-groups-idempotent");
+        fs::write(dir.join("IMG_0006.JPG"), b"already hashed").unwrap();
+
+        let mut groups = scan_source(&dir).unwrap();
+        groups[0].files[0].partial_hash = "pretend-precomputed".into();
+        hash_groups(&mut groups);
+        assert_eq!(groups[0].files[0].partial_hash, "pretend-precomputed");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

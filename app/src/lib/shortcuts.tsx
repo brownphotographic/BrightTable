@@ -8,6 +8,8 @@ export type ShortcutId =
   | 'delete'
   | 'prev'
   | 'next'
+  | 'stackPrev'
+  | 'stackNext'
   | 'toggleInfo'
   | 'toggleFilmstrip'
   | 'favorite'
@@ -37,6 +39,8 @@ export const SHORTCUT_DEFS: { id: ShortcutId; label: string }[] = [
   { id: 'delete', label: 'Move to Trash' },
   { id: 'prev', label: 'Previous photo' },
   { id: 'next', label: 'Next photo' },
+  { id: 'stackPrev', label: 'Previous photo in stack' },
+  { id: 'stackNext', label: 'Next photo in stack' },
   { id: 'toggleInfo', label: 'Toggle info panel' },
   { id: 'toggleFilmstrip', label: 'Toggle filmstrip' },
   { id: 'favorite', label: 'Toggle favorite' },
@@ -70,6 +74,8 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutId, string> = {
   delete: 'Delete',
   prev: 'ArrowLeft',
   next: 'ArrowRight',
+  stackPrev: 'ArrowUp',
+  stackNext: 'ArrowDown',
   toggleInfo: 'I',
   toggleFilmstrip: 'M',
   favorite: 'F',

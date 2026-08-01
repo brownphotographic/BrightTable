@@ -1,9 +1,12 @@
-//! The local dedupe cache: "have I already imported this file before?"
-//! across sessions and re-scans, keyed by content hash - Rapid Photo
-//! Downloader's own core "don't re-copy the same file twice" feature.
-//! Persisted to its own JSON file (not folded into `config.json`, which
-//! churns far less and stays small) - see `commands.rs` for where that
-//! path is resolved via the app handle, mirroring `config::config_path`.
+//! The dedupe cache: "have I already imported this file before?" across
+//! sessions, re-scans, and - critically - other computers sharing the same
+//! library, keyed by content hash - Rapid Photo Downloader's own core
+//! "don't re-copy the same file twice" feature. Persisted to its own JSON
+//! file under the library's own local mount (see `lib.rs` for where that
+//! path is resolved), not folded into `config.json` (which churns far less,
+//! stays small, and is per-machine by design) and not left in the OS
+//! app-config dir either - a per-machine cache can't see an import done
+//! from a different computer pointed at the same shared library.
 
 use std::collections::HashMap;
 use std::fs;
@@ -19,6 +22,20 @@ use super::scan::ScannedGroup;
 pub struct ImportRecord {
     pub source_path: String,
     pub dest_path: String,
+    /// The original camera-assigned filename (e.g. `L1000563.DNG`) - just
+    /// `source_path`'s last component, duplicated out here so anything
+    /// wanting the "camera name → renamed-on-import name" pair (an audit
+    /// trail: "what did ImmAture rename this shot to?") doesn't need to
+    /// re-parse a full path. This is *not* the dedupe key - a reformatted
+    /// or swapped SD card can legitimately reuse this exact name for a
+    /// completely different photo later, which is exactly the case the
+    /// content hash below (`key()`'s partial_hash) exists to catch; keying
+    /// on name+size alone would silently skip that new photo as a false
+    /// "already imported".
+    pub original_filename: String,
+    /// `dest_path`'s last component (the `yyyymmdd_hh-mm-ss.ext` name) -
+    /// the other half of the pair above.
+    pub converted_filename: String,
     pub size_bytes: u64,
     pub imported_at_ms: u64,
     /// Full-file BLAKE3 hash, computed as a byproduct of the copy itself
@@ -111,6 +128,8 @@ mod tests {
         ImportRecord {
             source_path: "/sd/IMG.CR3".into(),
             dest_path: dest.into(),
+            original_filename: "IMG.CR3".into(),
+            converted_filename: Path::new(dest).file_name().unwrap().to_string_lossy().to_string(),
             size_bytes: 100,
             imported_at_ms: 0,
             full_hash: "dummy".into(),

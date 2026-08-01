@@ -638,8 +638,12 @@ export function cancelArtJob(jobId: number): Promise<boolean> {
 }
 
 // Grid cells render at ~160px - "thumbnail" (~30KB) is the right size for that.
-// "preview" (~1MB, full viewer resolution) is reserved for a future detail view.
-export function thumbnailSrc(assetId: string, size: 'thumbnail' | 'preview' = 'thumbnail'): string {
+// "preview" (~1MB) is Immich's fixed-resolution rendition, used as the
+// viewer's default. "original" streams the untouched source file - the
+// Viewer only requests it once zoomed past what "preview" can render crisply
+// (or with the loupe active), and only for formats a webview can actually
+// decode (see isOriginalZoomable) - it's not a general-purpose size.
+export function thumbnailSrc(assetId: string, size: 'thumbnail' | 'preview' | 'original' = 'thumbnail'): string {
   return `immich-thumb://thumbnail/${assetId}?size=${size}`;
 }
 
@@ -720,11 +724,23 @@ export interface ImportScanSummary {
   totalFiles: number;
 }
 
-// Scans the chosen source folder and returns both aggregate counts and the
-// full group plan, so startImport doesn't need a second scan/hash pass over
-// what could be a slow card reader.
+// Scans the chosen source folder - cheap (stat + EXIF header per file), no
+// hashing yet, so alreadyImportedCount is always 0 here. Real dedupe
+// checking happens in checkImportDuplicates, run only over whatever subset
+// (typically a user-narrowed date range) is actually about to be imported -
+// see that function's own doc comment for why.
 export function scanImportSource(sourcePath: string): Promise<ImportScanSummary> {
   return invoke('scan_import_source', { sourcePath });
+}
+
+// Hashes every file in the given groups and marks which are already fully
+// imported. Pass a subset of a prior scanImportSource result - typically
+// whatever the date range narrowed down to, not the full scan - so the slow
+// part (reading up to 4MB of every file) only runs over files actually in
+// play. Returns the same groups with partialHash/alreadyImported filled in;
+// pass those straight to startImport rather than the original scan result.
+export function checkImportDuplicates(groups: ScannedGroup[]): Promise<ImportScanSummary> {
+  return invoke('check_import_duplicates', { groups });
 }
 
 // Enqueues the copy jobs for every not-already-imported group and returns

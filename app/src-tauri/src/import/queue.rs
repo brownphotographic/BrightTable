@@ -289,6 +289,8 @@ impl ImportQueue {
                 ImportRecord {
                     source_path: source_path.to_string_lossy().to_string(),
                     dest_path: dest_path.to_string_lossy().to_string(),
+                    original_filename: source_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                    converted_filename: dest_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
                     size_bytes,
                     imported_at_ms: history::now_ms(),
                     full_hash,

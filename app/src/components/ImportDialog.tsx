@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
+  checkImportDuplicates,
   getConfig,
   listRemovableVolumes,
   saveImportSettings,
@@ -25,6 +26,17 @@ function filenameStem(ct: CaptureTime): string {
 function nowAsCaptureTime(): CaptureTime {
   const d = new Date();
   return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate(), hour: d.getHours(), minute: d.getMinutes(), second: d.getSeconds() };
+}
+
+// yyyy-mm-dd - directly comparable as strings.
+function captureDateStr(ct: CaptureTime): string {
+  return `${pad(ct.year, 4)}-${pad(ct.month, 2)}-${pad(ct.day, 2)}`;
+}
+
+// e.g. "Jul 25, 2026" - for the date-range dropdowns below.
+function formatDateLabel(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 // Mirrors naming.rs's dest_dir/filename_stem exactly - shown live in the
@@ -58,6 +70,15 @@ export default function ImportDialog({
   const [scanning, setScanning] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  // Result of checkImportDuplicates for the current date range - null means
+  // "not checked yet" (or the range changed since the last check, see
+  // changeDateFrom/changeDateTo below). Hashing is deferred until this
+  // point specifically so it only ever runs over the range the user
+  // actually wants, not the whole card.
+  const [checkedSummary, setCheckedSummary] = useState<ImportScanSummary | null>(null);
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     listRemovableVolumes().then(setVolumes).catch(() => {});
@@ -75,6 +96,9 @@ export default function ImportDialog({
     setSourcePath(path);
     setScanning(true);
     setError(null);
+    setDateFrom('');
+    setDateTo('');
+    setCheckedSummary(null);
     try {
       const result = await scanImportSource(path);
       setSummary(result);
@@ -106,22 +130,81 @@ export default function ImportDialog({
     saveImportSettings({ folderDepth, lastSourcePath: sourcePath, maxConcurrentJobs: v }).catch(() => {});
   }
 
-  const filesToCopy = summary ? summary.groups.filter((g) => !g.alreadyImported).reduce((n, g) => n + g.files.length, 0) : 0;
+  // Only the dates actually present in this scan - shown as dropdowns
+  // rather than a free-form calendar. A native <input type="date">'s popup
+  // calendar doesn't reliably dismiss on outside-click in the Tauri
+  // webview (confirmed live - it stays open and swallows clicks), and it'd
+  // let you pick a date with zero photos on it anyway; a plain dropdown of
+  // real options sidesteps both problems.
+  const distinctDates = summary ? Array.from(new Set(summary.groups.map((g) => captureDateStr(g.captureTime)))).sort() : [];
 
-  // Representative of what will actually be copied (falls back to any
-  // scanned group, then to "now", so the preview still shows something
-  // sensible even for an all-already-imported or empty scan).
-  const exampleGroup = summary?.groups.find((g) => !g.alreadyImported) ?? summary?.groups[0];
+  // Keeps the range from ever inverting (from > to) instead of silently
+  // producing a zero-result filter - picking a "to" earlier than the
+  // current "from" pulls "from" down to match, and vice versa. Either way,
+  // a range change invalidates any prior duplicate check - the newly
+  // included/excluded files haven't been hashed against this range.
+  function changeDateFrom(v: string) {
+    setDateFrom(v);
+    if (v && dateTo && v > dateTo) setDateTo(v);
+    setCheckedSummary(null);
+  }
+  function changeDateTo(v: string) {
+    setDateTo(v);
+    if (v && dateFrom && v < dateFrom) setDateFrom(v);
+    setCheckedSummary(null);
+  }
+  function clearDateRange() {
+    setDateFrom('');
+    setDateTo('');
+    setCheckedSummary(null);
+  }
+
+  function inDateRange(g: { captureTime: CaptureTime }): boolean {
+    const d = captureDateStr(g.captureTime);
+    if (dateFrom && d < dateFrom) return false;
+    if (dateTo && d > dateTo) return false;
+    return true;
+  }
+
+  // Everything in the selected range, dedupe status unknown until checked
+  // (hashing hasn't run yet - see scanImportSource's own doc comment).
+  const groupsInRange = summary ? summary.groups.filter(inDateRange) : [];
+  const dateFilterActive = dateFrom !== '' || dateTo !== '';
+
+  // Only meaningful once checkedSummary exists - that's the hashed result,
+  // scoped to exactly the range that was checked.
+  const groupsToImport = checkedSummary ? checkedSummary.groups.filter((g) => !g.alreadyImported) : [];
+  const filesToCopy = groupsToImport.reduce((n, g) => n + g.files.length, 0);
+
+  // Representative of what will actually be copied (falls back through
+  // progressively less-specific groups, then to "now", so the preview
+  // still shows something sensible at every stage: pre-check, post-check
+  // with nothing new, or an empty scan).
+  const exampleGroup = groupsToImport[0] ?? groupsInRange[0] ?? summary?.groups[0];
   const exampleCt = exampleGroup?.captureTime ?? nowAsCaptureTime();
   const exampleExt = exampleGroup?.files[0]?.extension ?? 'JPG';
   const destinationPreview = localRoot ? exampleDestPath(localRoot, folderDepth, exampleCt, exampleExt) : null;
 
+  async function checkDuplicates() {
+    if (groupsInRange.length === 0) return;
+    setChecking(true);
+    setError(null);
+    try {
+      const result = await checkImportDuplicates(groupsInRange);
+      setCheckedSummary(result);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setChecking(false);
+    }
+  }
+
   async function doImport() {
-    if (!summary) return;
+    if (!checkedSummary) return;
     setStarting(true);
     setError(null);
     try {
-      await startImport(summary.groups, folderDepth);
+      await startImport(groupsToImport, folderDepth);
       await saveImportSettings({ folderDepth, lastSourcePath: sourcePath, maxConcurrentJobs }).catch(() => {});
       onClose();
     } catch (e) {
@@ -158,8 +241,8 @@ export default function ImportDialog({
                 <div style={spinnerLarge} />
                 <div style={{ marginTop: 14, fontSize: 13.5, fontWeight: 600 }}>Scanning source…</div>
                 <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-dimmer)', lineHeight: 1.5 }}>
-                  This can take a while for a large card or a slow USB reader — every file gets checked and
-                  hashed. Please keep this window open; it hasn't frozen.
+                  This can take a while for a large card or a slow USB reader — every file gets checked for
+                  its capture date. Please keep this window open; it hasn't frozen.
                 </div>
               </div>
             ) : (
@@ -184,10 +267,49 @@ export default function ImportDialog({
             )
           ) : summary ? (
             <>
-              <SummaryRow label="New items" value={summary.newCount} />
-              <SummaryRow label="Already imported (skipped)" value={summary.alreadyImportedCount} />
-              <SummaryRow label="RAW+JPEG pairs found" value={summary.pairedCount} />
               <SummaryRow label="Total files scanned" value={summary.totalFiles} />
+              <SummaryRow label="RAW+JPEG pairs found" value={summary.pairedCount} />
+              {checkedSummary ? (
+                <>
+                  <SummaryRow label="New items in range" value={checkedSummary.newCount} />
+                  <SummaryRow label="Already imported (skipped)" value={checkedSummary.alreadyImportedCount} />
+                </>
+              ) : (
+                <SummaryRow label="Items in range (not checked yet)" value={groupsInRange.length} />
+              )}
+
+              <div style={{ marginTop: 18 }}>
+                <div style={sectionLabel}>Only import this date range</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <select value={dateFrom} onChange={(e) => changeDateFrom(e.target.value)} style={dateSelect}>
+                    <option value="">Any</option>
+                    {distinctDates.map((d) => (
+                      <option key={d} value={d}>
+                        {formatDateLabel(d)}
+                      </option>
+                    ))}
+                  </select>
+                  <span style={{ fontSize: 12, color: 'var(--text-dimmer)' }}>to</span>
+                  <select value={dateTo} onChange={(e) => changeDateTo(e.target.value)} style={dateSelect}>
+                    <option value="">Any</option>
+                    {distinctDates.map((d) => (
+                      <option key={d} value={d}>
+                        {formatDateLabel(d)}
+                      </option>
+                    ))}
+                  </select>
+                  {dateFilterActive && (
+                    <button onClick={clearDateRange} style={btnSecondary}>
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--text-dimmer)', lineHeight: 1.5 }}>
+                  Narrowing the range before checking means only files actually in play get hashed against
+                  your library - much faster than checking the whole card. Filters by capture date, not file
+                  date.
+                </div>
+              </div>
 
               <div style={{ marginTop: 18 }}>
                 <div style={sectionLabel}>Folder layout</div>
@@ -229,12 +351,20 @@ export default function ImportDialog({
               {error && <div style={errorText}>{error}</div>}
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
-                <button onClick={() => setStep('source')} disabled={starting} style={btnSecondary}>
+                <button onClick={() => setStep('source')} disabled={starting || checking} style={btnSecondary}>
                   Back
                 </button>
-                <button onClick={doImport} disabled={starting || filesToCopy === 0} style={btnPrimary}>
-                  {starting ? 'Starting…' : `Import ${filesToCopy} file${filesToCopy === 1 ? '' : 's'}`}
-                </button>
+                {checkedSummary ? (
+                  <button onClick={doImport} disabled={starting || filesToCopy === 0} style={btnPrimary}>
+                    {starting ? 'Starting…' : `Import ${filesToCopy} file${filesToCopy === 1 ? '' : 's'}`}
+                  </button>
+                ) : (
+                  <button onClick={checkDuplicates} disabled={checking || groupsInRange.length === 0} style={btnPrimary}>
+                    {checking
+                      ? 'Checking…'
+                      : `Check ${groupsInRange.length} file${groupsInRange.length === 1 ? '' : 's'} for duplicates`}
+                  </button>
+                )}
               </div>
             </>
           ) : null}
@@ -388,6 +518,17 @@ const spinnerLarge: CSSProperties = {
   border: '3px solid rgba(255,255,255,0.15)',
   borderTopColor: '#9cc2f0',
   animation: 'immature-spin 0.8s linear infinite',
+};
+
+const dateSelect: CSSProperties = {
+  height: 30,
+  padding: '0 8px',
+  borderRadius: 7,
+  fontSize: 12.5,
+  border: '1px solid rgba(255,255,255,0.16)',
+  background: 'rgba(255,255,255,0.06)',
+  color: '#fff',
+  cursor: 'default',
 };
 
 const destinationBox: CSSProperties = {

@@ -42,15 +42,25 @@ pub fn run() {
             }
             let cfg = config::load(app.handle());
             let (edit_queue, edit_queue_rx) = edit_queue::EditQueue::new();
-            // Always the OS app-config dir, independent of a user-chosen
-            // `settings_folder` override - it's a dedupe cache, not a
-            // setting, and shouldn't quietly go missing just because the
-            // user later points config.json somewhere else.
-            let history_path = app
-                .path()
-                .app_config_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                .join("import_history.json");
+            // Lives under the External Library's own local mount (a hidden
+            // `.immature` subdir), not the OS app-config dir - the whole
+            // point of the dedupe cache is "have I already imported this
+            // file", and for anyone running ImmAture from more than one
+            // computer against the same shared library (NFS/SMB), that
+            // question only has one right answer if every machine reads and
+            // writes the same file. An app-config-dir-local cache silently
+            // can't see imports done from a different machine, even though
+            // they're sitting right there in the shared library. Falls back
+            // to the OS app-config dir if no local mount is configured yet
+            // (first run, before Preferences → Library is set up).
+            let history_path = if cfg.library.local_root.trim().is_empty() {
+                app.path()
+                    .app_config_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join("import_history.json")
+            } else {
+                std::path::PathBuf::from(cfg.library.local_root.trim()).join(".immature").join("import_history.json")
+            };
             let (import_queue, import_queue_rx) = import::ImportQueue::new(history_path);
             let max_concurrent_import_jobs = cfg.import.max_concurrent_jobs;
             let (round_trip, round_trip_rx) = round_trip::RoundTripWatcher::new();
@@ -162,6 +172,7 @@ pub fn run() {
             commands::save_import_settings,
             commands::list_removable_volumes,
             commands::scan_import_source,
+            commands::check_import_duplicates,
             commands::start_import,
             commands::get_import_queue_status,
             commands::clear_completed_import_jobs,
