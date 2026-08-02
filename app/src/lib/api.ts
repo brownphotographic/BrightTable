@@ -855,6 +855,11 @@ export interface ExportAssetTarget {
   // routes through a headless ART-cli conversion instead of Immich's preview
   // rendition.
   isRaw: boolean;
+  // Whether this asset is a video (asset.type === 'VIDEO'). There's no JPEG
+  // rendition of a video, so the backend always delivers the true original
+  // bytes for these regardless of the chosen `format` - see
+  // `export_queue::resolve_rendition`.
+  isVideo: boolean;
 }
 
 export type ExportFormat = 'jpeg' | 'original';

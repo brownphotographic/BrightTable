@@ -1,7 +1,7 @@
 import { useState, type CSSProperties } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { exportToFolder, type AssetSummary, type ExportFormat, type MetadataPolicy } from '../lib/api';
-import { isRawAsset } from '../lib/filters';
+import { isRawAsset, isVideoAsset } from '../lib/filters';
 import ExportSizeQualityFields from './ExportSizeQualityFields';
 import NoSidecarDialog from './NoSidecarDialog';
 
@@ -55,7 +55,14 @@ export default function ExportToFolderDialog({ assets, onClose, onExported }: { 
     setError(null);
     try {
       await exportToFolder(
-        targets.map((a) => ({ id: a.id, originalPath: a.originalPath, fileName: a.fileName, fileExtension: a.fileExtension, isRaw: isRawAsset(a) })),
+        targets.map((a) => ({
+          id: a.id,
+          originalPath: a.originalPath,
+          fileName: a.fileName,
+          fileExtension: a.fileExtension,
+          isRaw: isRawAsset(a),
+          isVideo: isVideoAsset(a),
+        })),
         { destination, format, sizePx: format === 'jpeg' ? sizePx : null, quality, metadata },
       );
       onExported();
@@ -121,6 +128,7 @@ export default function ExportToFolderDialog({ assets, onClose, onExported }: { 
             metadata={metadata}
             onMetadataChange={setMetadata}
             hasRawOriginal={assets.some(isRawAsset)}
+            hasVideo={assets.some(isVideoAsset)}
           />
 
           <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'rgba(255,255,255,0.45)', margin: '18px 0 8px' }}>DESTINATION</div>

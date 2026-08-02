@@ -9,7 +9,7 @@ import {
   type FlickrPrivacy,
   type MetadataPolicy,
 } from '../lib/api';
-import { isRawAsset } from '../lib/filters';
+import { isRawAsset, isVideoAsset } from '../lib/filters';
 import ExportSizeQualityFields from './ExportSizeQualityFields';
 import { btnPrimary, btnSecondary, closeBtnStyle } from './ExportToFolderDialog';
 import NoSidecarDialog from './NoSidecarDialog';
@@ -88,7 +88,14 @@ export default function ExportToFlickrDialog({ assets, onClose, onExported }: { 
             ? { kind: 'new', title: newAlbumTitle.trim() }
             : { kind: 'existing', id: selectedAlbumId };
       await exportToFlickr(
-        targets.map((a) => ({ id: a.id, originalPath: a.originalPath, fileName: a.fileName, fileExtension: a.fileExtension, isRaw: isRawAsset(a) })),
+        targets.map((a) => ({
+          id: a.id,
+          originalPath: a.originalPath,
+          fileName: a.fileName,
+          fileExtension: a.fileExtension,
+          isRaw: isRawAsset(a),
+          isVideo: isVideoAsset(a),
+        })),
         { album, privacy, format, sizePx: format === 'jpeg' ? sizePx : null, quality, metadata },
       );
       onExported();
@@ -154,6 +161,7 @@ export default function ExportToFlickrDialog({ assets, onClose, onExported }: { 
             metadata={metadata}
             onMetadataChange={setMetadata}
             hasRawOriginal={assets.some(isRawAsset)}
+            hasVideo={assets.some(isVideoAsset)}
           />
 
           <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'rgba(255,255,255,0.45)', margin: '18px 0 8px' }}>ALBUM</div>

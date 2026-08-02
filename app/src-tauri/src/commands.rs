@@ -1591,6 +1591,11 @@ pub struct ExportAssetTarget {
     /// through a headless `ART-cli` conversion instead of Immich's `preview`
     /// rendition - see `export_queue::resolve_rendition`.
     pub is_raw: bool,
+    /// Whether this asset is a video (frontend's `asset.type === 'VIDEO'`).
+    /// There's no JPEG rendition of a video, so `true` here always delivers
+    /// the true original file regardless of the chosen `format` - see
+    /// `export_queue::resolve_rendition`.
+    pub is_video: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1652,6 +1657,7 @@ pub async fn export_to_folder(state: State<'_, AppState>, assets: Vec<ExportAsse
             file_name: a.file_name,
             file_extension: a.file_extension,
             is_raw: a.is_raw,
+            is_video: a.is_video,
             rendition: RenditionOptions { format: options.format, size_px, quality, metadata: options.metadata },
             delivery: ExportDelivery::Folder { destination: destination.clone() },
         })
@@ -1717,6 +1723,7 @@ pub async fn export_to_flickr(state: State<'_, AppState>, assets: Vec<ExportAsse
                 file_name: a.file_name,
                 file_extension: a.file_extension,
                 is_raw: a.is_raw,
+                is_video: a.is_video,
                 rendition: RenditionOptions { format: options.format, size_px, quality, metadata: options.metadata },
                 delivery: ExportDelivery::Flickr { title, privacy: options.privacy, album: album.clone() },
             }

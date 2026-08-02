@@ -28,6 +28,7 @@ export default function ExportSizeQualityFields({
   metadata,
   onMetadataChange,
   hasRawOriginal,
+  hasVideo,
 }: {
   format: ExportFormat;
   onFormatChange: (f: ExportFormat) => void;
@@ -42,6 +43,13 @@ export default function ExportSizeQualityFields({
   // "JPEG" rendition path always produces an ordinary JPEG regardless of
   // source, so it needs no caveat.
   hasRawOriginal: boolean;
+  // Whether any selected asset is a video - there's no such thing as a
+  // "JPEG rendition" of a video, so the backend always exports/shares those
+  // as their true original file regardless of the Format choice below (see
+  // export_queue::resolve_rendition). Surfaced here as a note rather than by
+  // hiding the JPEG option, since a mixed photo+video selection still uses
+  // JPEG for the photos in it.
+  hasVideo: boolean;
 }) {
   return (
     <div>
@@ -50,6 +58,13 @@ export default function ExportSizeQualityFields({
         <FormatCard active={format === 'jpeg'} title="JPEG" subtitle="Rendered & resized" onClick={() => onFormatChange('jpeg')} />
         <FormatCard active={format === 'original'} title="Original" subtitle="Copy the source file" onClick={() => onFormatChange('original')} />
       </div>
+
+      {format === 'jpeg' && hasVideo && (
+        <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.45)', marginBottom: 12, lineHeight: 1.5 }}>
+          Videos in this selection are always exported as their original file — size and quality below only apply to
+          photos.
+        </div>
+      )}
 
       {format === 'jpeg' && (
         <>

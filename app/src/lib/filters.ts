@@ -33,6 +33,10 @@ export function isRawAsset(asset: AssetSummary): boolean {
   return !!asset.isRawOverride || isRawExtension(asset.fileExtension);
 }
 
+export function isVideoAsset(asset: AssetSummary): boolean {
+  return asset.type === 'VIDEO';
+}
+
 // Formats a webview <img> can decode directly, so it's safe to swap in the
 // original file (via thumbnailSrc(id, 'original')) as a crisper source once
 // zoomed past Immich's fixed-resolution `preview` rendition. Deliberately

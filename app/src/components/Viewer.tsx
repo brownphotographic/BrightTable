@@ -17,7 +17,7 @@ import MetadataRows, { Star } from './MetadataRows';
 import ConfirmDialog from './ConfirmDialog';
 import { isTypingTarget, matchesShortcut, useShortcuts } from '../lib/shortcuts';
 import { overlayRawOverrides, useRawOverrides } from '../lib/rawOverrides';
-import { isOriginalZoomable, isRawAsset } from '../lib/filters';
+import { isOriginalZoomable, isRawAsset, isVideoAsset } from '../lib/filters';
 import { useApplications } from '../lib/applications';
 import { useClipboard } from '../lib/clipboard';
 import { useNoSidecarChoice } from '../lib/useNoSidecarChoice';
@@ -45,6 +45,29 @@ function containRect(boxW: number, boxH: number, natW: number, natH: number) {
     w = boxH * imgAspect;
   }
   return { w, h, x: (boxW - w) / 2, y: (boxH - h) / 2 };
+}
+
+// MediaError.code is 1-4 (MEDIA_ERR_ABORTED/NETWORK/DECODE/SRC_NOT_SUPPORTED),
+// with no further standard detail - but WebKitGTK on Linux is one of the few
+// engines that also populates the non-standard `.message` with the actual
+// underlying platform diagnostic (often lifted straight from GStreamer, e.g.
+// naming the specific missing plugin or element), so it's surfaced here
+// verbatim rather than collapsed into one generic sentence per code - the
+// generic sentence alone wasn't enough to tell a genuinely-unsupported codec
+// apart from, say, GStreamer failing to even resolve the `immich-thumb://`
+// source scheme.
+function describeVideoError(error: MediaError | null): string {
+  const detail = error?.message ? ` (${error.message})` : '';
+  switch (error?.code) {
+    case MediaError.MEDIA_ERR_NETWORK:
+      return `Couldn't download the video - check the connection to your Immich server.${detail}`;
+    case MediaError.MEDIA_ERR_DECODE:
+      return `Could not decode this video.${detail}`;
+    case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+      return `This video's format/source isn't supported.${detail}`;
+    default:
+      return `Could not play this video.${detail}`;
+  }
 }
 
 function headerButtonStyle(active: boolean) {
@@ -137,6 +160,31 @@ export default function Viewer({
   const [confirmPasteProcessing, setConfirmPasteProcessing] = useState(false);
   const [stackMembers, setStackMembers] = useState<AssetSummary[] | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  // Keyed by asset id (not a plain string) for the same reason as
+  // loadedId/thumbLoadedId above - clears the moment `shown` changes, in the
+  // same render, so a previous video's playback error doesn't flash over
+  // the next one for a frame before the reset effect runs.
+  const [videoErrorId, setVideoErrorId] = useState<{ id: string; message: string } | null>(null);
+  // The actual <video src> - a `blob:` object URL wrapping the fetched
+  // original file, not `thumbnailSrc(id, 'original')` directly. WebKitGTK
+  // resolves a <video>'s src through GStreamer's own URI handling
+  // (`playbin` needs a registered source element for the URL's scheme)
+  // rather than through the same generic resource loader an <img src> or a
+  // plain `fetch()` uses - and GStreamer has no source element for our
+  // custom `immich-thumb://` scheme, so pointing <video> at it directly
+  // fails immediately with SRC_NOT_SUPPORTED, before decoding ever starts.
+  // Fetching the bytes ourselves (which *does* go through the normal
+  // resource loader, same as the poster image below) and handing GStreamer
+  // a `blob:` URL instead sidesteps the whole problem, since `blob:` is a
+  // scheme every media backend understands natively.
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [videoLoading, setVideoLoading] = useState(false);
+  // Bytes downloaded so far for the in-flight video fetch below - the whole
+  // file has to be downloaded before a `blob:` URL can exist at all (no
+  // progressive playback), so without this the "Loading video…" state looks
+  // identical whether it's 2 seconds from done or genuinely stuck (a slow
+  // link or a multi-GB original can make those look the same otherwise).
+  const [videoProgress, setVideoProgress] = useState<{ loaded: number; total: number | null } | null>(null);
   const { resolve: resolveArtRoundTripOutcome, dialog: noSidecarDialog } = useNoSidecarChoice();
   // True while ART itself is open for this asset (and briefly after, while
   // the export path/sidecar are resolved) - disables/relabels the Tweak RAW
@@ -156,6 +204,7 @@ export default function Viewer({
   // openId path and clears the peek as a side effect of `asset` changing.
   const [peekAsset, setPeekAsset] = useState<AssetSummary | null>(null);
   const shown = peekAsset ?? asset;
+  const isVideo = isVideoAsset(shown);
   const loaded = loadedId === shown.id;
   const thumbLoaded = thumbLoadedId === shown.id;
   const { shortcuts, capturing } = useShortcuts();
@@ -219,6 +268,58 @@ export default function Viewer({
     setLoupePos(null);
     setPeekAsset(null);
   }, [asset.id]);
+
+  // Fetches the video's true original bytes as a Blob and swaps `videoUrl`
+  // to a fresh object URL wrapping it - see `videoUrl`'s doc comment above
+  // for why the <video> element can't just point at `thumbnailSrc` directly
+  // the way the poster image does. Revokes the previous object URL on every
+  // re-run (asset change) and on unmount so switching through a filmstrip of
+  // videos doesn't leak one blob per video visited.
+  //
+  // Uses XMLHttpRequest, not fetch() - WebKitGTK's fetch() implementation
+  // rejects custom (non-http) URI schemes outright with a generic
+  // "TypeError: Load failed", even though the exact same `immich-thumb://`
+  // URL loads fine as a subresource (the poster <img> above, or any grid
+  // thumbnail) and via XMLHttpRequest. fetch() and XHR go through
+  // meaningfully different WebKit loader code paths for a custom scheme;
+  // only the older XHR one actually works here.
+  useEffect(() => {
+    if (!isVideo) return;
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setVideoUrl(null);
+    setVideoErrorId(null);
+    setVideoLoading(true);
+    setVideoProgress({ loaded: 0, total: null });
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', thumbnailSrc(shown.id, 'original'));
+    xhr.responseType = 'blob';
+    xhr.onprogress = (e) => {
+      if (cancelled) return;
+      setVideoProgress({ loaded: e.loaded, total: e.lengthComputable ? e.total : null });
+    };
+    xhr.onload = () => {
+      if (cancelled) return;
+      if (xhr.status < 200 || xhr.status >= 300) {
+        setVideoErrorId({ id: shown.id, message: `Couldn't download the video (server returned ${xhr.status}).` });
+      } else {
+        objectUrl = URL.createObjectURL(xhr.response as Blob);
+        setVideoUrl(objectUrl);
+      }
+      setVideoLoading(false);
+    };
+    xhr.onerror = () => {
+      if (cancelled) return;
+      setVideoErrorId({ id: shown.id, message: "Couldn't download the video." });
+      setVideoLoading(false);
+    };
+    xhr.send();
+    return () => {
+      cancelled = true;
+      xhr.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [isVideo, shown.id]);
 
   // Edits to a peeked stack member (favorite/rating, via shortcut or the info
   // panel) only reach the server + the browser's own assetCache through
@@ -384,7 +485,7 @@ export default function Viewer({
       else if (matchesShortcut(e, shortcuts.delete)) setConfirmDelete(true);
       else if (matchesShortcut(e, shortcuts.openInRawEditor) && isRawAsset(shown) && !artBusy) handleLaunch('rawEditor').catch(() => {});
       else if (matchesShortcut(e, shortcuts.openInExternalEditor)) handleLaunch('externalEditor').catch(() => {});
-      else if (matchesShortcut(e, shortcuts.print) && onPrint && !isRawAsset(shown)) onPrint(shown);
+      else if (matchesShortcut(e, shortcuts.print) && onPrint && !isRawAsset(shown) && !isVideo) onPrint(shown);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -400,6 +501,7 @@ export default function Viewer({
     shortcuts,
     capturing,
     shown,
+    isVideo,
     onEdit,
     handleEdit,
     handleLaunch,
@@ -569,7 +671,7 @@ export default function Viewer({
         <div onClick={() => handleLaunch('externalEditor')} style={headerButtonStyle(false)}>
           Open in Ext. Editor
         </div>
-        {onPrint && !isRawAsset(shown) && (
+        {onPrint && !isRawAsset(shown) && !isVideo && (
           <div onClick={() => onPrint(shown)} style={headerButtonStyle(false)}>
             Print
           </div>
@@ -620,65 +722,72 @@ export default function Viewer({
         >
           Move to Trash
         </div>
-        <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)', margin: '0 2px' }} />
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 7,
-            height: 30,
-            padding: '0 4px 0 8px',
-            borderRadius: 8,
-            background: 'rgba(255,255,255,0.06)',
-          }}
-        >
-          <div
-            onClick={() => setZoom((z) => Math.max(MIN_ZOOM, z - 25))}
-            style={{ width: 22, height: 22, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default' }}
-          >
-            <div style={{ width: 10, height: 1.7, background: 'currentColor', borderRadius: 1 }} />
-          </div>
-          <input
-            type="range"
-            min={MIN_ZOOM}
-            max={MAX_ZOOM}
-            step={5}
-            value={zoom}
-            onChange={(e) => setZoom(Number(e.target.value))}
-            style={{ width: 92 }}
-          />
-          <div
-            onClick={() => setZoom((z) => Math.min(MAX_ZOOM, z + 25))}
-            style={{ width: 22, height: 22, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default', position: 'relative' }}
-          >
-            <div style={{ position: 'absolute', width: 10, height: 1.7, background: 'currentColor', borderRadius: 1 }} />
-            <div style={{ position: 'absolute', width: 1.7, height: 10, background: 'currentColor', borderRadius: 1 }} />
-          </div>
-          <div
-            onClick={() => setZoom(100)}
-            style={{
-              minWidth: 40,
-              height: 22,
-              padding: '0 7px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderRadius: 6,
-              font: '600 12px ui-monospace,monospace',
-              cursor: 'default',
-            }}
-          >
-            {zoom}%
-          </div>
-        </div>
-        <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)', margin: '0 2px' }} />
-        <div onClick={() => setLoupeOn((v) => !v)} style={headerButtonStyle(loupeOn)}>
-          <div style={{ position: 'relative', width: 13, height: 13, flexShrink: 0 }}>
-            <div style={{ position: 'absolute', left: 0, top: 0, width: 9, height: 9, border: '1.7px solid currentColor', borderRadius: '50%' }} />
-            <div style={{ position: 'absolute', left: 8, top: 8, width: 5, height: 1.7, background: 'currentColor', borderRadius: 1, transformOrigin: 'left center', transform: 'rotate(45deg)' }} />
-          </div>
-          Loupe
-        </div>
+        {/* Zoom and Loupe have nothing to act on for a video (there's no
+            still-image rendition to magnify or scale) - hidden rather than
+            disabled so it's clear they just don't apply here. */}
+        {!isVideo && (
+          <>
+            <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)', margin: '0 2px' }} />
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 7,
+                height: 30,
+                padding: '0 4px 0 8px',
+                borderRadius: 8,
+                background: 'rgba(255,255,255,0.06)',
+              }}
+            >
+              <div
+                onClick={() => setZoom((z) => Math.max(MIN_ZOOM, z - 25))}
+                style={{ width: 22, height: 22, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default' }}
+              >
+                <div style={{ width: 10, height: 1.7, background: 'currentColor', borderRadius: 1 }} />
+              </div>
+              <input
+                type="range"
+                min={MIN_ZOOM}
+                max={MAX_ZOOM}
+                step={5}
+                value={zoom}
+                onChange={(e) => setZoom(Number(e.target.value))}
+                style={{ width: 92 }}
+              />
+              <div
+                onClick={() => setZoom((z) => Math.min(MAX_ZOOM, z + 25))}
+                style={{ width: 22, height: 22, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default', position: 'relative' }}
+              >
+                <div style={{ position: 'absolute', width: 10, height: 1.7, background: 'currentColor', borderRadius: 1 }} />
+                <div style={{ position: 'absolute', width: 1.7, height: 10, background: 'currentColor', borderRadius: 1 }} />
+              </div>
+              <div
+                onClick={() => setZoom(100)}
+                style={{
+                  minWidth: 40,
+                  height: 22,
+                  padding: '0 7px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: 6,
+                  font: '600 12px ui-monospace,monospace',
+                  cursor: 'default',
+                }}
+              >
+                {zoom}%
+              </div>
+            </div>
+            <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)', margin: '0 2px' }} />
+            <div onClick={() => setLoupeOn((v) => !v)} style={headerButtonStyle(loupeOn)}>
+              <div style={{ position: 'relative', width: 13, height: 13, flexShrink: 0 }}>
+                <div style={{ position: 'absolute', left: 0, top: 0, width: 9, height: 9, border: '1.7px solid currentColor', borderRadius: '50%' }} />
+                <div style={{ position: 'absolute', left: 8, top: 8, width: 5, height: 1.7, background: 'currentColor', borderRadius: 1, transformOrigin: 'left center', transform: 'rotate(45deg)' }} />
+              </div>
+              Loupe
+            </div>
+          </>
+        )}
         <div onClick={() => setInfoOpen((v) => !v)} style={headerButtonStyle(infoOpen)}>
           Info
         </div>
@@ -696,90 +805,157 @@ export default function Viewer({
             <div
               ref={stageRef}
               onMouseMove={(e) => {
-                if (!loupeOn || !stageRef.current) return;
+                if (isVideo || !loupeOn || !stageRef.current) return;
                 const rect = stageRef.current.getBoundingClientRect();
                 setLoupePos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
               }}
               onMouseLeave={() => setLoupePos(null)}
-              style={{ position: 'relative', width: '100%', height: '100%', cursor: loupeOn ? 'none' : 'default' }}
+              style={{ position: 'relative', width: '100%', height: '100%', cursor: !isVideo && loupeOn ? 'none' : 'default' }}
             >
-              {placeholder && (
-                <img
-                  src={placeholder}
-                  alt=""
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'contain',
-                    filter: 'blur(12px)',
-                    transform: `scale(${zoom / 100})`,
-                    opacity: loaded || thumbLoaded ? 0 : 1,
-                    transition: 'opacity 200ms',
-                  }}
-                />
+              {isVideo ? (
+                // No zoom/loupe/hi-res tiers for video - just the one
+                // rendition, played from `videoUrl` (a `blob:` object URL -
+                // see its doc comment above for why not `thumbnailSrc`
+                // directly). Keyed on the asset id so switching videos
+                // doesn't keep the previous one's playback position/paused
+                // state.
+                <>
+                  {videoUrl && (
+                    <video
+                      key={shown.id}
+                      controls
+                      poster={thumbnailSrc(shown.id, 'preview')}
+                      src={videoUrl}
+                      onError={(e) => {
+                        // Logged in full (not just the on-screen summary) so
+                        // the devtools console has the raw MediaError.code
+                        // even when `.message` comes back empty.
+                        console.error('Video playback error', e.currentTarget.error);
+                        setVideoErrorId({ id: shown.id, message: describeVideoError(e.currentTarget.error) });
+                      }}
+                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+                    />
+                  )}
+                  {videoLoading && !videoUrl && !videoErrorId && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 13,
+                        color: 'rgba(255,255,255,0.5)',
+                      }}
+                    >
+                      Loading video…
+                      {videoProgress && videoProgress.loaded > 0 && (
+                        <span style={{ marginLeft: 6 }}>
+                          {formatSize(videoProgress.loaded)}
+                          {videoProgress.total ? ` / ${formatSize(videoProgress.total)}` : ''}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {videoErrorId?.id === shown.id && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: 32,
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      <div style={{ maxWidth: 420, textAlign: 'center', fontSize: 13, lineHeight: 1.6, color: 'rgba(255,255,255,0.75)' }}>
+                        {videoErrorId.message}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {placeholder && (
+                    <img
+                      src={placeholder}
+                      alt=""
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'contain',
+                        filter: 'blur(12px)',
+                        transform: `scale(${zoom / 100})`,
+                        opacity: loaded || thumbLoaded ? 0 : 1,
+                        transition: 'opacity 200ms',
+                      }}
+                    />
+                  )}
+                  {/* The grid already fetched+cached this asset's small `thumbnail`
+                      rendition (that's how it was visible to click in the first
+                      place) - showing it here is a local disk read, effectively
+                      instant regardless of how slow the remote link is, so it
+                      replaces the abstract thumbhash blur with a real recognizable
+                      image right away while the full-size `preview` loads in. */}
+                  <img
+                    src={thumbnailSrc(shown.id, 'thumbnail')}
+                    alt=""
+                    onLoad={() => setThumbLoadedId(shown.id)}
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'contain',
+                      transform: `scale(${zoom / 100})`,
+                      opacity: loaded ? 0 : thumbLoaded ? 1 : 0,
+                      transition: 'opacity 150ms',
+                    }}
+                  />
+                  <img
+                    ref={previewImgRef}
+                    src={previewSrc}
+                    alt=""
+                    onLoad={() => setLoadedId(shown.id)}
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'contain',
+                      transform: `scale(${zoom / 100})`,
+                      opacity: loaded ? 1 : 0,
+                      transition: 'opacity 150ms',
+                    }}
+                  />
+                  {/* Only mounted while actually needed (zoomed past 100% or the
+                      loupe is on) - fetching the full original for every photo
+                      just to sit at 100% zoom would be wasted bandwidth. Sits on
+                      top of the `preview` layer above, which stays visible as a
+                      (softer) fallback until this one finishes loading. */}
+                  {wantHiRes && (
+                    <img
+                      src={hiResSrc}
+                      alt=""
+                      onLoad={() => setHiResLoadedId(shown.id)}
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'contain',
+                        transform: `scale(${zoom / 100})`,
+                        opacity: hiResReady ? 1 : 0,
+                        transition: 'opacity 150ms',
+                      }}
+                    />
+                  )}
+                  {loupeStyle && <div style={loupeStyle} />}
+                </>
               )}
-              {/* The grid already fetched+cached this asset's small `thumbnail`
-                  rendition (that's how it was visible to click in the first
-                  place) - showing it here is a local disk read, effectively
-                  instant regardless of how slow the remote link is, so it
-                  replaces the abstract thumbhash blur with a real recognizable
-                  image right away while the full-size `preview` loads in. */}
-              <img
-                src={thumbnailSrc(shown.id, 'thumbnail')}
-                alt=""
-                onLoad={() => setThumbLoadedId(shown.id)}
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
-                  transform: `scale(${zoom / 100})`,
-                  opacity: loaded ? 0 : thumbLoaded ? 1 : 0,
-                  transition: 'opacity 150ms',
-                }}
-              />
-              <img
-                ref={previewImgRef}
-                src={previewSrc}
-                alt=""
-                onLoad={() => setLoadedId(shown.id)}
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
-                  transform: `scale(${zoom / 100})`,
-                  opacity: loaded ? 1 : 0,
-                  transition: 'opacity 150ms',
-                }}
-              />
-              {/* Only mounted while actually needed (zoomed past 100% or the
-                  loupe is on) - fetching the full original for every photo
-                  just to sit at 100% zoom would be wasted bandwidth. Sits on
-                  top of the `preview` layer above, which stays visible as a
-                  (softer) fallback until this one finishes loading. */}
-              {wantHiRes && (
-                <img
-                  src={hiResSrc}
-                  alt=""
-                  onLoad={() => setHiResLoadedId(shown.id)}
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'contain',
-                    transform: `scale(${zoom / 100})`,
-                    opacity: hiResReady ? 1 : 0,
-                    transition: 'opacity 150ms',
-                  }}
-                />
-              )}
-              {loupeStyle && <div style={loupeStyle} />}
             </div>
           </div>
 

@@ -1,6 +1,6 @@
 # ImmAture
 
-**A 100% vibe coded project. Human generated requirements and testing.**
+**An LLM coded project. Human generated requirements and testing.**
 
 I designed this for myself because I dislike the user experience and functionality that exists on GNU/Linux for managing and editing photos. For me, it fills the gap between DAM and raw editing. There are some great tools out there already like RawTherapee/ART, Digikam, RapidRAW, Digikam, Shotwell. But to me, none of them had exactly the user experience and workflow that I really wanted. So after a couple of years of threatening myself to build my own tool: I did. 
 

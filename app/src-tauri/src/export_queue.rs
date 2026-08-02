@@ -145,6 +145,11 @@ pub struct ExportTarget {
     /// through a headless `ART-cli` conversion instead of Immich's `preview`
     /// rendition - see `resolve_rendition`.
     pub is_raw: bool,
+    /// Whether this asset is a video (resolved by the frontend's
+    /// `asset.type === 'VIDEO'`). There's no JPEG rendition of a video, so
+    /// `true` here makes `resolve_rendition` always deliver the true
+    /// original file regardless of `RenditionOptions::format`.
+    pub is_video: bool,
     pub rendition: RenditionOptions,
     pub delivery: ExportDelivery,
 }
@@ -156,6 +161,7 @@ pub(crate) struct QueuedExport {
     file_name: String,
     file_extension: String,
     is_raw: bool,
+    is_video: bool,
     rendition: RenditionOptions,
     delivery: ExportDelivery,
 }
@@ -220,6 +226,7 @@ impl ExportQueue {
                 file_name: t.file_name,
                 file_extension: t.file_extension,
                 is_raw: t.is_raw,
+                is_video: t.is_video,
                 rendition: t.rendition,
                 delivery: t.delivery,
             });
@@ -387,6 +394,7 @@ async fn run_one(
         &work.file_name,
         &work.file_extension,
         work.is_raw,
+        work.is_video,
         &work.rendition,
         work.job_id,
         cancel_rx,
@@ -396,7 +404,14 @@ async fn run_one(
     let bytes = apply_metadata_policy(
         bytes,
         &filename,
-        matches!(work.rendition.format, ExportFormat::Original),
+        // A video is always delivered as its true original (see
+        // `resolve_rendition`) regardless of the requested rendition
+        // format, so it must be treated as "original format" here too -
+        // otherwise `Keep` would wrongly try to re-copy metadata a video
+        // already has, and `StripAll` would wrongly treat it as a no-op
+        // (that short circuit is only valid for an *actual* Jpeg re-encode,
+        // which already drops metadata as a side effect).
+        matches!(work.rendition.format, ExportFormat::Original) || work.is_video,
         work.rendition.metadata,
         &applications_cfg.exiftool_path,
         &immich,
@@ -430,6 +445,16 @@ async fn run_one(
 /// full-resolution output into the *same* `encode_jpeg_rendition` resize/
 /// quality step a non-RAW asset's Immich preview goes through - unifying the
 /// two source paths before delivery/metadata handling ever sees them.
+///
+/// `is_video` is checked first and short-circuits straight to the `Original`
+/// branch's true-original fetch, ignoring whatever `rendition.format` was
+/// actually requested - there's no such thing as a "JPEG rendition" of a
+/// video. Without this, the `Jpeg` branch would try `image::load_from_memory`
+/// on the video's bytes (always fails, since the `image` crate has no video
+/// support), silently fall back to Immich's `preview` (a single still frame,
+/// if Immich even has one cached for that asset), and re-encode *that* as
+/// the "export" - producing a static image with no warning, or an outright
+/// failure, instead of the video the user actually asked to share.
 #[allow(clippy::too_many_arguments)]
 async fn resolve_rendition(
     immich: &ImmichClient,
@@ -442,10 +467,16 @@ async fn resolve_rendition(
     file_name: &str,
     file_extension: &str,
     is_raw: bool,
+    is_video: bool,
     rendition: &RenditionOptions,
     job_id: u64,
     cancel_rx: watch::Receiver<bool>,
 ) -> Result<(Vec<u8>, String, String), String> {
+    if is_video {
+        let (bytes, filename) = fetch_true_original(immich, library_cfg, asset_id, original_path, file_name).await?;
+        let mime = guess_mime(&filename);
+        return Ok((bytes, filename, mime));
+    }
     match rendition.format {
         ExportFormat::Original => {
             let (bytes, filename) = fetch_true_original(immich, library_cfg, asset_id, original_path, file_name).await?;
@@ -678,6 +709,11 @@ fn guess_mime(filename: &str) -> String {
         "tif" | "tiff" => "image/tiff",
         "heic" | "heif" => "image/heic",
         "webp" => "image/webp",
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "avi" => "video/x-msvideo",
+        "mts" => "video/mp2t",
+        "3gp" => "video/3gpp",
         _ => "application/octet-stream",
     }
     .to_string()
@@ -769,6 +805,7 @@ mod tests {
                 file_name: "a.jpg".into(),
                 file_extension: "jpg".into(),
                 is_raw: false,
+                is_video: false,
                 rendition: RenditionOptions { format: ExportFormat::Original, size_px: None, quality: 90, metadata: MetadataPolicy::Keep },
                 delivery: ExportDelivery::Folder { destination: PathBuf::from("/tmp/exports") },
             },
@@ -778,6 +815,7 @@ mod tests {
                 file_name: "b.jpg".into(),
                 file_extension: "jpg".into(),
                 is_raw: false,
+                is_video: false,
                 rendition: RenditionOptions { format: ExportFormat::Jpeg, size_px: Some(1024), quality: 85, metadata: MetadataPolicy::Keep },
                 delivery: ExportDelivery::Flickr { title: "b".into(), privacy: FlickrPrivacy::Public, album: FlickrAlbumChoice::None },
             },
@@ -800,6 +838,7 @@ mod tests {
             file_name: "a.jpg".into(),
             file_extension: "jpg".into(),
             is_raw: false,
+            is_video: false,
             rendition: RenditionOptions { format: ExportFormat::Original, size_px: None, quality: 90, metadata: MetadataPolicy::Keep },
             delivery: ExportDelivery::Folder { destination: PathBuf::from("/tmp/exports") },
         }]);
@@ -819,6 +858,7 @@ mod tests {
             file_name: "a.jpg".into(),
             file_extension: "jpg".into(),
             is_raw: false,
+            is_video: false,
             rendition: RenditionOptions { format: ExportFormat::Original, size_px: None, quality: 90, metadata: MetadataPolicy::Keep },
             delivery: ExportDelivery::Folder { destination: PathBuf::from("/tmp/exports") },
         }]);
@@ -836,6 +876,7 @@ mod tests {
                 file_name: "a.jpg".into(),
                 file_extension: "jpg".into(),
                 is_raw: false,
+                is_video: false,
                 rendition: RenditionOptions { format: ExportFormat::Original, size_px: None, quality: 90, metadata: MetadataPolicy::Keep },
                 delivery: ExportDelivery::Folder { destination: PathBuf::from("/tmp/exports") },
             },
@@ -845,6 +886,7 @@ mod tests {
                 file_name: "b.jpg".into(),
                 file_extension: "jpg".into(),
                 is_raw: false,
+                is_video: false,
                 rendition: RenditionOptions { format: ExportFormat::Original, size_px: None, quality: 90, metadata: MetadataPolicy::Keep },
                 delivery: ExportDelivery::Folder { destination: PathBuf::from("/tmp/exports") },
             },
