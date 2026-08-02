@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { listPrinters, printAsset, thumbnailSrc, type AssetSummary, type PaperSize, type Printer, type PrintFitMode, type PrintOrientation } from '../lib/api';
+import { listPrinters, printAsset, printTestPattern, thumbnailSrc, type AssetSummary, type PaperSize, type PrintOptions, type Printer, type PrintFitMode, type PrintOrientation } from '../lib/api';
 import { isRawAsset } from '../lib/filters';
 import { closeBtnStyle, btnSecondary, btnPrimary } from './ExportToFolderDialog';
 
@@ -26,6 +26,17 @@ function clamp(v: number, min: number, max: number): number {
 // instead of a toast. Single-asset only (matches the mockup's own
 // printTargetAsset() scope) - no batch printing in v1.
 //
+// `connection` (discovery/transport, e.g. "AirPrint") and `driver` (the
+// PPD's own self-description of what actually rasterizes the job, e.g.
+// "TurboPrint") are separate facts — a dnssd://-discovered queue reads as
+// "AirPrint" regardless of whether a real third-party driver sits
+// downstream, which is genuinely confusing when debugging a print-geometry
+// problem (see print.rs's Printer.driver doc comment). Show both rather
+// than picking one.
+function connectionLabel(p: Pick<Printer, 'connection' | 'driver'>): string {
+  return p.driver ? `${p.connection} · ${p.driver}` : p.connection;
+}
+
 function paperWH(paper: PaperSize, orientation: PrintOrientation): [number, number] {
   const a = Math.min(paper.widthIn, paper.heightIn);
   const b = Math.max(paper.widthIn, paper.heightIn);
@@ -191,27 +202,50 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
     }
   }
 
+  function buildPrintOptions(): PrintOptions | null {
+    if (!printerId || !paperId || dpi == null || !paperDims || !size) return null;
+    return {
+      printerId,
+      paperId,
+      copies,
+      dpi,
+      orientation,
+      fitMode,
+      paperWidthIn: paperDims[0],
+      paperHeightIn: paperDims[1],
+      imageWidthIn: size[0],
+      imageHeightIn: size[1],
+    };
+  }
+
   async function handlePrint() {
-    if (!printerId || !paperId || dpi == null || !paperDims || !size) return;
+    const options = buildPrintOptions();
+    if (!options) return;
     setBusy(true);
     setError(null);
     try {
-      await printAsset(
-        { id: asset.id, originalPath: asset.originalPath, fileName: asset.fileName, isRaw: false },
-        {
-          printerId,
-          paperId,
-          copies,
-          dpi,
-          orientation,
-          fitMode,
-          paperWidthIn: paperDims[0],
-          paperHeightIn: paperDims[1],
-          imageWidthIn: size[0],
-          imageHeightIn: size[1],
-        },
-      );
+      await printAsset({ id: asset.id, originalPath: asset.originalPath, fileName: asset.fileName, isRaw: false }, options);
       onClose();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Prints print.rs's synthetic numbered-grid calibration target with these
+  // exact same printer/paper/dpi/orientation/fit-mode settings, instead of
+  // this asset's photo — for isolating a placement/scale/border bug to the
+  // compositing math or the CUPS/driver stage, independent of this photo's
+  // own EXIF data. Stays open on success (unlike a real print) since the
+  // point is to try it again after changing settings.
+  async function handlePrintTestPattern() {
+    const options = buildPrintOptions();
+    if (!options) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await printTestPattern(options);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -278,7 +312,7 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
                 >
                   <div style={{ width: 8, height: 8, borderRadius: '50%', background: curPrinter?.status === 'disabled' ? '#e5a50a' : '#2ec27e', flexShrink: 0 }} />
                   <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{curPrinter?.name ?? (printers == null ? 'Loading…' : 'No printers found')}</span>
-                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{curPrinter?.connection ?? ''}</span>
+                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{curPrinter ? connectionLabel(curPrinter) : ''}</span>
                 </div>
                 {printerMenuOpen && printers && printers.length > 0 && (
                   <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 6, background: '#383838', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, boxShadow: '0 12px 30px rgba(0,0,0,0.6)', padding: 5 }}>
@@ -289,7 +323,7 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
                         style={{ display: 'flex', alignItems: 'center', height: 32, padding: '0 10px', borderRadius: 7, fontSize: 13, cursor: 'default', color: '#fff', background: p.id === printerId ? 'rgba(53,132,228,0.25)' : 'transparent' }}
                       >
                         <span style={{ flex: 1 }}>{p.name}</span>
-                        <span style={{ fontSize: 11, opacity: 0.55 }}>{p.connection}</span>
+                        <span style={{ fontSize: 11, opacity: 0.55 }}>{connectionLabel(p)}</span>
                       </div>
                     ))}
                   </div>
@@ -508,6 +542,16 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
         )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 18px', borderTop: '1px solid rgba(0,0,0,0.4)', flexShrink: 0 }}>
+          {!raw && (
+            <button
+              onClick={busy || !ready ? undefined : handlePrintTestPattern}
+              disabled={busy || !ready}
+              title="Print a numbered calibration grid with these exact printer/paper/dpi/orientation/fit settings, to check placement and scale without using a real photo."
+              style={{ ...btnSecondary, opacity: busy || !ready ? 0.5 : 1 }}
+            >
+              Print Test Pattern
+            </button>
+          )}
           {error && <span style={{ fontSize: 12, color: '#ff8080' }}>{error}</span>}
           <div style={{ flex: 1 }} />
           <button onClick={busy ? undefined : onClose} disabled={busy} style={btnSecondary}>

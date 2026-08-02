@@ -319,6 +319,14 @@ export function revealInFileManager(originalPath: string): Promise<void> {
   return invoke('reveal_in_file_manager', { originalPath });
 }
 
+// "Open in Video Player" - hands a video off to the desktop's default video
+// handler instead of this app's own embedded WebView player - see
+// open_default.rs for why. Not gated by read-only mode, same reasoning as
+// revealInFileManager.
+export function openVideoExternally(originalPath: string): Promise<void> {
+  return invoke('open_video_externally', { originalPath });
+}
+
 export function testConnection(cfg: LibraryConfig): Promise<ConnectionStatus> {
   return invoke('test_connection', { cfg });
 }
@@ -970,7 +978,15 @@ export interface PaperSize {
 export interface Printer {
   id: string;
   name: string;
+  // How the printer is *reached* — derived from the CUPS device URI scheme.
+  // Distinct from `driver`: a dnssd://-discovered queue reads as "AirPrint"
+  // here regardless of whether a real third-party rasterizer (e.g.
+  // TurboPrint) is actually processing the job downstream.
   connection: string;
+  // The PPD's own self-description of the driver actually rasterizing the
+  // job (print.rs's driver_name_from_ppd), e.g. "Epson_StylusPro3880
+  // TurboPrint" — null when no PPD was fetchable at all.
+  driver: string | null;
   isDefault: boolean;
   status: PrinterStatus;
   papers: PaperSize[];
@@ -1024,4 +1040,13 @@ export interface PrintOptions {
 
 export function printAsset(asset: PrintAssetTarget, options: PrintOptions): Promise<void> {
   return invoke('print_asset', { asset, options });
+}
+
+// Prints a synthetic, EXIF-free calibration grid (print.rs's
+// generate_test_pattern) through the exact same printer/paper/dpi/
+// orientation/fit-mode options as a real photo would use — for diagnosing
+// whether a placement/scale/border bug is in the compositing math or the
+// CUPS/driver stage, independent of any particular photo's own EXIF data.
+export function printTestPattern(options: PrintOptions): Promise<void> {
+  return invoke('print_test_pattern', { options });
 }

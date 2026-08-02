@@ -12,6 +12,7 @@ mod flickr;
 mod immich;
 mod import;
 mod io_guard;
+mod open_default;
 mod paths;
 mod print;
 mod processing_queue;
@@ -193,6 +194,7 @@ pub fn run() {
             commands::get_art_queue_status,
             commands::clear_completed_art_jobs,
             commands::reveal_in_file_manager,
+            commands::open_video_externally,
             commands::force_quit,
             commands::save_sharing_config,
             commands::flickr_begin_auth,
@@ -206,6 +208,7 @@ pub fn run() {
             commands::clear_completed_export_jobs,
             commands::list_printers,
             commands::print_asset,
+            commands::print_test_pattern,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

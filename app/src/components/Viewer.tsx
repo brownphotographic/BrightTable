@@ -3,6 +3,7 @@ import {
   getStack,
   launchArtRoundTrip,
   launchEditor,
+  openVideoExternally,
   pasteImageProcessing,
   revealInFileManager,
   thumbnailSrc,
@@ -400,6 +401,16 @@ export default function Viewer({
     revealInFileManager(shown.originalPath).catch((e) => setLaunchError(String(e)));
   }, [shown]);
 
+  // In-app video playback goes through WebKitGTK's own bundled GStreamer
+  // pipeline (see the <video> element below), which has proven far less
+  // reliable on some systems/codecs than the OS's own default video player -
+  // this hands the file off to that instead, same as double-clicking it in a
+  // file manager would.
+  const handleOpenInVideoPlayer = useCallback(() => {
+    if (!shown.originalPath) return;
+    openVideoExternally(shown.originalPath).catch((e) => setLaunchError(String(e)));
+  }, [shown]);
+
   const handlePasteMetadata = useCallback(() => {
     if (!copiedMetadata) return;
     handleEdit(shown.id, copiedMetadata).catch(() => {});
@@ -671,6 +682,11 @@ export default function Viewer({
         <div onClick={() => handleLaunch('externalEditor')} style={headerButtonStyle(false)}>
           Open in Ext. Editor
         </div>
+        {isVideo && shown.originalPath && (
+          <div onClick={handleOpenInVideoPlayer} style={headerButtonStyle(false)}>
+            Open in Video Player
+          </div>
+        )}
         {onPrint && !isRawAsset(shown) && !isVideo && (
           <div onClick={() => onPrint(shown)} style={headerButtonStyle(false)}>
             Print

@@ -838,6 +838,26 @@ pub async fn reveal_in_file_manager(state: State<'_, AppState>, original_path: S
     crate::reveal::reveal(&local_path).await
 }
 
+/// **Open in Video Player** - resolves an asset's server-side path to its
+/// local mount and hands it to the desktop's default video handler (see
+/// `open_default.rs`) rather than this app's own embedded WebView player.
+/// Same existence-check shape as `reveal_in_file_manager`.
+#[tauri::command]
+pub async fn open_video_externally(state: State<'_, AppState>, original_path: String) -> Result<(), String> {
+    let cfg = state.library_config();
+    let local_path = paths::resolve_local_path(&original_path, &cfg)
+        .ok_or("No local path mapping configured for this asset — set up External Library mapping in Preferences → Library")?;
+    let exists_path = local_path.clone();
+    let Some(handle) = io_guard::guarded_spawn_blocking(&state.io_guard, move || exists_path.exists()) else {
+        return Err("Skipped: system is about to suspend, try again after it wakes".to_string());
+    };
+    let exists = handle.await.map_err(|e| e.to_string())?;
+    if !exists {
+        return Err(format!("File not found on disk: {}", local_path.display()));
+    }
+    crate::open_default::open(&local_path)
+}
+
 /// Bypasses the `CloseRequested` interception in `lib.rs` - what the
 /// frontend's "Quit anyway" button calls after being warned that edits are
 /// still syncing.
@@ -1793,15 +1813,37 @@ pub async fn print_asset(state: State<'_, AppState>, asset: print::PrintAssetTar
         .await
         .map_err(|e| e.to_string())??;
 
+    submit_composited_print(composited, &asset.id, &options).await
+}
+
+/// Prints the synthetic calibration target from `print::generate_test_pattern`
+/// with the given printer/paper/dpi/orientation/fit-mode options - same
+/// `submit_composited_print` tail as `print_asset`, just skipping the
+/// Immich fetch and routing through `composite_test_pattern_for_print`
+/// instead. Lets a placement/scale bug be diagnosed against a known,
+/// EXIF-free reference image rather than a specific photo.
+#[tauri::command]
+pub async fn print_test_pattern(options: print::PrintOptions) -> Result<(), String> {
+    let copies = options.copies.clamp(1, 99);
+    let options = print::PrintOptions { copies, ..options };
+    let opts_for_compositing = options.clone();
+    let composited = tokio::task::spawn_blocking(move || print::composite_test_pattern_for_print(&opts_for_compositing)).await.map_err(|e| e.to_string())??;
+    submit_composited_print(composited, "test-pattern", &options).await
+}
+
+/// Shared tail of `print_asset`/`print_test_pattern`: write the already-
+/// composited JPEG to a temp file, hand it to `lp` via `submit_print_job`,
+/// then clean up regardless of whether submission succeeded.
+async fn submit_composited_print(composited: Vec<u8>, id_for_tempfile: &str, options: &print::PrintOptions) -> Result<(), String> {
     let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
-    let temp_path = std::env::temp_dir().join(format!("immature-print-{}-{}.jpg", asset.id, ts));
+    let temp_path = std::env::temp_dir().join(format!("immature-print-{id_for_tempfile}-{ts}.pdf"));
     let write_path = temp_path.clone();
     tokio::task::spawn_blocking(move || std::fs::write(&write_path, &composited))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| format!("Could not write temporary print file: {e}"))?;
 
-    let result = print::submit_print_job(&temp_path, &options).await;
+    let result = print::submit_print_job(&temp_path, options).await;
     let cleanup_path = temp_path.clone();
     let _ = tokio::task::spawn_blocking(move || std::fs::remove_file(&cleanup_path)).await;
     result

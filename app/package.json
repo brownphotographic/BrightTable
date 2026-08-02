@@ -9,7 +9,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "bump-version": "node scripts/bump-version.mjs",
-    "build:appimage": "npm run bump-version && NO_STRIP=1 cargo tauri build --bundles appimage"
+    "build:appimage": "npm run bump-version && NO_STRIP=1 cargo tauri build --bundles appimage && node scripts/fix-appimage-gstreamer.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.5",
