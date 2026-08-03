@@ -25,10 +25,17 @@ export default function MenuBar({
   onCopyMetadata,
   onPasteMetadata,
   onPrint,
+  onRotateLeft,
+  onRotateRight,
   onExportToFolder,
   onShareToFlickr,
+  onOpenAbout,
   filters,
   onFiltersChange,
+  searchQuery,
+  onSearchQueryChange,
+  onSearchSubmit,
+  onClearSearch,
 }: {
   onOpenPreferences: () => void;
   onRefreshTimeline: () => void;
@@ -48,10 +55,22 @@ export default function MenuBar({
   onCopyMetadata: () => void;
   onPasteMetadata: () => void;
   onPrint: () => void;
+  onRotateLeft: () => void;
+  onRotateRight: () => void;
   onExportToFolder: () => void;
   onShareToFlickr: () => void;
+  onOpenAbout: () => void;
   filters: Filters;
   onFiltersChange: (next: Filters) => void;
+  // Live text currently typed in the search box - controlled by the parent
+  // so a sidebar tab switch (or anything else) can clear it from outside.
+  searchQuery: string;
+  onSearchQueryChange: (query: string) => void;
+  // Fires on Enter - kicks off the actual `searchAssets` call and switches
+  // the content area to search results (see App.tsx). Typing alone doesn't
+  // search-as-you-type, since Immich's smart search is a real network call.
+  onSearchSubmit: () => void;
+  onClearSearch: () => void;
 }) {
   const [open, setOpen] = useState<MenuKey>(null);
   const { shortcuts } = useShortcuts();
@@ -220,6 +239,21 @@ export default function MenuBar({
         />
         <Divider />
         <MenuItem
+          label="Rotate Left"
+          onClick={() => {
+            close();
+            onRotateLeft();
+          }}
+        />
+        <MenuItem
+          label="Rotate Right"
+          onClick={() => {
+            close();
+            onRotateRight();
+          }}
+        />
+        <Divider />
+        <MenuItem
           label="Preferences"
           shortcut={prettyShortcut(shortcuts.openPreferences)}
           onClick={() => {
@@ -247,7 +281,13 @@ export default function MenuBar({
 
       <TopMenu label="Help" isOpen={open === 'help'} onClick={() => toggle('help')} onEnter={() => hoverTo('help')}>
         <MenuItem label="Keyboard Shortcuts" shortcut="?" onClick={close} />
-        <MenuItem label="About ImmAture" onClick={close} />
+        <MenuItem
+          label="About ImmAture"
+          onClick={() => {
+            close();
+            onOpenAbout();
+          }}
+        />
       </TopMenu>
 
       <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.12)', margin: '0 6px' }} />
@@ -426,7 +466,7 @@ export default function MenuBar({
           alignItems: 'center',
           gap: 7,
           height: 24,
-          padding: '0 10px 0 9px',
+          padding: '0 8px 0 9px',
           background: 'rgba(0,0,0,0.28)',
           border: '1px solid rgba(255,255,255,0.07)',
           borderRadius: 7,
@@ -455,7 +495,33 @@ export default function MenuBar({
             }}
           />
         </div>
-        <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)' }}>Search your photos…</span>
+        <input
+          value={searchQuery}
+          onChange={(e) => onSearchQueryChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') onSearchSubmit();
+            else if (e.key === 'Escape') onClearSearch();
+          }}
+          placeholder="Search your photos…"
+          style={{
+            flex: 1,
+            minWidth: 0,
+            border: 'none',
+            outline: 'none',
+            background: 'transparent',
+            color: '#fff',
+            fontSize: 12.5,
+          }}
+        />
+        {searchQuery && (
+          <div
+            onClick={onClearSearch}
+            title="Clear search"
+            style={{ flexShrink: 0, fontSize: 12, color: 'rgba(255,255,255,0.5)', cursor: 'default' }}
+          >
+            ✕
+          </div>
+        )}
       </div>
 
       <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.12)', margin: '0 6px' }} />

@@ -4,9 +4,11 @@ use std::sync::Mutex;
 
 use crate::config::{AutoResolution, ConnMode, LibraryConfig};
 use models::{
-    AlbumDetail, AlbumSummary, ConnectionStatus, LibraryInfo, RawAlbumResponse, RawLibraryResponse,
-    RawSearchAsset, RawSearchMetadataResponse, RawStackResponse, RawTimeBucket,
-    RawTimeBucketAssets, ServerVersion, StackInfo, UserInfo, MIN_TESTED_SERVER_VERSION,
+    AlbumDetail, AlbumSummary, ConnectionStatus, LibraryInfo, PersonDetail, PersonSummary,
+    RawAlbumResponse, RawBulkIdResponse, RawLibraryResponse, RawPeopleResponse,
+    RawPersonResponse, RawPersonStatistics, RawSearchAsset, RawSearchMetadataResponse,
+    RawStackResponse, RawTagResponse, RawTimeBucket, RawTimeBucketAssets, ServerVersion,
+    StackInfo, TagDetail, TagSummary, UserInfo, MIN_TESTED_SERVER_VERSION,
 };
 
 pub struct ImmichClient {
@@ -207,7 +209,7 @@ impl ImmichClient {
         body.insert("takenBefore".into(), serde_json::json!(taken_before));
         body.insert("withExif".into(), serde_json::json!(true));
         body.insert("size".into(), serde_json::json!(1000));
-        self.search_metadata_paginated(body).await
+        self.search_paginated("/search/metadata", body).await
     }
 
     /// Trash listing can't use `/search/metadata` at all (see the note on
@@ -237,10 +239,15 @@ impl ImmichClient {
         Ok(all)
     }
 
-    /// Shared paging loop for `/search/metadata` - the timeline (date-bounded)
-    /// and trash (unbounded) listings only differ in their filter fields.
-    async fn search_metadata_paginated(
+    /// Shared paging loop for `/search/metadata` and `/search/smart` - both
+    /// return the same `SearchResponseDto` envelope (`assets.items`/
+    /// `assets.nextPage`), differing only in `path` and which filter fields
+    /// the caller puts in `base_body` (date-bounded timeline/trash listings,
+    /// an `albumIds`/`personIds`/`tagIds` filter, or `search_smart`'s free-
+    /// text `query`).
+    async fn search_paginated(
         &self,
+        path: &str,
         mut base_body: serde_json::Map<String, serde_json::Value>,
     ) -> Result<Vec<models::AssetSummary>, String> {
         let mut all = Vec::new();
@@ -248,7 +255,7 @@ impl ImmichClient {
         loop {
             base_body.insert("page".into(), serde_json::json!(page));
             let body = serde_json::Value::Object(base_body.clone());
-            let resp: RawSearchMetadataResponse = self.post_json("/search/metadata", &body).await?;
+            let resp: RawSearchMetadataResponse = self.post_json(path, &body).await?;
             let got = resp.assets.items.len();
             all.extend(resp.assets.items);
             match resp.assets.next_page {
@@ -622,7 +629,7 @@ impl ImmichClient {
         body.insert("albumIds".into(), serde_json::json!([album_id]));
         body.insert("withExif".into(), serde_json::json!(true));
         body.insert("size".into(), serde_json::json!(1000));
-        let assets = self.search_metadata_paginated(body).await?;
+        let assets = self.search_paginated("/search/metadata", body).await?;
         Ok(AlbumDetail {
             id: raw.id,
             album_name: raw.album_name,
@@ -727,6 +734,273 @@ impl ImmichClient {
             return Err(format!("Remove-from-album returned {status}: {text}"));
         }
         Ok(())
+    }
+
+    /// GET /people/{id}/statistics - best-effort per-person photo count used
+    /// by `list_people` to sort "most photos first"; a failed call for one
+    /// person defaults that person's count to 0 rather than failing the
+    /// whole list, same non-fatal treatment as `refresh_metadata`/
+    /// `regenerate_thumbnail` elsewhere in this file.
+    async fn get_person_statistics(&self, person_id: &str) -> Result<i64, String> {
+        let raw: RawPersonStatistics = self
+            .get_json(&format!("/people/{person_id}/statistics"), &[])
+            .await?;
+        Ok(raw.assets)
+    }
+
+    /// GET /people?withHidden=false - Immich's `PersonResponseDto` carries no
+    /// asset count of its own, so this fans out one `/statistics` call per
+    /// person concurrently (a personal/family-sized library's whole People
+    /// list, not thousands of entries - same "fetch everything, no paging"
+    /// assumption `list_albums` already makes) to sort the result "most
+    /// photos first", tie-broken by name with unnamed people pushed last.
+    pub async fn list_people(&self) -> Result<Vec<PersonSummary>, String> {
+        let raw: RawPeopleResponse = self
+            .get_json("/people", &[("withHidden".into(), "false".into())])
+            .await?;
+        let stats = futures_util::future::join_all(
+            raw.people.iter().map(|p| self.get_person_statistics(&p.id)),
+        )
+        .await;
+        let mut people: Vec<PersonSummary> = raw
+            .people
+            .into_iter()
+            .zip(stats)
+            .map(|(p, stat)| PersonSummary {
+                id: p.id,
+                name: p.name,
+                asset_count: stat.unwrap_or(0),
+            })
+            .collect();
+        people.sort_by(|a, b| {
+            b.asset_count.cmp(&a.asset_count).then_with(|| match (a.name.is_empty(), b.name.is_empty()) {
+                (true, false) => std::cmp::Ordering::Greater,
+                (false, true) => std::cmp::Ordering::Less,
+                _ => a.name.cmp(&b.name),
+            })
+        });
+        Ok(people)
+    }
+
+    /// GET /people/{id} for the name, plus `POST /search/metadata`
+    /// (`personIds: [id]`, `withExif: true`) for the assets - same two-call
+    /// shape as `get_album`.
+    pub async fn get_person(&self, person_id: &str) -> Result<PersonDetail, String> {
+        let raw: RawPersonResponse = self.get_json(&format!("/people/{person_id}"), &[]).await?;
+        let mut body = serde_json::Map::new();
+        body.insert("personIds".into(), serde_json::json!([person_id]));
+        body.insert("withExif".into(), serde_json::json!(true));
+        body.insert("size".into(), serde_json::json!(1000));
+        let assets = self.search_paginated("/search/metadata", body).await?;
+        Ok(PersonDetail { id: raw.id, name: raw.name, assets })
+    }
+
+    /// PUT /people/{id} - only renames; birthDate/isHidden/isFavorite/
+    /// featureFaceAssetId aren't exposed anywhere in this app.
+    pub async fn rename_person(&self, person_id: &str, name: &str) -> Result<(), String> {
+        let body = serde_json::json!({ "name": name });
+        let resp = self
+            .http
+            .put(self.url(&format!("/people/{person_id}")))
+            .header("x-api-key", &self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Rename person request failed: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("Rename person returned {status}: {text}"));
+        }
+        Ok(())
+    }
+
+    /// GET /people/{id}/thumbnail - the face-crop image Immich generated for
+    /// this person; same shape as `get_thumbnail_bytes` but with no `size`
+    /// query param (there's only one rendition of this one).
+    pub async fn get_person_thumbnail_bytes(&self, person_id: &str) -> Result<(Vec<u8>, String), String> {
+        let resp = self
+            .http
+            .get(self.url(&format!("/people/{person_id}/thumbnail")))
+            .header("x-api-key", &self.api_key)
+            .send()
+            .await
+            .map_err(|e| format!("Person thumbnail request failed: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("Person thumbnail request returned {}", resp.status()));
+        }
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("image/jpeg")
+            .to_string();
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("Could not read person thumbnail bytes: {e}"))?;
+        Ok((bytes.to_vec(), content_type))
+    }
+
+    /// GET /tags - every tag owned by this account, as a bare array (unlike
+    /// `/people`, there's no wrapper envelope). Sorted alphabetically by
+    /// `value` (the flat display name) - Immich returns no guaranteed order
+    /// of its own.
+    pub async fn list_tags(&self) -> Result<Vec<TagSummary>, String> {
+        let raw: Vec<RawTagResponse> = self.get_json("/tags", &[]).await?;
+        let mut tags: Vec<TagSummary> = raw.into_iter().map(Into::into).collect();
+        tags.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(tags)
+    }
+
+    /// GET /tags/{id} for the name/color, plus `POST /search/metadata`
+    /// (`tagIds: [id]`, `withExif: true`) for the assets - same two-call
+    /// shape as `get_album`/`get_person`.
+    pub async fn get_tag(&self, tag_id: &str) -> Result<TagDetail, String> {
+        let raw: RawTagResponse = self.get_json(&format!("/tags/{tag_id}"), &[]).await?;
+        let mut body = serde_json::Map::new();
+        body.insert("tagIds".into(), serde_json::json!([tag_id]));
+        body.insert("withExif".into(), serde_json::json!(true));
+        body.insert("size".into(), serde_json::json!(1000));
+        let assets = self.search_paginated("/search/metadata", body).await?;
+        Ok(TagDetail { id: raw.id, name: raw.value, color: raw.color, assets })
+    }
+
+    /// POST /tags - `color` is only ever set here at creation time; Immich's
+    /// `PUT /tags/{id}` (`updateTag`) accepts *only* `color`, not `name` -
+    /// there's no rename-tag endpoint at all, so this app doesn't offer one.
+    /// `parentId` is deliberately omitted - every tag ImmAture creates is
+    /// top-level, matching the flat-list (no tree UI) decision.
+    pub async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<TagSummary, String> {
+        let mut body = serde_json::Map::new();
+        body.insert("name".into(), serde_json::json!(name));
+        if let Some(c) = color {
+            body.insert("color".into(), serde_json::json!(c));
+        }
+        let raw: RawTagResponse = self.post_json("/tags", &serde_json::Value::Object(body)).await?;
+        Ok(raw.into())
+    }
+
+    /// DELETE /tags/{id} - deletes the tag itself; tagged assets are
+    /// untouched (just no longer associated with this tag).
+    pub async fn delete_tag(&self, tag_id: &str) -> Result<(), String> {
+        let resp = self
+            .http
+            .delete(self.url(&format!("/tags/{tag_id}")))
+            .header("x-api-key", &self.api_key)
+            .send()
+            .await
+            .map_err(|e| format!("Delete tag request failed: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("Delete tag returned {status}: {text}"));
+        }
+        Ok(())
+    }
+
+    /// PUT /tags/{id}/assets - adds assets to a tag. Same "fire and trust"
+    /// treatment as `add_assets_to_album`: the response is a per-id
+    /// `BulkIdResponseDto[]` (an id already tagged just comes back
+    /// `success: false`, not a request-level error), not inspected here.
+    pub async fn tag_assets(&self, tag_id: &str, asset_ids: &[String]) -> Result<(), String> {
+        let body = serde_json::json!({ "ids": asset_ids });
+        let resp = self
+            .http
+            .put(self.url(&format!("/tags/{tag_id}/assets")))
+            .header("x-api-key", &self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Tag-assets request failed: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("Tag-assets returned {status}: {text}"));
+        }
+        check_bulk_id_results(resp, "Tag-assets").await
+    }
+
+    /// DELETE /tags/{id}/assets - removes assets from a tag; the assets
+    /// themselves are untouched, same reasoning as `remove_assets_from_album`.
+    pub async fn untag_assets(&self, tag_id: &str, asset_ids: &[String]) -> Result<(), String> {
+        let body = serde_json::json!({ "ids": asset_ids });
+        let resp = self
+            .http
+            .delete(self.url(&format!("/tags/{tag_id}/assets")))
+            .header("x-api-key", &self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Untag-assets request failed: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("Untag-assets returned {status}: {text}"));
+        }
+        check_bulk_id_results(resp, "Untag-assets").await
+    }
+
+    /// POST /search/smart - Immich's natural-language "smart search" (CLIP
+    /// embeddings), the same mechanism behind Immich's own web UI search
+    /// box. Returns the same `SearchResponseDto` envelope as `/search/
+    /// metadata` (confirmed against Immich's own `search.dto.ts`), so this
+    /// reuses `search_paginated` unchanged - just a different path and a
+    /// free-text `query` field instead of a structural filter. Capped at
+    /// `size: 200` per page (vs. 1000 for a known-bounded album/person/tag
+    /// asset list) since an open-ended text query against a large library
+    /// could otherwise return an unbounded number of "relevant" results;
+    /// `search_paginated`'s own 20-page cap still applies on top of that.
+    pub async fn search_smart(&self, query: &str) -> Result<Vec<models::AssetSummary>, String> {
+        let mut body = serde_json::Map::new();
+        body.insert("query".into(), serde_json::json!(query));
+        body.insert("withExif".into(), serde_json::json!(true));
+        body.insert("size".into(), serde_json::json!(200));
+        self.search_paginated("/search/smart", body).await
+    }
+
+    /// GET /assets/{id} - a single asset's full detail. Confirmed against
+    /// Immich's own server source (`asset.repository.ts`'s `withTags`
+    /// helper) that `/search/metadata` and `/search/smart` do **not** join
+    /// the `tags` relation at all - every `AssetSummary` obtained via
+    /// `search_paginated` (timeline/album/person/tag/search results) always
+    /// has an empty `tags` array regardless of what's actually assigned.
+    /// `GET /assets/{id}` returns the same per-asset shape (`RawSearchAsset`
+    /// deserializes it unchanged) but *does* include `tags` - so this is the
+    /// only reliable way to learn an asset's tags, called on demand for
+    /// whichever single asset the Metadata sidebar/Viewer Info panel is
+    /// currently showing (see `MetadataRows.tsx`), not fetched in bulk for
+    /// every asset in a grid.
+    pub async fn get_asset(&self, asset_id: &str) -> Result<models::AssetSummary, String> {
+        let raw: RawSearchAsset = self.get_json(&format!("/assets/{asset_id}"), &[]).await?;
+        Ok(raw.into())
+    }
+}
+
+/// Inspects a `BulkIdResponseDto[]` body (the response of `PUT`/`DELETE
+/// /tags/{id}/assets`) for any per-id `success: false` entry - a bare 200
+/// status on this endpoint does **not** mean every id actually applied, so
+/// `tag_assets`/`untag_assets` call this instead of trusting the status code
+/// alone (unlike `add_assets_to_album`'s deliberately looser "fire and
+/// trust", where the only realistic per-id failure is an already-a-member
+/// no-op, harmless to ignore - a bulk tag/untag failure is worth surfacing).
+async fn check_bulk_id_results(resp: reqwest::Response, op: &str) -> Result<(), String> {
+    let results: Vec<RawBulkIdResponse> = resp
+        .json()
+        .await
+        .map_err(|e| format!("{op}: could not parse response: {e}"))?;
+    let failures: Vec<String> = results
+        .into_iter()
+        .filter(|r| !r.success)
+        .map(|r| {
+            let reason = r.error_message.or(r.error).unwrap_or_else(|| "unknown reason".into());
+            format!("{} ({reason})", r.id)
+        })
+        .collect();
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("{op} failed for {} of the selected photo(s): {}", failures.len(), failures.join("; ")))
     }
 }
 

@@ -2,12 +2,13 @@ import { useLibraryStatus } from '../lib/libraryStatus';
 import { useMemoryUsage, formatMemoryRate } from '../lib/useMemoryUsage';
 import { formatSize } from '../lib/exifFormat';
 
-export type LeftTab = 'photos' | 'albums' | 'people' | 'folders' | 'trash';
+export type LeftTab = 'photos' | 'albums' | 'people' | 'tags' | 'folders' | 'trash';
 
 const navDefs: { id: LeftTab; label: string; color: string }[] = [
   { id: 'photos', label: 'Photos', color: '#62a0ea' },
   { id: 'albums', label: 'Albums', color: '#2ec27e' },
   { id: 'people', label: 'People', color: '#e5a50a' },
+  { id: 'tags', label: 'Tags', color: '#9141ac' },
   { id: 'folders', label: 'Folders', color: '#9aa0a6' },
 ];
 
@@ -17,12 +18,16 @@ export default function Sidebar({
   photosCount,
   trashCount,
   albumsCount,
+  peopleCount,
+  tagsCount,
 }: {
   active: LeftTab;
   onSelect: (tab: LeftTab) => void;
   photosCount: number;
   trashCount: number;
   albumsCount?: number;
+  peopleCount?: number;
+  tagsCount?: number;
 }) {
   const { status, checking, error } = useLibraryStatus();
   const { rssBytes, ratePerHour } = useMemoryUsage();
@@ -30,7 +35,8 @@ export default function Sidebar({
   const counts: Record<LeftTab, string> = {
     photos: photosCount ? String(photosCount) : '',
     albums: albumsCount ? String(albumsCount) : '',
-    people: '',
+    people: peopleCount ? String(peopleCount) : '',
+    tags: tagsCount ? String(tagsCount) : '',
     folders: photosCount ? String(photosCount) : '',
     trash: trashCount ? String(trashCount) : '',
   };

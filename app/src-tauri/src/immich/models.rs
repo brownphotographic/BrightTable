@@ -117,6 +117,7 @@ impl RawTimeBucketAssets {
                 description: None,
                 stack: None,
                 original_path: None,
+                tags: Vec::new(),
             })
             .collect()
     }
@@ -189,6 +190,14 @@ pub struct RawSearchAsset {
     pub stack: Option<AssetStackInfo>,
     #[serde(rename = "originalPath", default)]
     pub original_path: Option<String>,
+    /// Present on `AssetResponseDto` whenever Immich's `mapAsset()` had the
+    /// `tags` relation loaded for this asset - not confirmed live to be
+    /// populated on every endpoint that returns this shape (same caveat as
+    /// `stack`, see `list_stacks`'s doc comment), so this is `#[serde(default)]`
+    /// and simply comes back empty rather than erroring if a given endpoint
+    /// omits it.
+    #[serde(default)]
+    pub tags: Vec<RawTagResponse>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -236,6 +245,7 @@ pub struct AssetSummary {
     /// (`RawTimeBucketAssets::to_assets`), which is fine since sidecar
     /// sync/copy-paste don't apply there.
     pub original_path: Option<String>,
+    pub tags: Vec<TagSummary>,
 }
 
 impl From<RawSearchAsset> for AssetSummary {
@@ -246,6 +256,7 @@ impl From<RawSearchAsset> for AssetSummary {
             .map(|(_, ext)| ext.to_uppercase())
             .unwrap_or_default();
         let e = r.exif_info;
+        let tags = r.tags.into_iter().map(Into::into).collect();
         Self {
             id: r.id,
             file_name: r.original_file_name,
@@ -270,6 +281,7 @@ impl From<RawSearchAsset> for AssetSummary {
             description: e.as_ref().and_then(|e| e.description.clone()),
             stack: r.stack,
             original_path: r.original_path,
+            tags,
         }
     }
 }
@@ -390,4 +402,103 @@ impl From<RawAlbumResponse> for AlbumDetail {
             assets: r.assets.into_iter().map(Into::into).collect(),
         }
     }
+}
+
+/// `GET /people/{id}` (single) and each entry of `GET /people`'s `people`
+/// array both deserialize to this same shape - Immich's `PersonResponseDto`
+/// has more fields (birthDate, thumbnailPath, isHidden, isFavorite,
+/// updatedAt) but only `id`/`name` are used here.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawPersonResponse {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+}
+
+/// `GET /people`'s wrapper shape (Immich's `PeopleResponseDto`) - `total`
+/// and `hidden` aren't read here.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawPeopleResponse {
+    pub people: Vec<RawPersonResponse>,
+}
+
+/// `GET /people/{id}/statistics` - just the one field this app uses to show
+/// a photo count per person, synthesized client-side since `PersonResponseDto`
+/// itself carries no asset count of its own.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawPersonStatistics {
+    pub assets: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonSummary {
+    pub id: String,
+    pub name: String,
+    pub asset_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonDetail {
+    pub id: String,
+    pub name: String,
+    pub assets: Vec<AssetSummary>,
+}
+
+/// `GET /tags` (bare array) and `GET /tags/{id}` both deserialize to this
+/// same shape - Immich's `TagResponseDto` also has `parentId`/`createdAt`/
+/// `updatedAt`, unused here. `value` (not `name`) is used as the display
+/// name throughout this app - for a nested tag `value` is the full
+/// hierarchical path (e.g. "Nature/Flowers") while `name` is just the leaf
+/// ("Flowers"), and ImmAture deliberately treats tags as one flat,
+/// alphabetically-sorted list rather than building a tree UI, so the full
+/// path is what a user needs to see to tell tags apart.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawTagResponse {
+    pub id: String,
+    pub value: String,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+/// One entry of `PUT`/`DELETE /tags/{id}/assets`'s `BulkIdResponseDto[]`
+/// response - unlike `add_assets_to_album`/`remove_assets_from_album`
+/// (which trust a bare 200 status and never look at this per-id body, since
+/// their only realistic per-id failure is "already a member", harmless to
+/// ignore), a bulk tag/untag failure is surfaced by inspecting this: a 200
+/// response can still carry `success: false` entries (e.g. a permission or
+/// validation failure on that one id) that a status-code-only check would
+/// silently swallow.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawBulkIdResponse {
+    pub id: String,
+    pub success: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(rename = "errorMessage", default)]
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagSummary {
+    pub id: String,
+    pub name: String,
+    pub color: Option<String>,
+}
+
+impl From<RawTagResponse> for TagSummary {
+    fn from(r: RawTagResponse) -> Self {
+        Self { id: r.id, name: r.value, color: r.color }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagDetail {
+    pub id: String,
+    pub name: String,
+    pub color: Option<String>,
+    pub assets: Vec<AssetSummary>,
 }

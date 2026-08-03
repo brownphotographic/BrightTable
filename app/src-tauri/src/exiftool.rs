@@ -79,11 +79,11 @@ pub fn build_exiftool_args(policy: MetadataPolicy, source: Option<&Path>, target
     }
 }
 
-/// Runs `exiftool` to completion under `EXIFTOOL_RUN_TIMEOUT`, returning the
-/// trimmed stderr (falling back to stdout, since `exiftool` sometimes reports
-/// errors there instead - e.g. "0 image files updated" without ever touching
-/// stderr) as the error on a non-zero exit or a timeout.
-pub async fn run_exiftool(exiftool_path: &str, args: &[String]) -> Result<(), String> {
+/// Spawns `exiftool` and waits for it to complete under `EXIFTOOL_RUN_TIMEOUT`
+/// - shared by `run_exiftool` (discards stdout) and
+/// `run_exiftool_capture_stdout` (`rotate.rs`'s orientation read, which needs
+/// the queried tag's value back).
+async fn run_exiftool_output(exiftool_path: &str, args: &[String]) -> Result<std::process::Output, String> {
     let child = tokio::process::Command::new(exiftool_path)
         .args(args)
         .stdout(Stdio::piped())
@@ -91,11 +91,18 @@ pub async fn run_exiftool(exiftool_path: &str, args: &[String]) -> Result<(), St
         .spawn()
         .map_err(|e| format!("Couldn't run exiftool: {e}"))?;
 
-    let output = match tokio::time::timeout(EXIFTOOL_RUN_TIMEOUT, child.wait_with_output()).await {
-        Ok(result) => result.map_err(|e| format!("Couldn't wait for exiftool: {e}"))?,
-        Err(_) => return Err(format!("Timed out after {}s running exiftool", EXIFTOOL_RUN_TIMEOUT.as_secs())),
-    };
+    match tokio::time::timeout(EXIFTOOL_RUN_TIMEOUT, child.wait_with_output()).await {
+        Ok(result) => result.map_err(|e| format!("Couldn't wait for exiftool: {e}")),
+        Err(_) => Err(format!("Timed out after {}s running exiftool", EXIFTOOL_RUN_TIMEOUT.as_secs())),
+    }
+}
 
+/// Runs `exiftool` to completion, returning the trimmed stderr (falling back
+/// to stdout, since `exiftool` sometimes reports errors there instead - e.g.
+/// "0 image files updated" without ever touching stderr) as the error on a
+/// non-zero exit or a timeout.
+pub async fn run_exiftool(exiftool_path: &str, args: &[String]) -> Result<(), String> {
+    let output = run_exiftool_output(exiftool_path, args).await?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if !stderr.is_empty() {
@@ -108,6 +115,21 @@ pub async fn run_exiftool(exiftool_path: &str, args: &[String]) -> Result<(), St
         return Err(format!("exiftool exited with status {}", output.status));
     }
     Ok(())
+}
+
+/// Same success/failure shape as `run_exiftool`, but returns trimmed stdout
+/// on success instead of discarding it - used by `rotate.rs`'s
+/// `read_orientation` to capture a queried tag's value.
+pub async fn run_exiftool_capture_stdout(exiftool_path: &str, args: &[String]) -> Result<String, String> {
+    let output = run_exiftool_output(exiftool_path, args).await?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if !stderr.is_empty() {
+            return Err(stderr);
+        }
+        return Err(format!("exiftool exited with status {}", output.status));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 #[cfg(test)]

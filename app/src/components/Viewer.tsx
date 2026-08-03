@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import {
+  evictThumbCacheForAsset,
   getStack,
   launchArtRoundTrip,
   launchEditor,
   openVideoExternally,
   pasteImageProcessing,
+  regenerateAssetThumbnail,
   revealInFileManager,
+  rotateAsset,
   thumbnailSrc,
   type AssetMetadataPatch,
   type AssetSummary,
@@ -24,6 +27,7 @@ import { useClipboard } from '../lib/clipboard';
 import { useNoSidecarChoice } from '../lib/useNoSidecarChoice';
 import { useProcessingQueue } from '../lib/processingQueue';
 import { useProcessingJobReconciliation } from '../lib/useProcessingJobReconciliation';
+import { bumpImageVersion, getImageVersion, useImageVersion } from '../lib/imageVersion';
 
 const MIN_ZOOM = 25;
 const MAX_ZOOM = 400;
@@ -85,24 +89,16 @@ function headerButtonStyle(active: boolean) {
   } as const;
 }
 
-export default function Viewer({
-  asset,
-  hasPrev,
-  hasNext,
-  onClose,
-  onPrev,
-  onNext,
-  stripAssets,
-  onSelect,
-  onEdit,
-  onDelete,
-  onUnstack,
-  onSetStackPick,
-  onOpenApplicationsPreferences,
-  onArtRoundTripQueued,
-  onProcessingSidecarCreated,
-  onPrint,
-}: {
+// Exposed to the parent (PhotosBrowser/FoldersBrowser) via a ref so the Edit
+// menu's Rotate Left/Right items can drive the currently-open photo's rotate
+// action from outside - see those components' own `rotateLeft`/`rotateRight`
+// imperative-handle methods, which simply no-op if the Viewer isn't
+// currently mounted (ref.current is null whenever no asset is open).
+export interface ViewerHandle {
+  rotate: (clockwise: boolean) => void;
+}
+
+const Viewer = forwardRef<ViewerHandle, {
   asset: AssetSummary;
   hasPrev: boolean;
   hasNext: boolean;
@@ -137,7 +133,24 @@ export default function Viewer({
   // Prints the currently-open (non-RAW) asset - omitted (no button shown)
   // for RAW assets, matching Print's "no RAW support in v1" scope.
   onPrint?: (asset: AssetSummary) => void;
-}) {
+}>(function Viewer({
+  asset,
+  hasPrev,
+  hasNext,
+  onClose,
+  onPrev,
+  onNext,
+  stripAssets,
+  onSelect,
+  onEdit,
+  onDelete,
+  onUnstack,
+  onSetStackPick,
+  onOpenApplicationsPreferences,
+  onArtRoundTripQueued,
+  onProcessingSidecarCreated,
+  onPrint,
+}, ref) {
   const [zoom, setZoom] = useState(100);
   const [infoOpen, setInfoOpen] = useState(true);
   const [filmstripOpen, setFilmstripOpen] = useState(true);
@@ -195,6 +208,25 @@ export default function Viewer({
   // comment), which is what lets this button be used again for a *different*
   // asset right away instead of waiting on the whole export to finish.
   const [artBusy, setArtBusy] = useState(false);
+  // Which direction (if any) a rotate is currently in flight for - disables
+  // both Rotate buttons and relabels whichever was clicked, same "busy"
+  // treatment as artBusy above.
+  const [rotating, setRotating] = useState<'left' | 'right' | null>(null);
+  const [rotateError, setRotateError] = useState<string | null>(null);
+  // Instant CSS rotation of the currently-displayed pixels, applied the
+  // moment a rotate is clicked rather than waiting on the exiftool write +
+  // Immich thumbnail regen it kicks off in the background (see handleRotate)
+  // - without this the button visibly did nothing for a second or two,
+  // which read as broken rather than "still working". Purely a display
+  // nicety layered on top of whatever's already on screen: the write to
+  // disk is what's actually authoritative. Auto-clears itself a few seconds
+  // after the write confirms (rotateVisualResetTimer below) rather than
+  // waiting on any "Immich's regen finished" signal, since no such event
+  // exists - a bounded approximation, not a guarantee, same tradeoff the
+  // rest of this rotate feature already accepts (see thumbnailSrc's version
+  // cache-bust doc comment).
+  const [visualRotation, setVisualRotation] = useState(0);
+  const rotateVisualResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { applications, artRoundTripEnabled } = useApplications();
   const { copiedProcessingSource, setCopiedProcessingSource, copiedMetadata, setCopiedMetadata } = useClipboard();
   // Clicking a non-pick stack member in the info panel "peeks" at it in the
@@ -206,6 +238,7 @@ export default function Viewer({
   const [peekAsset, setPeekAsset] = useState<AssetSummary | null>(null);
   const shown = peekAsset ?? asset;
   const isVideo = isVideoAsset(shown);
+  const imgVersion = useImageVersion(shown.id);
   const loaded = loadedId === shown.id;
   const thumbLoaded = thumbLoadedId === shown.id;
   const { shortcuts, capturing } = useShortcuts();
@@ -269,6 +302,24 @@ export default function Viewer({
     setLoupePos(null);
     setPeekAsset(null);
   }, [asset.id]);
+
+  // Separate from the reset above (keyed on `shown.id`, not `asset.id`) -
+  // peeking a stack member changes `shown` without changing `asset.id`, and
+  // the visual rotation override is about whichever photo is actually on
+  // screen right now, not the stack's own pick.
+  useEffect(() => {
+    setVisualRotation(0);
+    if (rotateVisualResetTimer.current) {
+      clearTimeout(rotateVisualResetTimer.current);
+      rotateVisualResetTimer.current = null;
+    }
+  }, [shown.id]);
+
+  useEffect(() => {
+    return () => {
+      if (rotateVisualResetTimer.current) clearTimeout(rotateVisualResetTimer.current);
+    };
+  }, []);
 
   // Fetches the video's true original bytes as a Blob and swaps `videoUrl`
   // to a fresh object URL wrapping it - see `videoUrl`'s doc comment above
@@ -401,6 +452,62 @@ export default function Viewer({
     revealInFileManager(shown.originalPath).catch((e) => setLaunchError(String(e)));
   }, [shown]);
 
+  // Rewrites the EXIF Orientation tag in place (see rotate.rs's doc comment
+  // for why that's safe to do without touching pixel data) and then, once
+  // that's confirmed on disk: bumps this asset's local cache-bust version
+  // (so every thumbnailSrc() call for it - main stage, filmstrip, grid -
+  // stops resolving to the pre-rotation bytes still sitting in the
+  // webview's own HTTP cache), evicts ImmAture's own on-disk thumb_cache
+  // entry for it, and nudges Immich to regenerate its own preview/thumbnail
+  // renditions. The latter two are both best-effort/fire-and-forget: the
+  // orientation write on disk is what actually matters, and is already
+  // confirmed by the time either of them runs.
+  const handleRotate = useCallback(
+    async (clockwise: boolean) => {
+      if (!shown.originalPath) return;
+      setRotateError(null);
+      setRotating(clockwise ? 'right' : 'left');
+      const delta = clockwise ? 90 : -90;
+      // Instant feedback - see visualRotation's doc comment above.
+      setVisualRotation((r) => r + delta);
+      try {
+        await rotateAsset(shown.originalPath, clockwise);
+        bumpImageVersion(shown.id);
+        evictThumbCacheForAsset(shown.id).catch(() => {});
+        regenerateAssetThumbnail(shown.id).catch(() => {});
+        // Give the background regen a few seconds to actually land, then
+        // drop the manual override and trust the (by then hopefully
+        // refreshed) real bytes - see visualRotation's doc comment for why
+        // this is a timeout rather than something event-driven. Restarts on
+        // every successful rotate rather than stacking, so a quick flurry of
+        // clicks only ever waits out one final window.
+        if (rotateVisualResetTimer.current) clearTimeout(rotateVisualResetTimer.current);
+        rotateVisualResetTimer.current = setTimeout(() => setVisualRotation(0), 5000);
+      } catch (e) {
+        setRotateError(String(e));
+        setVisualRotation((r) => r - delta);
+      } finally {
+        setRotating(null);
+      }
+    },
+    [shown.id, shown.originalPath],
+  );
+
+  // Lets the Edit menu's Rotate Left/Right items (MenuBar.tsx, routed
+  // through PhotosBrowser/FoldersBrowser's own rotateLeft/rotateRight) drive
+  // this same handler from outside - same gating as the toolbar buttons
+  // below (no-op for video or an asset with no resolvable local path).
+  useImperativeHandle(
+    ref,
+    () => ({
+      rotate: (clockwise: boolean) => {
+        if (isVideo || !shown.originalPath || rotating) return;
+        handleRotate(clockwise).catch(() => {});
+      },
+    }),
+    [isVideo, shown.originalPath, rotating, handleRotate],
+  );
+
   // In-app video playback goes through WebKitGTK's own bundled GStreamer
   // pipeline (see the <video> element below), which has proven far less
   // reliable on some systems/codecs than the OS's own default video player -
@@ -497,6 +604,8 @@ export default function Viewer({
       else if (matchesShortcut(e, shortcuts.openInRawEditor) && isRawAsset(shown) && !artBusy) handleLaunch('rawEditor').catch(() => {});
       else if (matchesShortcut(e, shortcuts.openInExternalEditor)) handleLaunch('externalEditor').catch(() => {});
       else if (matchesShortcut(e, shortcuts.print) && onPrint && !isRawAsset(shown) && !isVideo) onPrint(shown);
+      else if (matchesShortcut(e, shortcuts.rotateLeft) && !isVideo && shown.originalPath && !rotating) handleRotate(false).catch(() => {});
+      else if (matchesShortcut(e, shortcuts.rotateRight) && !isVideo && shown.originalPath && !rotating) handleRotate(true).catch(() => {});
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -523,9 +632,11 @@ export default function Viewer({
     copiedMetadata,
     copiedProcessingSource,
     onPrint,
+    handleRotate,
+    rotating,
   ]);
 
-  const previewSrc = thumbnailSrc(shown.id, 'preview');
+  const previewSrc = thumbnailSrc(shown.id, 'preview', imgVersion);
 
   // Uses the loaded <img>'s own naturalWidth/naturalHeight (not
   // shown.exifImageWidth/Height) - EXIF dimensions are frequently absent
@@ -554,7 +665,7 @@ export default function Viewer({
     fitExceedsPreview = w * dpr > natW + 1 || h * dpr > natH + 1;
   }
   const wantHiRes = (zoom > 100 || loupeOn || fitExceedsPreview) && isOriginalZoomable(shown);
-  const hiResSrc = thumbnailSrc(shown.id, 'original');
+  const hiResSrc = thumbnailSrc(shown.id, 'original', imgVersion);
   const hiResReady = wantHiRes && hiResLoadedId === shown.id;
 
   // The loupe magnifies the "fit" (unzoomed) rendering of the already-loaded
@@ -695,6 +806,29 @@ export default function Viewer({
         {shown.originalPath && (
           <div onClick={handleShowInFileManager} style={headerButtonStyle(false)}>
             Show in File Manager
+          </div>
+        )}
+        {!isVideo && shown.originalPath && (
+          <>
+            <div
+              onClick={() => !rotating && handleRotate(false)}
+              title="Rotate Left"
+              style={{ ...headerButtonStyle(false), opacity: rotating ? 0.5 : 1 }}
+            >
+              {rotating === 'left' ? 'Rotating…' : 'Rotate Left'}
+            </div>
+            <div
+              onClick={() => !rotating && handleRotate(true)}
+              title="Rotate Right"
+              style={{ ...headerButtonStyle(false), opacity: rotating ? 0.5 : 1 }}
+            >
+              {rotating === 'right' ? 'Rotating…' : 'Rotate Right'}
+            </div>
+          </>
+        )}
+        {rotateError && (
+          <div style={{ fontSize: 11.5, color: 'var(--danger)', maxWidth: 220, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={rotateError}>
+            {rotateError}
           </div>
         )}
         <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)', margin: '0 2px' }} />
@@ -904,9 +1038,9 @@ export default function Viewer({
                         height: '100%',
                         objectFit: 'contain',
                         filter: 'blur(12px)',
-                        transform: `scale(${zoom / 100})`,
+                        transform: `scale(${zoom / 100}) rotate(${visualRotation}deg)`,
                         opacity: loaded || thumbLoaded ? 0 : 1,
-                        transition: 'opacity 200ms',
+                        transition: 'opacity 200ms, transform 250ms ease',
                       }}
                     />
                   )}
@@ -917,7 +1051,7 @@ export default function Viewer({
                       replaces the abstract thumbhash blur with a real recognizable
                       image right away while the full-size `preview` loads in. */}
                   <img
-                    src={thumbnailSrc(shown.id, 'thumbnail')}
+                    src={thumbnailSrc(shown.id, 'thumbnail', imgVersion)}
                     alt=""
                     onLoad={() => setThumbLoadedId(shown.id)}
                     style={{
@@ -926,9 +1060,9 @@ export default function Viewer({
                       width: '100%',
                       height: '100%',
                       objectFit: 'contain',
-                      transform: `scale(${zoom / 100})`,
+                      transform: `scale(${zoom / 100}) rotate(${visualRotation}deg)`,
                       opacity: loaded ? 0 : thumbLoaded ? 1 : 0,
-                      transition: 'opacity 150ms',
+                      transition: 'opacity 150ms, transform 250ms ease',
                     }}
                   />
                   <img
@@ -942,9 +1076,9 @@ export default function Viewer({
                       width: '100%',
                       height: '100%',
                       objectFit: 'contain',
-                      transform: `scale(${zoom / 100})`,
+                      transform: `scale(${zoom / 100}) rotate(${visualRotation}deg)`,
                       opacity: loaded ? 1 : 0,
-                      transition: 'opacity 150ms',
+                      transition: 'opacity 150ms, transform 250ms ease',
                     }}
                   />
                   {/* Only mounted while actually needed (zoomed past 100% or the
@@ -963,9 +1097,9 @@ export default function Viewer({
                         width: '100%',
                         height: '100%',
                         objectFit: 'contain',
-                        transform: `scale(${zoom / 100})`,
+                        transform: `scale(${zoom / 100}) rotate(${visualRotation}deg)`,
                         opacity: hiResReady ? 1 : 0,
-                        transition: 'opacity 150ms',
+                        transition: 'opacity 150ms, transform 250ms ease',
                       }}
                     />
                   )}
@@ -1068,7 +1202,7 @@ export default function Viewer({
                           }}
                         >
                           <img
-                            src={thumbnailSrc(m.id)}
+                            src={thumbnailSrc(m.id, 'thumbnail', getImageVersion(m.id))}
                             alt=""
                             loading="lazy"
                             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
@@ -1163,7 +1297,9 @@ export default function Viewer({
       {noSidecarDialog}
     </div>
   );
-}
+});
+
+export default Viewer;
 
 // How many tiles to actually mount on either side of the active photo. `items`
 // can be every asset across every month scrolled through this session (the
@@ -1234,7 +1370,7 @@ function Filmstrip({
                 past them in the grid), so a blur-up placeholder buys nothing
                 here and isn't worth the decode cost at this volume. */}
             <img
-              src={thumbnailSrc(a.id)}
+              src={thumbnailSrc(a.id, 'thumbnail', getImageVersion(a.id))}
               alt=""
               loading="lazy"
               style={{ width: '100%', height: '100%', objectFit: 'cover' }}

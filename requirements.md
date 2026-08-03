@@ -19,17 +19,26 @@
 ## 1. Product Requirements
 
 ### 1.1 Library & navigation
-- 🟡 Left sidebar with Photos, Albums, People, Folders, Trash, plus a connection-status
-  indicator — all real (§7.1–§7.10, §7.26). Live asset **counts** are real for Photos,
-  Folders, Trash, and now **Albums** (album count, §7.26); People still shows no count
-  (still a placeholder, below). The mockup's "Stacks" sidebar tab is gone even there
-  (removed per §5 feedback) and was never part of the real app.
+- ✅ Left sidebar with Photos, Albums, People, Tags, Folders, Trash, plus a
+  connection-status indicator — all real (§7.1–§7.10, §7.26, §7.28, §7.29). Live asset
+  **counts** are real for Photos, Folders, Trash, Albums (§7.26), and People (§7.28) —
+  **Tags** (§7.29) deliberately shows no count, see below. No placeholder counts remain.
+  The mockup's "Stacks" sidebar tab is gone even there (removed per §5 feedback) and was
+  never part of the real app.
 - ✅ **Photos** timeline grouped by day, with date / place / count headers, newest-first (§7.3).
 - ✅ **Folders** view: the real server-side folder tree (Immich's `/view/folder*`
   endpoints, same as Immich's own web UI) with its own thumbnail grid (§7.10).
 - ✅ **Albums**: real Immich albums, replacing the old placeholder (§7.26) — list/create/
-  rename/delete an album, browse its assets, add/remove assets. People is still a pure
-  placeholder (no fake grid data like the prototype shows — just a "not built yet" message).
+  rename/delete an album, browse its assets, add/remove assets.
+- ✅ **People**: real Immich people, replacing the old placeholder (§7.28) — list (sorted
+  most-photos-first), browse a person's photos, rename (including naming a previously
+  unnamed person). Hide/unhide and merging duplicate people were both raised and
+  explicitly declined as out of scope for this pass.
+- ✅ **Tags**: real Immich tags (§7.29), new fifth collection view — list/create/delete a
+  tag, browse its photos, and tag/untag photos from anywhere Add to Album already exists
+  (Photos, Folders, Albums, People, and Tags itself). No rename (Immich's own API has no
+  rename-tag endpoint) and no per-tag photo counts in the list view (no cheap statistics
+  endpoint exists for tags the way People has).
 - 🟡 Menu bar (File / Edit / View / Help) is real, but only some items are wired: Select
   All / Deselect All, Refresh Timeline, Preferences, Quit, Stack Selected (§7.13), Smart
   Stack… (§7.14), and the Filters dropdown (§7.11) are real; Upload…, Print…, Recent
@@ -808,9 +817,8 @@
      stack(s) first, then creates one unified stack with the full merged membership.
 
 ### 7.15 Not yet started in the real app
-- **People** tab is still a pure placeholder (`PlaceholderView.tsx`: "Not built in the real
-  app yet — placeholder data only in the design prototype"). **Folders** (§7.10) and now
-  **Albums** (§7.26) are real.
+- **People** tab is now real too (§7.28) — `PlaceholderView.tsx` itself is gone (People was
+  its last user). **Folders** (§7.10), **Albums** (§7.26), and now **Tags** (§7.29) are real.
 - **Preferences** — **Library**, **Shortcuts**, and now **Applications** (§7.21) are real;
   Sharing / Configuration each still render the same literal placeholder as before.
 - **Sharing, printing, "Create Version" round-trip/versions lineage** — all still only exist
@@ -824,9 +832,10 @@
   Card/Disk…** (§7.22), **Recent Activity…**, **Quit**, **Preferences** (`Ctrl+,`), the
   **Filters** dropdown (§7.11), and now **Copy/Paste Image Processing** and **Copy/Paste
   Metadata** (§7.24, split out of the old combined "Copy/Paste Settings" stub) are real.
-- Next real-app milestone: pick one of the above (Albums/People, sharing/printing) to wire
-  up the same way Library + Photos + Folders + Viewer + Delete/Trash + Filters + Stacks +
-  Applications + Import were done so far.
+- Next real-app milestone: pick one of the remaining items above (Sharing, "Create Version"
+  round-trip/versions lineage, or the Preferences Sharing/Configuration tabs) to wire up the
+  same way Library + Photos + Folders + Viewer + Delete/Trash + Filters + Stacks +
+  Applications + Import + Albums + People + Tags were done so far.
 
 ### 7.16 Stacks in the lightbox, and rating-UX consistency (real)
 > Stage 1 (§7.13) only surfaced stacks in the grid — the lightbox (`Viewer.tsx`) had
@@ -2031,4 +2040,82 @@
   fetched PPD and confirmed to recover the same paper list its own OS print dialog shows,
   but the `lp` submission step itself is still outstanding manual verification.
 
-<!-- Paste further decisions, rationale, rejected ideas, or transcripts below; ask Claude to fold them in. -->
+### 7.28 People (real, August 2026)
+- ✅ **Backend** (`immich/mod.rs`/`models.rs`, `commands.rs`): `list_people` (`GET
+  /people?withHidden=false`), `get_person` (`GET /people/{id}` for the name, plus `POST
+  /search/metadata` with a `personIds: [id]` filter for the assets — the same two-call shape
+  `get_album` already uses for its own missing-`assets`-field workaround, §7.26),
+  `rename_person` (`PUT /people/{id}`, name only). All gated by the same read-only safety net
+  as every other write (§7.2). Immich's `PersonResponseDto` carries no per-person asset count
+  of its own, so `list_people` fans out one `GET /people/{id}/statistics` call per person
+  concurrently (`futures_util::future::join_all`) to synthesize one, then sorts the result
+  most-photos-first (tie-broken by name, unnamed people last) — the user's explicit call over
+  Immich's own People-page ordering.
+- ✅ **Person thumbnails** proxy through the existing `immich-thumb://` custom URI scheme
+  (`protocol.rs`) rather than a new mechanism — distinguished by the URI's *host*
+  (`immich-thumb://person/{id}` vs. the existing `immich-thumb://thumbnail/{id}`) and routed
+  to a new `get_person_thumbnail_bytes` (`GET /people/{id}/thumbnail`). Cached under the
+  synthetic size key `"person"` so a cached person thumbnail can never collide with an asset
+  thumbnail cached under the same id.
+- ✅ **Frontend** (`PeopleBrowser.tsx`, new, replacing the old `PlaceholderView`): a list view
+  (grid of circular avatar cards via `personThumbnailSrc` — name, "Unnamed person" in muted
+  italic when Immich hasn't named them yet, and photo count; hover reveals a single Rename
+  pill) and a detail view (back button, a Rename/"Name…" button, a flat asset grid reusing
+  the shared `AssetTile`). Scoped down the same way Albums is (§7.26) — no Stacks, Smart
+  Stack, ART round trip, or Copy/Paste Image Processing/Metadata — plus one further cut
+  specific to People: there's no "remove this asset from this person" action anywhere (that
+  would be a face-recognition correction, out of scope for ImmAture to edit), so unlike
+  Albums' own Delete-means-**Remove from Album** convention, People's Delete key and
+  selection-bar destructive action mean **Move to Trash**, the same as Photos/Folders.
+- ✅ **Scope deliberately limited this round**: list/browse/rename only. **Hide/unhide** and
+  **merge duplicate people** were both raised and explicitly declined by the user for this
+  pass — Immich exposes both server-side (`isHidden` on `PersonResponseDto`, `POST
+  /people/{id}/merge`) but neither is wired up here.
+- ✅ **Sidebar** People count is now real (`onCount` callback from `PeopleBrowser`, same
+  pattern as Albums' and Trash's live counts) — no placeholder sidebar counts remain.
+- ✅ `PlaceholderView.tsx` deleted outright once People was wired up — it had no other users
+  left in the app.
+
+### 7.29 Tags (real, August 2026)
+- ✅ **Backend** (`immich/mod.rs`/`models.rs`, `commands.rs`): `list_tags` (`GET /tags`,
+  sorted alphabetically), `get_tag` (`GET /tags/{id}` for name/color, plus `POST
+  /search/metadata` with a `tagIds: [id]` filter for the assets — same two-call shape as
+  `get_album`/`get_person`, §7.26/§7.28), `create_tag` (`POST /tags`, name + optional color,
+  always top-level/no `parentId`), `delete_tag` (`DELETE /tags/{id}`), `tag_assets`/
+  `untag_assets` (`PUT`/`DELETE /tags/{id}/assets`). All mutations gated by the same
+  read-only safety net as every other write (§7.2); `tag_assets`/`untag_assets` also gated
+  by the `max_writes_per_batch` cap, same as `add_assets_to_album`/`remove_assets_from_album`.
+- ✅ **No rename**: confirmed against Immich's own source (`tag.controller.ts`/`tag.dto.ts`)
+  that `PUT /tags/{id}` (`updateTag`) accepts *only* `color`, not `name` — Immich has no
+  rename-tag endpoint at all, unlike Albums/People. So this feature has no Rename action;
+  color is only ever set once, at creation time.
+- ✅ **Flat list, not a tree**: Immich tags can be hierarchical (`parentId`, with `value`
+  being the full `"Parent/Child"` path and `name` just the leaf). ImmAture deliberately
+  treats tags as one flat, alphabetically-sorted list using `value` (exposed to the frontend
+  as `TagSummary.name`/`TagDetail.name`) as the display name — no tree UI, and every tag
+  ImmAture creates is top-level (no parent picker) this round. A user's explicit scope call.
+- ✅ **No per-tag photo counts in the list view**: Immich's `TagResponseDto` carries no
+  per-tag asset count (unlike Albums' `assetCount`), and unlike People there's no cheap
+  `/tags/{id}/statistics` endpoint to fan out either — the only way to get a count is a full
+  `/search/metadata` call per tag. So the Tags list view is a flat list of colored name
+  pills (dot + name, no thumbnail, no count), not a grid of cards — another explicit,
+  user-confirmed scope call over matching Albums'/People's card-grid look.
+- ✅ **Frontend** (`TagsBrowser.tsx`, new): list view is the pill list above, plus an inline
+  "New Tag" row (name input + a small fixed 8-color swatch picker, `AddToTagDialog.tsx`'s
+  `TAG_COLORS`) and a hover-revealed delete (✕) icon per pill. Detail view: back button,
+  color dot + name (no rename button), a flat asset grid reusing the shared `AssetTile`, and
+  a "Delete Tag" header button. Tag membership is user-editable like Albums (not
+  face-recognition-derived like People), so Delete follows **Albums'** convention here, not
+  People's: the selection bar/context menu offer both **Remove from Tag** (`untagAssets`,
+  the keyboard Delete binding) and **Move to Trash** side by side, same as `AlbumsBrowser.tsx`.
+- ✅ **"Add to Tag" wired everywhere "Add to Album" already exists**: `AddToTagDialog.tsx`
+  (new, mirrors `AddToAlbumDialog.tsx` — pick an existing tag as a colored pill row, or
+  create-and-assign in one flow since `POST /tags` has no `assetIds` field the way
+  `createAlbum` does, so this is two calls: `createTag` then `tagAssets`) is reachable from
+  Photos, Folders, Albums, and People's selection bars and context menus, plus Tags' own
+  detail view (to move/copy a selection to a *different* tag). `SelectionBar.tsx` gained
+  `onAddToTag`/`onRemoveFromTag` props mirroring `onAddToAlbum`/`onRemoveFromAlbum` exactly.
+- ✅ **Sidebar** gained a fifth `Tags` tab (`#9141ac`) between People and Folders, with a
+  live count from `TagsBrowser`'s `onCount` callback (count of *tags*, not photos — matches
+  Albums'/People's "count of items in this collection" convention for the sidebar row, not
+  the deliberately-omitted per-tag photo count above).

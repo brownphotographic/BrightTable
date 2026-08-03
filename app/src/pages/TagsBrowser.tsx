@@ -1,27 +1,25 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
-  createAlbum,
-  deleteAlbum,
+  createTag,
   deleteAssets,
-  getAlbum,
-  listAlbums,
-  removeAssetsFromAlbum,
-  renameAlbum,
+  deleteTag,
+  getTag,
+  listTags,
   revealInFileManager,
-  thumbnailSrc,
+  untagAssets,
   updateAssetMetadata,
-  type AlbumDetail,
-  type AlbumSummary,
   type AssetMetadataPatch,
   type AssetSummary,
   type EditJob,
   type MetadataEditTarget,
+  type TagDetail,
+  type TagSummary,
 } from '../lib/api';
 import AssetTile, { type ClickMods } from '../components/AssetTile';
 import SelectionBar from '../components/SelectionBar';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import AddToAlbumDialog from '../components/AddToAlbumDialog';
-import AddToTagDialog from '../components/AddToTagDialog';
+import AddToTagDialog, { TAG_COLORS } from '../components/AddToTagDialog';
 import { TAG_ASSIGN_DISABLED_REASON } from '../lib/featureFlags';
 import ExportToFolderDialog from '../components/ExportToFolderDialog';
 import ExportToFlickrDialog from '../components/ExportToFlickrDialog';
@@ -33,7 +31,7 @@ import { isTypingTarget, matchesShortcut, useShortcuts, type ShortcutId } from '
 import { useEditQueue } from '../lib/editQueue';
 import { useEditJobReconciliation } from '../lib/useEditJobReconciliation';
 
-// See PhotosBrowser.tsx/FoldersBrowser.tsx's identical helper.
+// See PhotosBrowser.tsx/FoldersBrowser.tsx/AlbumsBrowser.tsx's identical helper.
 function prevValuesFor(asset: AssetSummary | undefined, patch: AssetMetadataPatch): Partial<AssetSummary> {
   const prev: Partial<AssetSummary> = {};
   if (patch.rating !== undefined) prev.rating = asset?.rating ?? null;
@@ -42,43 +40,48 @@ function prevValuesFor(asset: AssetSummary | undefined, patch: AssetMetadataPatc
   return prev;
 }
 
-export interface AlbumsBrowserHandle {
+export interface TagsBrowserHandle {
   openExportToFolder: () => void;
   openExportToFlickr: () => void;
 }
 
-// Real Immich albums (GET/POST/PATCH/DELETE /albums, PUT/DELETE
-// /albums/{id}/assets) - replaces the old placeholder. Deliberately scoped
-// down from Photos/Folders' full feature set: no Stacks, Smart Stack, ART
-// round trip, or Copy/Paste Image Processing/Metadata here - those are all
-// RAW-culling-pipeline concepts orthogonal to "which photos are in this
-// album", and SelectionBar's relevant props are now optional specifically so
-// this view can omit them rather than wiring up no-ops. Rating/favorite
-// edits still go through the same background EditQueue as every other view,
-// for the same XMP-sidecar-write reason (see FoldersBrowser.tsx). Export to
-// Folder/Flickr are the exception - those are shared with Photos/Folders via
-// the File menu, so this view exposes just enough of a handle for that.
-const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
+// Real Immich tags (GET/POST/DELETE /tags, PUT/DELETE /tags/{id}/assets) -
+// closest in shape to AlbumsBrowser.tsx (tag membership is user-editable,
+// so Delete means Remove from Tag here too, not Move to Trash like
+// PeopleBrowser), with two differences: no rename (Immich's PUT /tags/{id}
+// accepts only `color`, not `name` - there's no rename-tag endpoint at
+// all), and the list view is a flat list of colored pills rather than a
+// grid of cover-thumbnail cards, since Immich exposes no per-tag asset
+// count or thumbnail (unlike Albums' assetCount/albumThumbnailAssetId or
+// People's /statistics fan-out) - showing counts here would mean firing a
+// full /search/metadata call per tag on every list load.
+const TagsBrowser = forwardRef<TagsBrowserHandle, {
   metaOpen: boolean;
   onCloseMetadata: () => void;
-  // Number of albums, for the sidebar row - only meaningful in the list view.
+  // Number of tags, for the sidebar row - only meaningful in the list view.
   onCount?: (n: number) => void;
   active?: boolean;
-}>(function AlbumsBrowser({
+}>(function TagsBrowser({
   metaOpen,
   onCloseMetadata,
   onCount,
   active = true,
 }, ref) {
-  const [albums, setAlbums] = useState<AlbumSummary[] | null>(null);
+  const [tags, setTags] = useState<TagSummary[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
-  const [newAlbumName, setNewAlbumName] = useState('');
-  const [creatingAlbum, setCreatingAlbum] = useState(false);
-  const [renamingAlbum, setRenamingAlbum] = useState<AlbumSummary | null>(null);
-  const [confirmDeleteAlbum, setConfirmDeleteAlbum] = useState<AlbumSummary | null>(null);
+  const [tagSearch, setTagSearch] = useState('');
+  const [newTagName, setNewTagName] = useState('');
+  const [newTagColor, setNewTagColor] = useState<string | null>(null);
+  const [creatingTag, setCreatingTag] = useState(false);
+  const [confirmDeleteTag, setConfirmDeleteTag] = useState<TagSummary | null>(null);
+  // Bulk-select state for the list view - separate from `selected` below
+  // (that one is asset selection inside a tag's detail view; this one is
+  // tag selection in the list view, a different domain entirely).
+  const [selectedTagIds, setSelectedTagIds] = useState<Set<string>>(new Set());
+  const [confirmDeleteSelectedTags, setConfirmDeleteSelectedTags] = useState(false);
 
-  const [openAlbumId, setOpenAlbumId] = useState<string | null>(null);
-  const [album, setAlbum] = useState<AlbumDetail | null>(null);
+  const [openTagId, setOpenTagId] = useState<string | null>(null);
+  const [tag, setTag] = useState<TagDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [enqueueError, setEnqueueError] = useState<string | null>(null);
 
@@ -94,11 +97,11 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
   const [exportFlickrAssets, setExportFlickrAssets] = useState<AssetSummary[] | null>(null);
   const { shortcuts, capturing } = useShortcuts();
 
-  const refreshAlbumList = useCallback(() => {
-    listAlbums()
-      .then((a) => {
-        setAlbums(a);
-        onCount?.(a.length);
+  const refreshTagList = useCallback(() => {
+    listTags()
+      .then((t) => {
+        setTags(t);
+        onCount?.(t.length);
       })
       .catch((e) => setListError(String(e)));
     // onCount's identity changing on re-renders shouldn't retrigger this.
@@ -106,36 +109,35 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
   }, []);
 
   useEffect(() => {
-    refreshAlbumList();
-  }, [refreshAlbumList]);
+    refreshTagList();
+  }, [refreshTagList]);
 
-  // Re-fetches the album list whenever navigating back from a detail view -
-  // adding/removing assets or renaming while inside one can change a cover/
-  // count/name that the list needs to reflect on return.
+  // Re-fetches the tag list whenever navigating back from a detail view -
+  // deleting the open tag from within it should be reflected on return.
   useEffect(() => {
-    if (openAlbumId === null) refreshAlbumList();
-  }, [openAlbumId, refreshAlbumList]);
+    if (openTagId === null) refreshTagList();
+  }, [openTagId, refreshTagList]);
 
   useEffect(() => {
-    if (!openAlbumId) {
-      setAlbum(null);
+    if (!openTagId) {
+      setTag(null);
       return;
     }
-    setAlbum(null);
+    setTag(null);
     setDetailError(null);
     setSelected(new Set());
-    getAlbum(openAlbumId)
-      .then(setAlbum)
+    getTag(openTagId)
+      .then(setTag)
       .catch((e) => setDetailError(String(e)));
-  }, [openAlbumId]);
+  }, [openTagId]);
 
   const assetById = useMemo(() => {
     const map = new Map<string, AssetSummary>();
-    for (const a of album?.assets ?? []) map.set(a.id, a);
+    for (const a of tag?.assets ?? []) map.set(a.id, a);
     return map;
-  }, [album]);
+  }, [tag]);
 
-  const flatIds = useMemo(() => (album?.assets ?? []).map((a) => a.id), [album]);
+  const flatIds = useMemo(() => (tag?.assets ?? []).map((a) => a.id), [tag]);
 
   const selectedAssets = useMemo(
     () => [...selected].map((id) => assetById.get(id)).filter((a): a is AssetSummary => !!a),
@@ -144,19 +146,19 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
   const allSelectedFavorited = selectedAssets.length > 0 && selectedAssets.every((a) => a.isFavorite);
 
   const patchAssetLocal = useCallback((id: string, patch: Partial<AssetSummary>) => {
-    setAlbum((a) => {
-      if (!a) return a;
-      const idx = a.assets.findIndex((x) => x.id === id);
-      if (idx === -1) return a;
-      const next = a.assets.slice();
+    setTag((t) => {
+      if (!t) return t;
+      const idx = t.assets.findIndex((x) => x.id === id);
+      if (idx === -1) return t;
+      const next = t.assets.slice();
       next[idx] = { ...next[idx], ...patch };
-      return { ...a, assets: next };
+      return { ...t, assets: next };
     });
   }, []);
 
   const removeAssetsLocal = useCallback((ids: string[]) => {
     const idSet = new Set(ids);
-    setAlbum((a) => (a ? { ...a, assets: a.assets.filter((x) => !idSet.has(x.id)) } : a));
+    setTag((t) => (t ? { ...t, assets: t.assets.filter((x) => !idSet.has(x.id)) } : t));
     setSelected((s) => {
       if (![...idSet].some((id) => s.has(id))) return s;
       const next = new Set(s);
@@ -234,13 +236,13 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
     [removeAssetsLocal],
   );
 
-  const removeFromAlbum = useCallback(
+  const removeFromTag = useCallback(
     async (ids: string[]) => {
-      if (!album) return;
-      await removeAssetsFromAlbum(album.id, ids);
+      if (!tag) return;
+      await untagAssets(tag.id, ids);
       removeAssetsLocal(ids);
     },
-    [album, removeAssetsLocal],
+    [tag, removeAssetsLocal],
   );
 
   const handleShowInFileManager = useCallback((asset: AssetSummary) => {
@@ -250,7 +252,7 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
 
   const openIndex = openId ? flatIds.indexOf(openId) : -1;
   const openAsset = openId ? assetById.get(openId) ?? null : null;
-  const stripAssets = useMemo(() => album?.assets ?? [], [album]);
+  const stripAssets = useMemo(() => tag?.assets ?? [], [tag]);
 
   const selectAll = useCallback(() => setSelected(new Set(flatIds)), [flatIds]);
   const deselectAll = useCallback(() => setSelected(new Set()), []);
@@ -308,13 +310,13 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
         onClick: () => setAddToAlbumTargets(targetIds),
       });
       items.push({
-        label: targetIds.length > 1 ? `Remove ${targetIds.length} Photos from Album` : 'Remove from Album',
-        onClick: () => removeFromAlbum(targetIds).catch((e) => setEnqueueError(String(e))),
-      });
-      items.push({
         label: (targetIds.length > 1 ? `Add ${targetIds.length} Photos to Tag…` : 'Add to Tag…') + (TAG_ASSIGN_DISABLED_REASON ? ' (disabled)' : ''),
         onClick: () => setAddToTagTargets(targetIds),
         disabled: !!TAG_ASSIGN_DISABLED_REASON,
+      });
+      items.push({
+        label: targetIds.length > 1 ? `Remove ${targetIds.length} Photos from Tag` : 'Remove from Tag',
+        onClick: () => removeFromTag(targetIds).catch((e) => setEnqueueError(String(e))),
       });
     }
     if (asset?.originalPath) {
@@ -332,14 +334,15 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
       });
     }
     return items;
-  }, [contextMenu, assetById, selected, removeFromAlbum, handleShowInFileManager, trashAssets]);
+  }, [contextMenu, assetById, selected, removeFromTag, handleShowInFileManager, trashAssets]);
 
   useImperativeHandle(
     ref,
     () => ({
-      // Matches Photos/Folders' File-menu export handlers: the current
-      // selection, else the asset open in the Viewer, else nothing (a
-      // silent no-op - there's no selection to disable the menu item on).
+      // Matches Photos/Folders/Albums/People's File-menu export handlers:
+      // the current selection, else the asset open in the Viewer, else
+      // nothing (a silent no-op - there's no selection to disable the menu
+      // item on).
       openExportToFolder: () => {
         const target = selectedAssets.length > 0 ? selectedAssets : openAsset ? [openAsset] : [];
         if (target.length > 0) setExportFolderAssets(target);
@@ -353,7 +356,7 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
   );
 
   useEffect(() => {
-    if (!openAlbumId || openId || !active) return;
+    if (!openTagId || openId || !active) return;
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(e) || capturing) return;
       if (matchesShortcut(e, shortcuts.open) && lastClickedId.current) {
@@ -394,131 +397,203 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openAlbumId, openId, active, selectAll, deselectAll, selected, shortcuts, capturing, commitEditMany, toggleFavoriteForSelection, setAddToTagTargets]);
+  }, [openTagId, openId, active, selectAll, deselectAll, selected, shortcuts, capturing, commitEditMany, toggleFavoriteForSelection, setAddToTagTargets]);
 
-  async function handleCreateAlbum() {
-    const name = newAlbumName.trim();
+  async function handleCreateTag() {
+    const name = newTagName.trim();
     if (!name) return;
-    setCreatingAlbum(true);
+    setCreatingTag(true);
     setListError(null);
     try {
-      const created = await createAlbum(name, []);
-      setNewAlbumName('');
-      refreshAlbumList();
-      setOpenAlbumId(created.id);
+      const created = await createTag(name, newTagColor);
+      setNewTagName('');
+      setNewTagColor(null);
+      refreshTagList();
+      setOpenTagId(created.id);
     } catch (e) {
       setListError(String(e));
     } finally {
-      setCreatingAlbum(false);
+      setCreatingTag(false);
     }
   }
 
-  // ---------- Album list view ----------
-  if (!openAlbumId) {
+  const filteredTags = useMemo(() => {
+    if (!tags) return [];
+    const q = tagSearch.trim().toLowerCase();
+    if (!q) return tags;
+    return tags.filter((t) => t.name.toLowerCase().includes(q));
+  }, [tags, tagSearch]);
+
+  const toggleTagSelect = useCallback((id: string) => {
+    setSelectedTagIds((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  const clearTagSelection = useCallback(() => setSelectedTagIds(new Set()), []);
+
+  async function handleBulkDeleteTags() {
+    await Promise.all([...selectedTagIds].map((id) => deleteTag(id)));
+    setConfirmDeleteSelectedTags(false);
+    clearTagSelection();
+    refreshTagList();
+  }
+
+  // ---------- Tag list view ----------
+  if (!openTagId) {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        <div style={{ flexShrink: 0, padding: '16px 20px 12px', display: 'flex', gap: 8, borderBottom: '1px solid rgba(0,0,0,0.3)' }}>
-          <input
-            value={newAlbumName}
-            onChange={(e) => setNewAlbumName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleCreateAlbum();
-            }}
-            placeholder="New album name…"
-            style={inputStyle}
-          />
-          <button onClick={handleCreateAlbum} disabled={creatingAlbum || !newAlbumName.trim()} style={btnPrimary(!creatingAlbum && !!newAlbumName.trim())}>
-            {creatingAlbum ? 'Creating…' : 'New Album'}
-          </button>
+        <div style={{ flexShrink: 0, padding: '16px 20px 12px', borderBottom: '1px solid rgba(0,0,0,0.3)' }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              value={newTagName}
+              onChange={(e) => setNewTagName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleCreateTag();
+              }}
+              placeholder="New tag name…"
+              style={inputStyle}
+            />
+            <button onClick={handleCreateTag} disabled={creatingTag || !newTagName.trim()} style={btnPrimary(!creatingTag && !!newTagName.trim())}>
+              {creatingTag ? 'Creating…' : 'New Tag'}
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+            {TAG_COLORS.map((c) => (
+              <div
+                key={c}
+                onClick={() => setNewTagColor(newTagColor === c ? null : c)}
+                title={c}
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: '50%',
+                  background: c,
+                  cursor: 'default',
+                  boxShadow: newTagColor === c ? '0 0 0 2px #1c1c1c, 0 0 0 4px rgba(255,255,255,0.7)' : '0 0 0 1px rgba(255,255,255,0.15)',
+                }}
+              />
+            ))}
+          </div>
         </div>
 
+        {tags && tags.length > 0 && (
+          <div style={{ flexShrink: 0, padding: '12px 20px 0' }}>
+            <input value={tagSearch} onChange={(e) => setTagSearch(e.target.value)} placeholder="Search tags…" style={inputStyle} />
+          </div>
+        )}
+
+        {selectedTagIds.size > 0 && (
+          <div
+            style={{
+              flexShrink: 0,
+              margin: '12px 20px 0',
+              height: 40,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '0 12px',
+              borderRadius: 9,
+              background: 'rgba(53,132,228,0.14)',
+              border: '1px solid rgba(53,132,228,0.3)',
+            }}
+          >
+            <span style={{ fontSize: 12.5, fontWeight: 600 }}>{selectedTagIds.size} selected</span>
+            <div style={{ flex: 1 }} />
+            <div onClick={clearTagSelection} style={{ fontSize: 12.5, cursor: 'default', color: 'rgba(255,255,255,0.7)' }}>
+              Clear
+            </div>
+            <div onClick={() => setConfirmDeleteSelectedTags(true)} style={{ fontSize: 12.5, cursor: 'default', color: '#ff8080' }}>
+              Delete Selected
+            </div>
+          </div>
+        )}
+
         <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
-          {listError && <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 12 }}>Couldn't load albums — {listError}.</div>}
-          {!albums && !listError && <div style={{ color: 'var(--text-dim)', fontSize: 13 }}>Loading albums…</div>}
-          {albums && albums.length === 0 && !listError && (
-            <div style={{ color: 'var(--text-dimmer)', fontSize: 13 }}>No albums yet — create one above.</div>
+          {listError && <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 12 }}>Couldn't load tags — {listError}.</div>}
+          {!tags && !listError && <div style={{ color: 'var(--text-dim)', fontSize: 13 }}>Loading tags…</div>}
+          {tags && tags.length === 0 && !listError && (
+            <div style={{ color: 'var(--text-dimmer)', fontSize: 13 }}>No tags yet — create one above.</div>
           )}
-          {albums && albums.length > 0 && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 16 }}>
-              {albums.map((a) => (
-                <AlbumCard
-                  key={a.id}
-                  album={a}
-                  onOpen={() => setOpenAlbumId(a.id)}
-                  onRename={() => setRenamingAlbum(a)}
-                  onDelete={() => setConfirmDeleteAlbum(a)}
+          {tags && tags.length > 0 && filteredTags.length === 0 && (
+            <div style={{ color: 'var(--text-dimmer)', fontSize: 13 }}>No tags match your search.</div>
+          )}
+          {filteredTags.length > 0 && (
+            <div>
+              {filteredTags.map((t) => (
+                <TagPill
+                  key={t.id}
+                  tag={t}
+                  onOpen={() => setOpenTagId(t.id)}
+                  onDelete={() => setConfirmDeleteTag(t)}
+                  selected={selectedTagIds.has(t.id)}
+                  onToggleSelect={() => toggleTagSelect(t.id)}
                 />
               ))}
             </div>
           )}
         </div>
 
-        {renamingAlbum && (
-          <RenameAlbumDialog
-            album={renamingAlbum}
-            onClose={() => setRenamingAlbum(null)}
-            onRenamed={() => {
-              setRenamingAlbum(null);
-              refreshAlbumList();
+        {confirmDeleteTag && (
+          <ConfirmDialog
+            title="Delete tag?"
+            message={`This deletes "${confirmDeleteTag.name}". The photos tagged with it stay in your library untouched.`}
+            confirmLabel="Delete Tag"
+            onConfirm={async () => {
+              await deleteTag(confirmDeleteTag.id);
+              setConfirmDeleteTag(null);
+              refreshTagList();
             }}
+            onClose={() => setConfirmDeleteTag(null)}
           />
         )}
-        {confirmDeleteAlbum && (
+        {confirmDeleteSelectedTags && (
           <ConfirmDialog
-            title="Delete album?"
-            message={`This deletes "${confirmDeleteAlbum.albumName}". The photos in it stay in your library untouched.`}
-            confirmLabel="Delete Album"
-            onConfirm={async () => {
-              await deleteAlbum(confirmDeleteAlbum.id);
-              setConfirmDeleteAlbum(null);
-              refreshAlbumList();
-            }}
-            onClose={() => setConfirmDeleteAlbum(null)}
+            title="Delete tags?"
+            message={`This deletes ${selectedTagIds.size} tag${selectedTagIds.size === 1 ? '' : 's'}. The photos tagged with them stay in your library untouched.`}
+            confirmLabel="Delete Tags"
+            onConfirm={handleBulkDeleteTags}
+            onClose={() => setConfirmDeleteSelectedTags(false)}
           />
         )}
       </div>
     );
   }
 
-  // ---------- Album detail view ----------
+  // ---------- Tag detail view ----------
   if (detailError) {
     return (
       <div style={{ padding: 24, color: 'var(--text-dim)' }}>
-        Couldn't load this album — {detailError}.{' '}
-        <span onClick={() => setOpenAlbumId(null)} style={{ color: 'var(--accent)', cursor: 'default' }}>
-          Back to Albums
+        Couldn't load this tag — {detailError}.{' '}
+        <span onClick={() => setOpenTagId(null)} style={{ color: 'var(--accent)', cursor: 'default' }}>
+          Back to Tags
         </span>
       </div>
     );
   }
 
-  if (!album) {
-    return <div style={{ padding: 24, color: 'var(--text-dim)' }}>Loading album…</div>;
+  if (!tag) {
+    return <div style={{ padding: 24, color: 'var(--text-dim)' }}>Loading tag…</div>;
   }
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       {enqueueError && <InlineWarningBanner message={enqueueError} onDismiss={() => setEnqueueError(null)} />}
       <div style={{ flexShrink: 0, height: 46, display: 'flex', alignItems: 'center', gap: 10, padding: '0 16px', borderBottom: '1px solid rgba(0,0,0,0.3)' }}>
-        <div onClick={() => setOpenAlbumId(null)} style={{ cursor: 'default', color: 'var(--accent)', fontSize: 13 }}>
-          ← Albums
+        <div onClick={() => setOpenTagId(null)} style={{ cursor: 'default', color: 'var(--accent)', fontSize: 13 }}>
+          ← Tags
         </div>
         <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.15)' }} />
-        <span style={{ fontSize: 14, fontWeight: 700 }}>{album.albumName}</span>
+        <div style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: tag.color ?? 'rgba(255,255,255,0.3)' }} />
+        <span style={{ fontSize: 14, fontWeight: 700 }}>{tag.name}</span>
         <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)' }}>
-          {album.assets.length} photo{album.assets.length === 1 ? '' : 's'}
+          {tag.assets.length} photo{tag.assets.length === 1 ? '' : 's'}
         </span>
         <div style={{ flex: 1 }} />
-        <BarTextButton onClick={() => setRenamingAlbum({ id: album.id, albumName: album.albumName, description: album.description, albumThumbnailAssetId: album.albumThumbnailAssetId, assetCount: album.assets.length })}>
-          Rename
-        </BarTextButton>
-        <BarTextButton
-          onClick={() =>
-            setConfirmDeleteAlbum({ id: album.id, albumName: album.albumName, description: album.description, albumThumbnailAssetId: album.albumThumbnailAssetId, assetCount: album.assets.length })
-          }
-          danger
-        >
-          Delete Album
+        <BarTextButton onClick={() => setConfirmDeleteTag({ id: tag.id, name: tag.name, color: tag.color })} danger>
+          Delete Tag
         </BarTextButton>
       </div>
 
@@ -535,20 +610,20 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
           canOpenInRawEditor={false}
           onOpenInRawEditor={() => {}}
           onAddToAlbum={() => setAddToAlbumTargets([...selected])}
-          onRemoveFromAlbum={() => setConfirmRemoveSelection(true)}
           onAddToTag={() => setAddToTagTargets([...selected])}
+          onRemoveFromTag={() => setConfirmRemoveSelection(true)}
         />
       )}
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 16 }}>
-          {album.assets.length === 0 ? (
+          {tag.assets.length === 0 ? (
             <div style={{ color: 'var(--text-dimmer)', fontSize: 12.5 }}>
-              No photos in this album yet — select photos in Photos or Folders and use "Add to Album".
+              No photos tagged yet — select photos anywhere and use "Add to Tag".
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: 12 }}>
-              {album.assets.map((a) => (
+              {tag.assets.map((a) => (
                 <AssetTile
                   key={a.id}
                   asset={a}
@@ -592,10 +667,10 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
       )}
       {confirmRemoveSelection && (
         <ConfirmDialog
-          title="Remove from album?"
-          message={`This removes ${selected.size} photo${selected.size === 1 ? '' : 's'} from "${album.albumName}". The photos themselves stay in your library.`}
-          confirmLabel="Remove from Album"
-          onConfirm={() => removeFromAlbum([...selected])}
+          title="Remove from tag?"
+          message={`This removes ${selected.size} photo${selected.size === 1 ? '' : 's'} from "${tag.name}". The photos themselves stay in your library.`}
+          confirmLabel="Remove from Tag"
+          onConfirm={() => removeFromTag([...selected])}
           onClose={() => setConfirmRemoveSelection(false)}
         />
       )}
@@ -607,45 +682,37 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
       {exportFlickrAssets && (
         <ExportToFlickrDialog assets={exportFlickrAssets} onClose={() => setExportFlickrAssets(null)} onExported={() => {}} />
       )}
-      {renamingAlbum && (
-        <RenameAlbumDialog
-          album={renamingAlbum}
-          onClose={() => setRenamingAlbum(null)}
-          onRenamed={(name) => {
-            setRenamingAlbum(null);
-            setAlbum((a) => (a ? { ...a, albumName: name } : a));
-          }}
-        />
-      )}
-      {confirmDeleteAlbum && (
+      {confirmDeleteTag && (
         <ConfirmDialog
-          title="Delete album?"
-          message={`This deletes "${confirmDeleteAlbum.albumName}". The photos in it stay in your library untouched.`}
-          confirmLabel="Delete Album"
+          title="Delete tag?"
+          message={`This deletes "${confirmDeleteTag.name}". The photos tagged with it stay in your library untouched.`}
+          confirmLabel="Delete Tag"
           onConfirm={async () => {
-            await deleteAlbum(confirmDeleteAlbum.id);
-            setConfirmDeleteAlbum(null);
-            setOpenAlbumId(null);
+            await deleteTag(confirmDeleteTag.id);
+            setConfirmDeleteTag(null);
+            setOpenTagId(null);
           }}
-          onClose={() => setConfirmDeleteAlbum(null)}
+          onClose={() => setConfirmDeleteTag(null)}
         />
       )}
     </div>
   );
 });
 
-export default AlbumsBrowser;
+export default TagsBrowser;
 
-function AlbumCard({
-  album,
+function TagPill({
+  tag,
   onOpen,
-  onRename,
   onDelete,
+  selected,
+  onToggleSelect,
 }: {
-  album: AlbumSummary;
+  tag: TagSummary;
   onOpen: () => void;
-  onRename: () => void;
   onDelete: () => void;
+  selected: boolean;
+  onToggleSelect: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
   return (
@@ -653,99 +720,54 @@ function AlbumCard({
       onClick={onOpen}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      style={{ cursor: 'default' }}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        height: 42,
+        padding: '0 10px',
+        borderRadius: 9,
+        cursor: 'default',
+        background: selected ? 'rgba(53,132,228,0.14)' : 'transparent',
+      }}
     >
-      <div style={{ aspectRatio: '4 / 3', borderRadius: 8, overflow: 'hidden', position: 'relative', background: '#222', boxShadow: '0 0 0 1px rgba(255,255,255,0.07)' }}>
-        {album.albumThumbnailAssetId ? (
-          <img src={thumbnailSrc(album.albumThumbnailAssetId)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-        ) : (
-          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.25)', fontSize: 12 }}>
-            Empty album
-          </div>
-        )}
-        {hovered && (
-          <div style={{ position: 'absolute', top: 6, right: 6, display: 'flex', gap: 5 }}>
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                onRename();
-              }}
-              title="Rename"
-              style={pillIconStyle}
-            >
-              ✎
-            </div>
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-              title="Delete"
-              style={{ ...pillIconStyle, color: '#ff8080' }}
-            >
-              ✕
-            </div>
-          </div>
-        )}
+      <div
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleSelect();
+        }}
+        style={{
+          width: 16,
+          height: 16,
+          borderRadius: 4,
+          flexShrink: 0,
+          border: selected ? 'none' : '1.5px solid rgba(255,255,255,0.3)',
+          background: selected ? 'var(--accent)' : 'transparent',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 11,
+          color: '#fff',
+        }}
+      >
+        {selected && '✓'}
       </div>
-      <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{album.albumName}</div>
-      <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.45)' }}>
-        {album.assetCount} photo{album.assetCount === 1 ? '' : 's'}
+      <div style={{ width: 12, height: 12, borderRadius: '50%', flexShrink: 0, background: tag.color ?? 'rgba(255,255,255,0.3)' }} />
+      <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {tag.name}
       </div>
-    </div>
-  );
-}
-
-function RenameAlbumDialog({
-  album,
-  onClose,
-  onRenamed,
-}: {
-  album: AlbumSummary;
-  onClose: () => void;
-  onRenamed: (name: string) => void;
-}) {
-  const [name, setName] = useState(album.albumName);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleSave() {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await renameAlbum(album.id, trimmed);
-      onRenamed(trimmed);
-    } catch (e) {
-      setError(String(e));
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={busy ? undefined : onClose}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 360, maxWidth: '92%', background: '#242424', borderRadius: 14, boxShadow: '0 24px 70px rgba(0,0,0,0.7)', border: '1px solid rgba(255,255,255,0.08)', padding: 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 14 }}>Rename Album</div>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleSave();
+      {hovered && (
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
           }}
-          autoFocus
-          style={{ ...inputStyle, width: '100%', marginBottom: 10 }}
-        />
-        {error && <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 10 }}>{error}</div>}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button onClick={onClose} disabled={busy} style={btnSecondary}>
-            Cancel
-          </button>
-          <button onClick={handleSave} disabled={busy || !name.trim()} style={btnPrimary(!busy && !!name.trim())}>
-            {busy ? 'Saving…' : 'Save'}
-          </button>
+          title="Delete"
+          style={{ ...pillIconStyle, color: '#ff8080' }}
+        >
+          ✕
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -790,13 +812,6 @@ const btnBase: CSSProperties = {
   fontSize: 12.5,
   cursor: 'default',
   whiteSpace: 'nowrap',
-};
-
-const btnSecondary: CSSProperties = {
-  ...btnBase,
-  border: '1px solid rgba(255,255,255,0.14)',
-  background: 'rgba(255,255,255,0.06)',
-  color: '#fff',
 };
 
 function btnPrimary(enabled: boolean): CSSProperties {

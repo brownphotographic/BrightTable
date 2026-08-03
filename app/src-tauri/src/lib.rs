@@ -18,6 +18,7 @@ mod print;
 mod processing_queue;
 mod protocol;
 mod reveal;
+mod rotate;
 mod round_trip;
 mod state;
 #[cfg(target_os = "linux")]
@@ -141,6 +142,7 @@ pub fn run() {
             commands::save_library_config,
             commands::save_shortcuts,
             commands::save_smart_stack_settings,
+            commands::save_window_controls_position,
             commands::save_applications_config,
             commands::list_installed_apps,
             commands::launch_editor,
@@ -159,6 +161,8 @@ pub fn run() {
             commands::set_stack_pick,
             commands::set_asset_capture_date,
             commands::regenerate_asset_thumbnail,
+            commands::rotate_asset,
+            commands::evict_thumb_cache_for_asset,
             commands::delete_stack,
             commands::list_albums,
             commands::get_album,
@@ -167,6 +171,17 @@ pub fn run() {
             commands::delete_album,
             commands::add_assets_to_album,
             commands::remove_assets_from_album,
+            commands::list_people,
+            commands::get_person,
+            commands::rename_person,
+            commands::list_tags,
+            commands::get_tag,
+            commands::create_tag,
+            commands::delete_tag,
+            commands::tag_assets,
+            commands::untag_assets,
+            commands::search_assets,
+            commands::get_asset,
             commands::check_sidecar_metadata,
             commands::get_folder_paths,
             commands::get_folder_assets,

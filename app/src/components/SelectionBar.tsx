@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Heart, RejectIcon, Star } from './MetadataRows';
+import { TAG_ASSIGN_DISABLED_REASON } from '../lib/featureFlags';
 
 // Floating action bar shown above the grid whenever the selection is
 // non-empty - ported from the design prototype's selection bar (§1.2/§6 in
@@ -31,6 +32,8 @@ export default function SelectionBar({
   rawEditorBusy,
   onAddToAlbum,
   onRemoveFromAlbum,
+  onAddToTag,
+  onRemoveFromTag,
 }: {
   count: number;
   onCancel: () => void;
@@ -84,6 +87,14 @@ export default function SelectionBar({
   // selection from the album currently open (the assets themselves aren't
   // touched, unlike onDelete's Move to Trash).
   onRemoveFromAlbum?: () => void;
+  // Opens AddToTagDialog for the current selection - same shape as
+  // onAddToAlbum, offered everywhere that is (Photos/Folders/AlbumsBrowser/
+  // PeopleBrowser/TagsBrowser).
+  onAddToTag?: () => void;
+  // Only ever provided by TagsBrowser's tag detail view - removes the
+  // selection from the tag currently open, same reasoning as
+  // onRemoveFromAlbum.
+  onRemoveFromTag?: () => void;
 }) {
   const canStack = count >= 2;
   // Both editors are a single-file launch (see Viewer.tsx's handleLaunch) -
@@ -142,6 +153,16 @@ export default function SelectionBar({
           Add to Album
         </BarButton>
       )}
+      {onAddToTag && (
+        <BarButton
+          onClick={onAddToTag}
+          disabled={!!TAG_ASSIGN_DISABLED_REASON}
+          title={TAG_ASSIGN_DISABLED_REASON ?? 'Add this selection to a tag'}
+        >
+          <TagIcon />
+          Add to Tag
+        </BarButton>
+      )}
       {onStack && (
         <BarButton onClick={onStack} disabled={!canStack}>
           <StackIcon />
@@ -192,6 +213,11 @@ export default function SelectionBar({
       {onRemoveFromAlbum && (
         <BarButton onClick={onRemoveFromAlbum} color="#ff8080">
           Remove from Album
+        </BarButton>
+      )}
+      {onRemoveFromTag && (
+        <BarButton onClick={onRemoveFromTag} color="#ff8080">
+          Remove from Tag
         </BarButton>
       )}
       <BarButton onClick={onDelete} color="#ff8080">
@@ -331,6 +357,27 @@ function AlbumIcon() {
       <div style={{ position: 'absolute', left: 0, top: 0, width: 13, height: 12, border: '1.6px solid currentColor', borderRadius: 3 }} />
       <div style={{ position: 'absolute', left: 3, top: 5.2, width: 7, height: 1.6, background: 'currentColor', borderRadius: 1 }} />
       <div style={{ position: 'absolute', left: 5.7, top: 2.5, width: 1.6, height: 7, background: 'currentColor', borderRadius: 1 }} />
+    </div>
+  );
+}
+
+function TagIcon() {
+  return (
+    <div style={{ position: 'relative', width: 13, height: 12, flexShrink: 0 }}>
+      <div
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 1,
+          width: 10,
+          height: 10,
+          border: '1.6px solid currentColor',
+          borderRadius: '2px 5px 5px 2px',
+          transform: 'rotate(-45deg)',
+          transformOrigin: 'left center',
+        }}
+      />
+      <div style={{ position: 'absolute', left: 1.5, top: 3, width: 2.2, height: 2.2, borderRadius: '50%', background: 'currentColor' }} />
     </div>
   );
 }

@@ -98,6 +98,8 @@ export interface SharingConfig {
   loopsEnabled: boolean;
 }
 
+export type WindowControlsPosition = 'left' | 'right';
+
 export interface AppConfig {
   library: LibraryConfig;
   settingsFolder: string | null;
@@ -107,6 +109,7 @@ export interface AppConfig {
   import: ImportSettings;
   rawOverrides: string[];
   sharing: SharingConfig;
+  windowControlsPosition: WindowControlsPosition;
 }
 
 export interface ConnectionStatus {
@@ -152,6 +155,11 @@ export interface AssetSummary {
   fileSizeInByte: number | null;
   description: string | null;
   stack: AssetStackInfo | null;
+  // Tags currently assigned to this asset (Immich's `AssetResponseDto.tags`
+  // relation) - not guaranteed populated on every endpoint that returns an
+  // AssetSummary (see the Rust side's RawSearchAsset.tags doc comment), so
+  // treat an empty array as "none known", not necessarily "none assigned".
+  tags: TagSummary[];
   // Server-side path (real filesystem path for an External Library asset, or
   // Immich's own internal upload-storage path otherwise) - used to resolve a
   // real local file for RAW-editor sidecar read/write. Absent for Trash view
@@ -199,6 +207,21 @@ export interface AlbumDetail {
   albumName: string;
   description: string;
   albumThumbnailAssetId: string | null;
+  assets: AssetSummary[];
+}
+
+// GET /people (list) - just enough to render an avatar + name + count.
+export interface PersonSummary {
+  id: string;
+  name: string;
+  assetCount: number;
+}
+
+// GET /people/{id} - the frontend browses a person's photos with this,
+// unlike the list-only PersonSummary above.
+export interface PersonDetail {
+  id: string;
+  name: string;
   assets: AssetSummary[];
 }
 
@@ -277,6 +300,10 @@ export function saveShortcuts(shortcuts: Record<string, string>): Promise<AppCon
 
 export function saveSmartStackSettings(settings: SmartStackSettings): Promise<AppConfig> {
   return invoke('save_smart_stack_settings', { settings });
+}
+
+export function saveWindowControlsPosition(position: WindowControlsPosition): Promise<AppConfig> {
+  return invoke('save_window_controls_position', { position });
 }
 
 export function setRawOverrides(assetIds: string[], isRaw: boolean): Promise<AppConfig> {
@@ -434,6 +461,23 @@ export function regenerateAssetThumbnail(assetId: string): Promise<void> {
   return invoke('regenerate_asset_thumbnail', { assetId });
 }
 
+// Rotates an asset's EXIF Orientation tag one 90° step in place - the
+// Viewer's Rotate Left/Right buttons. Resolves `originalPath` to a local
+// mount itself (same "Originals on Disk" mapping every other local write
+// uses), so it fails with a guiding error for an asset with no local path
+// configured. Returns the new numeric orientation value (1/3/6/8).
+export function rotateAsset(originalPath: string | null, clockwise: boolean): Promise<number> {
+  return invoke('rotate_asset', { originalPath, clockwise });
+}
+
+// Evicts one asset's cached thumbnails from ImmAture's own on-disk cache -
+// call right after a successful rotateAsset() so a stale pre-rotation
+// thumbnail isn't served back out while Immich's own regen is still
+// catching up.
+export function evictThumbCacheForAsset(assetId: string): Promise<void> {
+  return invoke('evict_thumb_cache_for_asset', { assetId });
+}
+
 export function deleteStack(stackId: string): Promise<void> {
   return invoke('delete_stack', { stackId });
 }
@@ -464,6 +508,86 @@ export function addAssetsToAlbum(albumId: string, assetIds: string[]): Promise<v
 
 export function removeAssetsFromAlbum(albumId: string, assetIds: string[]): Promise<void> {
   return invoke('remove_assets_from_album', { albumId, assetIds });
+}
+
+export function listPeople(): Promise<PersonSummary[]> {
+  return invoke('list_people');
+}
+
+export function getPerson(personId: string): Promise<PersonDetail> {
+  return invoke('get_person', { personId });
+}
+
+export function renamePerson(personId: string, name: string): Promise<void> {
+  return invoke('rename_person', { personId, name });
+}
+
+// GET /tags (list) - just enough to render a colored name pill; Immich's
+// TagResponseDto carries no per-tag asset count of its own (unlike Albums'
+// assetCount), so unlike AlbumSummary/PersonSummary there's no count field
+// here at all - see TagsBrowser.tsx for why (no cheap per-tag statistics
+// endpoint exists to fan out the way listPeople does).
+export interface TagSummary {
+  id: string;
+  // The tag's full hierarchical path (Immich's `value`, e.g.
+  // "Nature/Flowers" for a nested tag) - ImmAture treats tags as one flat,
+  // alphabetically-sorted list rather than a tree, so this is what's shown
+  // everywhere a tag name appears.
+  name: string;
+  color: string | null;
+}
+
+// GET /tags/{id} - the frontend browses a tag's photos with this, unlike
+// the list-only TagSummary above.
+export interface TagDetail {
+  id: string;
+  name: string;
+  color: string | null;
+  assets: AssetSummary[];
+}
+
+export function listTags(): Promise<TagSummary[]> {
+  return invoke('list_tags');
+}
+
+export function getTag(tagId: string): Promise<TagDetail> {
+  return invoke('get_tag', { tagId });
+}
+
+// Immich has no rename-tag endpoint (PUT /tags/{id} accepts only `color`,
+// not `name`) - so `color` is only ever set here, at creation time.
+export function createTag(name: string, color: string | null = null): Promise<TagSummary> {
+  return invoke('create_tag', { name, color });
+}
+
+export function deleteTag(tagId: string): Promise<void> {
+  return invoke('delete_tag', { tagId });
+}
+
+export function tagAssets(tagId: string, assetIds: string[]): Promise<void> {
+  return invoke('tag_assets', { tagId, assetIds });
+}
+
+export function untagAssets(tagId: string, assetIds: string[]): Promise<void> {
+  return invoke('untag_assets', { tagId, assetIds });
+}
+
+// POST /search/smart - Immich's natural-language "smart search" (the same
+// mechanism behind Immich's own web UI search box), capped server-side at
+// 200 results per page (see search_smart's own doc comment in
+// immich/mod.rs).
+export function searchAssets(query: string): Promise<AssetSummary[]> {
+  return invoke('search_assets', { query });
+}
+
+// GET /assets/{id} - the only reliable way to learn an asset's assigned
+// tags (see get_asset's doc comment in immich/mod.rs): every AssetSummary
+// obtained from a timeline/album/person/tag/search listing always has an
+// empty `tags` array, since Immich doesn't join that relation on any of
+// those endpoints. Used on demand by MetadataRows.tsx for whichever single
+// asset the Metadata sidebar/Viewer Info panel is currently showing.
+export function getAsset(assetId: string): Promise<AssetSummary> {
+  return invoke('get_asset', { assetId });
 }
 
 export interface UnsyncedMetadata {
@@ -651,8 +775,23 @@ export function cancelArtJob(jobId: number): Promise<boolean> {
 // Viewer only requests it once zoomed past what "preview" can render crisply
 // (or with the loupe active), and only for formats a webview can actually
 // decode (see isOriginalZoomable) - it's not a general-purpose size.
-export function thumbnailSrc(assetId: string, size: 'thumbnail' | 'preview' | 'original' = 'thumbnail'): string {
-  return `immich-thumb://thumbnail/${assetId}?size=${size}`;
+// `version` is a purely local cache-buster (see lib/imageVersion.ts) - the
+// immich-thumb:// responses this hits are served `Cache-Control: immutable`
+// (protocol.rs), so after an in-place edit like rotateAsset() the webview's
+// own HTTP cache would otherwise keep serving the pre-edit bytes for the
+// exact same URL forever, even once the on-disk thumb_cache entry (and
+// Immich's own rendition) have been refreshed.
+export function thumbnailSrc(
+  assetId: string,
+  size: 'thumbnail' | 'preview' | 'original' = 'thumbnail',
+  version = 0,
+): string {
+  const v = version ? `&v=${version}` : '';
+  return `immich-thumb://thumbnail/${assetId}?size=${size}${v}`;
+}
+
+export function personThumbnailSrc(personId: string): string {
+  return `immich-thumb://person/${personId}`;
 }
 
 export interface MemoryUsage {

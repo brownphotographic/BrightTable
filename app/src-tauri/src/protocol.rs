@@ -19,6 +19,15 @@ pub const SCHEME: &str = "immich-thumb";
 /// only ever requests it for the Viewer's zoom/loupe, and only for formats it
 /// has already confirmed a webview can decode (see `isOriginalZoomable` in
 /// filters.ts) - this handler doesn't re-check that itself.
+///
+/// Also handles `immich-thumb://person/{person_id}` (see `personThumbnailSrc`
+/// in api.ts) - the URI's host (not the path) is what distinguishes the two
+/// forms. Routed to `get_person_thumbnail_bytes` instead, and cached under
+/// the synthetic size key `"person"` so a person's cached thumbnail file
+/// never collides with an asset thumbnail cached under the same id (the
+/// cache is keyed by `{id}_{size}`, and Immich ids are UUIDs from disjoint
+/// namespaces anyway, but the distinct size key makes it impossible on the
+/// filesystem regardless).
 pub fn handle(
     app: &tauri::AppHandle,
     request: http::Request<Vec<u8>>,
@@ -31,6 +40,7 @@ pub fn handle(
     let auto_resolution = app_state.auto_resolution.clone();
 
     let uri = request.uri().clone();
+    let is_person = uri.host() == Some("person");
     let asset_id = uri
         .path()
         .trim_start_matches('/')
@@ -67,7 +77,8 @@ pub fn handle(
         // then queue up behind each other even on cache HITS, which is exactly
         // the "choppy" lag this was causing. spawn_blocking runs them on
         // Tokio's separate, much larger blocking-thread pool instead.
-        let (app2, id2, size2) = (app.clone(), asset_id.clone(), size.clone());
+        let cache_size = if is_person { "person".to_string() } else { size.clone() };
+        let (app2, id2, size2) = (app.clone(), asset_id.clone(), cache_size.clone());
         let cached = match io_guard::guarded_spawn_blocking(&io_guard, move || {
             thumb_cache::read(&app2, &id2, &size2)
         }) {
@@ -92,7 +103,9 @@ pub fn handle(
         }
         let result = async {
             let client = ImmichClient::from_config(&cfg, http, &auto_resolution).await?;
-            if size == "original" {
+            if is_person {
+                client.get_person_thumbnail_bytes(&asset_id).await
+            } else if size == "original" {
                 client.get_original_bytes(&asset_id).await
             } else {
                 client.get_thumbnail_bytes(&asset_id, &size).await
@@ -111,7 +124,7 @@ pub fn handle(
                 let (app3, id3, size3, ct3, bytes3) = (
                     app.clone(),
                     asset_id.clone(),
-                    size.clone(),
+                    cache_size.clone(),
                     content_type.clone(),
                     bytes.clone(),
                 );

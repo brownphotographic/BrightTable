@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import ActivityIndicator from './ActivityIndicator';
+import { useWindowControls } from '../lib/windowControls';
 
 const appWindow = getCurrentWindow();
 
@@ -12,7 +13,49 @@ const tabLabels: Record<string, string> = {
   trash: 'Trash',
 };
 
+function WindowButtons() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+      <WinButton onClick={() => appWindow.minimize()} hoverBg="rgba(255,255,255,0.18)">
+        <div style={{ width: 9, height: 1.6, background: '#fff', borderRadius: 1, marginTop: 6 }} />
+      </WinButton>
+      <WinButton onClick={() => appWindow.toggleMaximize()} hoverBg="rgba(255,255,255,0.18)">
+        <div style={{ width: 8, height: 8, border: '1.6px solid #fff', borderRadius: 2 }} />
+      </WinButton>
+      <WinButton onClick={() => appWindow.close()} hoverBg="#e01b24">
+        <div style={{ position: 'relative', width: 11, height: 11 }}>
+          <div
+            style={{
+              position: 'absolute',
+              width: 11,
+              height: 1.6,
+              background: '#fff',
+              borderRadius: 1,
+              transform: 'rotate(45deg)',
+              top: 4.7,
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute',
+              width: 11,
+              height: 1.6,
+              background: '#fff',
+              borderRadius: 1,
+              transform: 'rotate(-45deg)',
+              top: 4.7,
+            }}
+          />
+        </div>
+      </WinButton>
+    </div>
+  );
+}
+
 export default function TitleBar({ activeTab, onOpenActivity }: { activeTab: string; onOpenActivity: () => void }) {
+  const { position } = useWindowControls();
+  const onLeft = position === 'left';
+
   return (
     <div
       data-tauri-drag-region
@@ -22,11 +65,13 @@ export default function TitleBar({ activeTab, onOpenActivity }: { activeTab: str
         display: 'flex',
         alignItems: 'center',
         gap: 10,
-        padding: '0 8px 0 12px',
+        padding: onLeft ? '0 12px 0 8px' : '0 8px 0 12px',
         background: 'linear-gradient(#323232, #2e2e2e)',
         borderBottom: '1px solid rgba(0,0,0,0.5)',
       }}
     >
+      {onLeft && <WindowButtons />}
+      {onLeft && <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.12)' }} />}
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0, pointerEvents: 'none' }}>
         <div
           style={{
@@ -54,40 +99,7 @@ export default function TitleBar({ activeTab, onOpenActivity }: { activeTab: str
       <div style={{ marginRight: 8 }}>
         <ActivityIndicator onClick={onOpenActivity} />
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-        <WinButton onClick={() => appWindow.minimize()} hoverBg="rgba(255,255,255,0.18)">
-          <div style={{ width: 9, height: 1.6, background: '#fff', borderRadius: 1, marginTop: 6 }} />
-        </WinButton>
-        <WinButton onClick={() => appWindow.toggleMaximize()} hoverBg="rgba(255,255,255,0.18)">
-          <div style={{ width: 8, height: 8, border: '1.6px solid #fff', borderRadius: 2 }} />
-        </WinButton>
-        <WinButton onClick={() => appWindow.close()} hoverBg="#e01b24">
-          <div style={{ position: 'relative', width: 11, height: 11 }}>
-            <div
-              style={{
-                position: 'absolute',
-                width: 11,
-                height: 1.6,
-                background: '#fff',
-                borderRadius: 1,
-                transform: 'rotate(45deg)',
-                top: 4.7,
-              }}
-            />
-            <div
-              style={{
-                position: 'absolute',
-                width: 11,
-                height: 1.6,
-                background: '#fff',
-                borderRadius: 1,
-                transform: 'rotate(-45deg)',
-                top: 4.7,
-              }}
-            />
-          </div>
-        </WinButton>
-      </div>
+      {!onLeft && <WindowButtons />}
     </div>
   );
 }

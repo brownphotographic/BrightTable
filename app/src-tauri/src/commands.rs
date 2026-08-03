@@ -7,13 +7,16 @@ use tauri::{AppHandle, State};
 use crate::apps::{self, AppChoice};
 use crate::art;
 use crate::art_queue::{ArtJob, ArtJobStatus, ArtQueue};
-use crate::config::{self, AppConfig, ApplicationsConfig, ImportSettings, LibraryConfig, SharingConfig, SmartStackSettings};
+use crate::config::{self, AppConfig, ApplicationsConfig, ImportSettings, LibraryConfig, SharingConfig, SmartStackSettings, WindowControlsPosition};
 use crate::edit_queue::EditJob;
 use crate::export_naming;
 use crate::export_queue::{self, ExportDelivery, ExportFormat, ExportJob, ExportTarget, FlickrAlbumChoice, RenditionOptions};
 use crate::exiftool::MetadataPolicy;
 use crate::flickr::{self, FlickrPrivacy};
-use crate::immich::models::{AlbumDetail, AlbumSummary, AssetSummary, ConnectionStatus, StackInfo, TimeBucketInfo};
+use crate::immich::models::{
+    AlbumDetail, AlbumSummary, AssetSummary, ConnectionStatus, PersonDetail, PersonSummary,
+    StackInfo, TagDetail, TagSummary, TimeBucketInfo,
+};
 use crate::immich::ImmichClient;
 use crate::import::{self, FolderDepth, ImportJob, ScannedGroup};
 use crate::io_guard;
@@ -58,6 +61,18 @@ pub fn save_smart_stack_settings(
 ) -> Result<AppConfig, String> {
     let mut guard = state.config.lock().unwrap();
     guard.smart_stack = settings;
+    config::save(&app, &guard)?;
+    Ok(guard.clone())
+}
+
+#[tauri::command]
+pub fn save_window_controls_position(
+    app: AppHandle,
+    state: State<AppState>,
+    position: WindowControlsPosition,
+) -> Result<AppConfig, String> {
+    let mut guard = state.config.lock().unwrap();
+    guard.window_controls_position = position;
     config::save(&app, &guard)?;
     Ok(guard.clone())
 }
@@ -939,6 +954,50 @@ pub async fn regenerate_asset_thumbnail(state: State<'_, AppState>, asset_id: St
     client.regenerate_thumbnail(&asset_id).await
 }
 
+/// The Viewer's Rotate Left/Right action. A deliberate, narrow exception to
+/// this codebase's usual rule of only ever writing to an asset's `.xmp`/
+/// `.pp3`/`.arp` *sidecar*, never its original (see `paths.rs`) - see
+/// `rotate::rotate_in_place`'s doc comment for why rewriting just the EXIF
+/// `Orientation` tag in place is safe to do. Same read-only gate as every
+/// other local write here; unlike rating/description this has no sidecar
+/// fallback; an asset with no local path mapping configured simply can't be
+/// rotated. Returns the new numeric orientation value (1/3/6/8) - not
+/// currently used for anything beyond logging/testing, since the frontend
+/// relies on a plain cache-bust + Immich thumbnail regen rather than trying
+/// to predict the visual rotation itself.
+#[tauri::command]
+pub async fn rotate_asset(
+    state: State<'_, AppState>,
+    original_path: Option<String>,
+    clockwise: bool,
+) -> Result<u16, String> {
+    let cfg = state.library_config();
+    if cfg.read_only {
+        return Err("Read-only mode is on — turn it off in Preferences → Library to rotate photos".into());
+    }
+    let original_path = original_path.ok_or_else(|| "No file path available for this asset".to_string())?;
+    let local_path = paths::resolve_local_path(&original_path, &cfg).ok_or_else(|| {
+        "No local library path configured for this asset — set up \"Originals on Disk\" in Preferences → Library to enable rotation".to_string()
+    })?;
+
+    let exiftool_path = state.config.lock().unwrap().applications.exiftool_path.clone();
+    if exiftool_path.trim().is_empty() {
+        return Err("Configure exiftool in Preferences → Applications to enable rotation".into());
+    }
+
+    crate::rotate::rotate_in_place(&exiftool_path, &local_path, clockwise).await
+}
+
+/// Evicts every cached rendition of one asset from ImmAture's own on-disk
+/// thumbnail cache (see `thumb_cache.rs`) - called by the frontend right
+/// after `rotate_asset` succeeds, so a stale pre-rotation thumbnail isn't
+/// served back out of this cache while Immich's own server-side thumbnail
+/// regen is still catching up.
+#[tauri::command]
+pub fn evict_thumb_cache_for_asset(app: AppHandle, asset_id: String) {
+    crate::thumb_cache::evict_asset(&app, &asset_id);
+}
+
 /// Corrects an asset's indexed capture date - used by the round-trip watcher
 /// (PhotosBrowser.tsx's 'round-trip-file-detected' listener) right after it
 /// discovers an editor's output file: that file often carries no EXIF
@@ -1093,6 +1152,134 @@ pub async fn remove_assets_from_album(
     }
     let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.remove_assets_from_album(&album_id, &asset_ids).await
+}
+
+#[tauri::command]
+pub async fn list_people(state: State<'_, AppState>) -> Result<Vec<PersonSummary>, String> {
+    let cfg = state.library_config();
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
+    client.list_people().await
+}
+
+#[tauri::command]
+pub async fn get_person(state: State<'_, AppState>, person_id: String) -> Result<PersonDetail, String> {
+    let cfg = state.library_config();
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
+    client.get_person(&person_id).await
+}
+
+#[tauri::command]
+pub async fn rename_person(state: State<'_, AppState>, person_id: String, name: String) -> Result<(), String> {
+    let cfg = state.library_config();
+    if cfg.read_only {
+        return Err(
+            "Read-only mode is on — turn it off in Preferences → Library to rename a person".into(),
+        );
+    }
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
+    client.rename_person(&person_id, &name).await
+}
+
+#[tauri::command]
+pub async fn list_tags(state: State<'_, AppState>) -> Result<Vec<TagSummary>, String> {
+    let cfg = state.library_config();
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
+    client.list_tags().await
+}
+
+#[tauri::command]
+pub async fn get_tag(state: State<'_, AppState>, tag_id: String) -> Result<TagDetail, String> {
+    let cfg = state.library_config();
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
+    client.get_tag(&tag_id).await
+}
+
+#[tauri::command]
+pub async fn create_tag(
+    state: State<'_, AppState>,
+    name: String,
+    color: Option<String>,
+) -> Result<TagSummary, String> {
+    let cfg = state.library_config();
+    if cfg.read_only {
+        return Err(
+            "Read-only mode is on — turn it off in Preferences → Library to create a tag".into(),
+        );
+    }
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
+    client.create_tag(&name, color.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn delete_tag(state: State<'_, AppState>, tag_id: String) -> Result<(), String> {
+    let cfg = state.library_config();
+    if cfg.read_only {
+        return Err(
+            "Read-only mode is on — turn it off in Preferences → Library to delete a tag".into(),
+        );
+    }
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
+    client.delete_tag(&tag_id).await
+}
+
+#[tauri::command]
+pub async fn tag_assets(
+    state: State<'_, AppState>,
+    tag_id: String,
+    asset_ids: Vec<String>,
+) -> Result<(), String> {
+    let cfg = state.library_config();
+    if cfg.read_only {
+        return Err(
+            "Read-only mode is on — turn it off in Preferences → Library to tag photos".into(),
+        );
+    }
+    if asset_ids.len() as u32 > cfg.max_writes_per_batch {
+        return Err(format!(
+            "This would tag {} assets at once, over your cap of {} per action",
+            asset_ids.len(),
+            cfg.max_writes_per_batch
+        ));
+    }
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
+    client.tag_assets(&tag_id, &asset_ids).await
+}
+
+#[tauri::command]
+pub async fn untag_assets(
+    state: State<'_, AppState>,
+    tag_id: String,
+    asset_ids: Vec<String>,
+) -> Result<(), String> {
+    let cfg = state.library_config();
+    if cfg.read_only {
+        return Err(
+            "Read-only mode is on — turn it off in Preferences → Library to untag photos".into(),
+        );
+    }
+    if asset_ids.len() as u32 > cfg.max_writes_per_batch {
+        return Err(format!(
+            "This would untag {} assets at once, over your cap of {} per action",
+            asset_ids.len(),
+            cfg.max_writes_per_batch
+        ));
+    }
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
+    client.untag_assets(&tag_id, &asset_ids).await
+}
+
+#[tauri::command]
+pub async fn search_assets(state: State<'_, AppState>, query: String) -> Result<Vec<AssetSummary>, String> {
+    let cfg = state.library_config();
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
+    client.search_smart(&query).await
+}
+
+#[tauri::command]
+pub async fn get_asset(state: State<'_, AppState>, asset_id: String) -> Result<AssetSummary, String> {
+    let cfg = state.library_config();
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
+    client.get_asset(&asset_id).await
 }
 
 #[tauri::command]

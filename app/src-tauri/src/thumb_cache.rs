@@ -107,6 +107,23 @@ pub fn stats(app: &AppHandle) -> ThumbCacheStats {
     ThumbCacheStats { dir, size_bytes, file_count }
 }
 
+/// Removes every cached rendition (`thumbnail`/`preview`/`original`, under
+/// any of the extensions `write()` might have used) for one asset - used
+/// after an in-place edit that changes the asset's actual pixels/orientation
+/// (currently just `rotate_asset`), so this cache doesn't keep serving the
+/// pre-edit bytes for that id while Immich's own server-side thumbnail regen
+/// is still catching up. Best-effort: a missing file is not an error, and no
+/// error is surfaced to the caller either way (mirrors `write()`'s "a missed
+/// cache op just means a re-fetch next time" tolerance).
+pub fn evict_asset(app: &AppHandle, asset_id: &str) {
+    let Some(dir) = cache_dir(app) else { return };
+    for size in ["thumbnail", "preview", "original"] {
+        for ext in ["jpg", "webp", "png", "gif", "bmp", "avif"] {
+            let _ = fs::remove_file(dir.join(format!("{asset_id}_{size}.{ext}")));
+        }
+    }
+}
+
 /// Wipes the whole cache dir. Safe against `write()`'s concurrent-writer
 /// pattern: each writer owns a uniquely-named tmp file, so a clear racing a
 /// write can at worst delete that one writer's tmp/final file out from under

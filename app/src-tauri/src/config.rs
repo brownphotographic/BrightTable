@@ -22,6 +22,24 @@ pub enum ShareType {
     Smb,
 }
 
+/// Which side of the (custom, `decorations: false`) title bar the minimize/
+/// maximize/close buttons render on - Preferences → Configuration. Defaults
+/// to `Right` (Windows/GNOME convention, and this app's original hardcoded
+/// layout); `Left` mimics macOS's traffic-light placement for anyone who
+/// prefers that muscle memory.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowControlsPosition {
+    Left,
+    Right,
+}
+
+impl Default for WindowControlsPosition {
+    fn default() -> Self {
+        WindowControlsPosition::Right
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryConfig {
@@ -180,6 +198,8 @@ pub struct AppConfig {
     pub raw_overrides: HashSet<String>,
     #[serde(default)]
     pub sharing: SharingConfig,
+    #[serde(default)]
+    pub window_controls_position: WindowControlsPosition,
 }
 
 /// Preferences → Sharing. Only Flickr has a real, working connection today -

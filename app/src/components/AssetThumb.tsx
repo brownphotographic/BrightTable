@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { thumbnailSrc, type AssetSummary } from '../lib/api';
 import { decodeThumbHash } from '../lib/thumbhash';
+import { useImageVersion } from '../lib/imageVersion';
 
 // Shared image layer (thumbhash blur placeholder -> real thumbnail, with a
 // retry-on-failure state) used by both the main grid and the viewer's
@@ -15,6 +16,7 @@ export default function AssetThumbImage({
 }) {
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const imgVersion = useImageVersion(asset.id);
   const placeholder = useMemo(
     () => (asset.thumbHash ? decodeThumbHash(asset.thumbHash) : null),
     [asset.thumbHash],
@@ -64,7 +66,7 @@ export default function AssetThumbImage({
         </div>
       ) : (
         <img
-          src={thumbnailSrc(asset.id, size)}
+          src={thumbnailSrc(asset.id, size, imgVersion)}
           alt=""
           loading="lazy"
           onLoad={() => setLoaded(true)}

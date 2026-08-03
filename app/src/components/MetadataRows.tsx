@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import type { AssetMetadataPatch, AssetSummary } from '../lib/api';
+import { useEffect, useState } from 'react';
+import { getAsset, type AssetMetadataPatch, type AssetSummary, type TagSummary } from '../lib/api';
 import { formatCamera, formatDims, formatExposure, formatSize, formatTaken } from '../lib/exifFormat';
 
 // Shared EXIF row list used by both the viewer's Info panel and the grid's
@@ -15,6 +15,13 @@ export default function MetadataRows({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // `asset.tags` itself is always empty here - Immich doesn't join the tags
+  // relation on any of the listing endpoints an AssetSummary normally comes
+  // from (timeline/album/person/tag/search results), only on GET
+  // /assets/{id} (see getAsset's doc comment in lib/api.ts). Fetched fresh
+  // whenever the shown asset changes, since this is a single-asset panel,
+  // not a grid tile.
+  const { tags, error: tagsError } = useAssetTags(asset.id);
 
   async function apply(patch: AssetMetadataPatch) {
     if (!onEdit || busy) return;
@@ -66,6 +73,35 @@ export default function MetadataRows({
           </div>
         </div>
       </div>
+      {tagsError && (
+        <div style={{ padding: '9px 0 2px', marginTop: 2, borderTop: '1px solid rgba(255,255,255,0.07)', fontSize: 11.5, color: '#ff6b6b', lineHeight: 1.4 }}>
+          Couldn't load tags — {tagsError}.
+        </div>
+      )}
+      {tags && tags.length > 0 && (
+        <div style={{ padding: '9px 0 2px', marginTop: 2, borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+          <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>Tags</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {tags.map((t) => (
+              <div
+                key={t.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  padding: '3px 9px',
+                  borderRadius: 999,
+                  background: 'rgba(255,255,255,0.08)',
+                  fontSize: 11.5,
+                }}
+              >
+                <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: t.color ?? 'rgba(255,255,255,0.35)' }} />
+                {t.name}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {error && <div style={{ marginTop: 8, fontSize: 11.5, color: '#ff6b6b', lineHeight: 1.4 }}>{error}</div>}
     </div>
   );
@@ -123,4 +159,38 @@ export function Heart({ filled, size = 13 }: { filled: boolean; size?: number })
       <div style={{ width: s, height: s, background: color, borderRadius: '50%', position: 'absolute', left: s * 0.86, top: 0 }} />
     </div>
   );
+}
+
+// Fetches the given asset's real tags via GET /assets/{id} (the only
+// endpoint Immich actually includes them on) whenever `assetId` changes.
+// `tags` is null while loading/unknown - `tags && tags.length > 0` on the
+// caller's check treats that the same as "none" until it resolves, so no
+// loading-spinner state was worth adding for what's normally a near-instant
+// single-asset fetch. A failure is surfaced via `error` (and always logged)
+// rather than silently treated as "no tags" - that distinction matters for
+// diagnosing a stale build (a Tauri command added this session not yet
+// picked up by a running `tauri dev`/binary shows up here as "command
+// get_asset not found") versus a real "this asset genuinely has none".
+function useAssetTags(assetId: string): { tags: TagSummary[] | null; error: string | null } {
+  const [tags, setTags] = useState<TagSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setTags(null);
+    setError(null);
+    getAsset(assetId)
+      .then((a) => {
+        if (!cancelled) setTags(a.tags);
+      })
+      .catch((e) => {
+        console.error('Failed to load tags for asset', assetId, e);
+        if (!cancelled) setError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [assetId]);
+
+  return { tags, error };
 }

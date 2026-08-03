@@ -27,10 +27,12 @@ import {
   type UnsyncedMetadata,
 } from '../lib/api';
 import { buildFolderTree, collectAssetPaths, findFolderNode, type FolderNode } from '../lib/folderTree';
-import Viewer from '../components/Viewer';
+import Viewer, { type ViewerHandle } from '../components/Viewer';
 import AssetTile, { type ClickMods } from '../components/AssetTile';
 import SelectionBar from '../components/SelectionBar';
 import AddToAlbumDialog from '../components/AddToAlbumDialog';
+import AddToTagDialog from '../components/AddToTagDialog';
+import { TAG_ASSIGN_DISABLED_REASON } from '../lib/featureFlags';
 import StackBand from '../components/StackBand';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import SmartStackDialog from '../components/SmartStackDialog';
@@ -84,6 +86,8 @@ export interface FoldersBrowserHandle {
   copyMetadata: () => void;
   pasteMetadata: () => void;
   openPrint: () => void;
+  rotateLeft: () => void;
+  rotateRight: () => void;
   openExportToFolder: () => void;
   openExportToFlickr: () => void;
 }
@@ -119,6 +123,10 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   const [assetCache, setAssetCache] = useState<Record<string, AssetSummary[]>>({});
   const inFlight = useRef<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
+  // Lets rotateLeft/rotateRight (Edit menu) reach the currently-open Viewer
+  // - null whenever nothing's open, since <Viewer> below is only mounted at
+  // all when openAsset exists.
+  const viewerRef = useRef<ViewerHandle>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [thumbSize, setThumbSize] = useState(DEFAULT_THUMB_SIZE);
   const lastClickedId = useRef<string | null>(null);
@@ -131,6 +139,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   const [printAsset, setPrintAsset] = useState<AssetSummary | null>(null);
   const [exportFlickrAssets, setExportFlickrAssets] = useState<AssetSummary[] | null>(null);
   const [addToAlbumTargets, setAddToAlbumTargets] = useState<string[] | null>(null);
+  const [addToTagTargets, setAddToTagTargets] = useState<string[] | null>(null);
   // This server version doesn't populate `stack` on /search/metadata or
   // /timeline/bucket at all (confirmed live - it's a newer-server-only
   // optimization), so stack membership is cross-referenced here from a
@@ -982,6 +991,11 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         label: pasteTargetIds.length > 1 ? `Add ${pasteTargetIds.length} Photos to Album…` : 'Add to Album…',
         onClick: () => setAddToAlbumTargets(pasteTargetIds),
       });
+      items.push({
+        label: (pasteTargetIds.length > 1 ? `Add ${pasteTargetIds.length} Photos to Tag…` : 'Add to Tag…') + (TAG_ASSIGN_DISABLED_REASON ? ' (disabled)' : ''),
+        onClick: () => setAddToTagTargets(pasteTargetIds),
+        disabled: !!TAG_ASSIGN_DISABLED_REASON,
+      });
       const exportAssets = pasteTargetIds.map((id) => assetByIdAll.get(id)).filter((a): a is AssetSummary => !!a);
       items.push({ label: 'Export to Folder…', onClick: () => setExportFolderAssets(exportAssets) });
       items.push({ label: 'Share to Flickr…', onClick: () => setExportFlickrAssets(exportAssets) });
@@ -1095,6 +1109,11 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
               : (assetByIdAll.get(flatIds[0]) ?? null);
         if (target && !isRawAsset(target)) setPrintAsset(target);
       },
+      // Rotate only ever acts on whichever photo is actually open in the
+      // Viewer (see PhotosBrowser's identical rotateLeft/rotateRight) -
+      // silent no-op whenever the Viewer isn't currently mounted.
+      rotateLeft: () => viewerRef.current?.rotate(false),
+      rotateRight: () => viewerRef.current?.rotate(true),
       // Matches openPrint's fallback shape: the current selection, else the
       // asset open in the Viewer, else nothing (silent no-op - there's no
       // selection to disable the File-menu item on).
@@ -1172,6 +1191,9 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       } else if (matchesShortcut(e, shortcuts.pasteImageProcessing) && selected.size > 0 && copiedProcessingSource) {
         e.preventDefault();
         requestPasteImageProcessing([...selected]);
+      } else if (matchesShortcut(e, shortcuts.addToTag) && selected.size > 0 && !TAG_ASSIGN_DISABLED_REASON) {
+        e.preventDefault();
+        setAddToTagTargets([...selected]);
       } else if (selected.size > 0) {
         const ratingByShortcut: [ShortcutId, number][] = [
           ['rate0', 0],
@@ -1211,6 +1233,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     requestPasteImageProcessing,
     copiedMetadata,
     copiedProcessingSource,
+    setAddToTagTargets,
   ]);
 
   const selectExclusive = useCallback((id: string) => {
@@ -1371,6 +1394,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           }
           onBatchArtRoundTrip={artRoundTripEnabled ? () => requestBatchArtRoundTrip([...selected]) : undefined}
           onAddToAlbum={() => setAddToAlbumTargets([...selected])}
+          onAddToTag={() => setAddToTagTargets([...selected])}
         />
       )}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
@@ -1515,6 +1539,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
 
       {openAsset && (
         <Viewer
+          ref={viewerRef}
           asset={openAsset}
           hasPrev={openIndex > 0}
           hasNext={openIndex !== -1 && openIndex < flatIds.length - 1}
@@ -1614,6 +1639,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         <ExportToFlickrDialog assets={exportFlickrAssets} onClose={() => setExportFlickrAssets(null)} onExported={() => {}} />
       )}
       {addToAlbumTargets && <AddToAlbumDialog assetIds={addToAlbumTargets} onClose={() => setAddToAlbumTargets(null)} />}
+      {addToTagTargets && <AddToTagDialog assetIds={addToTagTargets} onClose={() => setAddToTagTargets(null)} />}
     </div>
   );
 });

@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { clearThumbCache, getThumbCacheInfo, type ThumbCacheStats } from '../lib/api';
 import ConfirmDialog from '../components/ConfirmDialog';
+import { useWindowControls } from '../lib/windowControls';
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -19,6 +20,7 @@ export default function PreferencesConfiguration() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState(false);
+  const { position, setPosition } = useWindowControls();
 
   useEffect(() => {
     getThumbCacheInfo()
@@ -33,7 +35,24 @@ export default function PreferencesConfiguration() {
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '24px 0' }}>
-      <div style={{ fontSize: 14, fontWeight: 700, margin: '0 4px 12px' }}>Thumbnail Cache</div>
+      <div style={{ fontSize: 14, fontWeight: 700, margin: '0 4px 12px' }}>Window</div>
+      <div style={panel}>
+        <Row label="Window buttons">
+          <Segmented
+            value={position}
+            options={[
+              { value: 'left', label: 'Left' },
+              { value: 'right', label: 'Right' },
+            ]}
+            onChange={setPosition}
+          />
+        </Row>
+      </div>
+      <div style={helpText}>
+        Which side of the title bar the minimize/maximize/close buttons appear on.
+      </div>
+
+      <div style={{ fontSize: 14, fontWeight: 700, margin: '26px 4px 12px' }}>Thumbnail Cache</div>
       <div style={{ fontSize: 12.5, color: 'var(--text-dimmer)', margin: '0 4px 16px', lineHeight: 1.5 }}>
         Thumbnails fetched from Immich are kept on disk so scrolling through the library doesn't
         re-download the same images. This cache grows over time and isn't automatically trimmed —
@@ -84,6 +103,37 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 
 function Divider() {
   return <div style={{ height: 1, background: 'var(--border)', marginLeft: 16 }} />;
+}
+
+function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', gap: 6 }}>
+      {options.map((o) => (
+        <div
+          key={o.value}
+          onClick={() => onChange(o.value)}
+          style={{
+            padding: '5px 11px',
+            borderRadius: 7,
+            fontSize: 12.5,
+            cursor: 'default',
+            background: value === o.value ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
+            color: value === o.value ? '#fff' : 'rgba(255,255,255,0.7)',
+          }}
+        >
+          {o.label}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 const panel: CSSProperties = {

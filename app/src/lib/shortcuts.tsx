@@ -30,7 +30,10 @@ export type ShortcutId =
   | 'copyMetadata'
   | 'pasteMetadata'
   | 'copyImageProcessing'
-  | 'pasteImageProcessing';
+  | 'pasteImageProcessing'
+  | 'rotateLeft'
+  | 'rotateRight'
+  | 'addToTag';
 
 export const SHORTCUT_DEFS: { id: ShortcutId; label: string }[] = [
   { id: 'open', label: 'Open photo' },
@@ -62,6 +65,9 @@ export const SHORTCUT_DEFS: { id: ShortcutId; label: string }[] = [
   { id: 'pasteMetadata', label: 'Paste Metadata' },
   { id: 'copyImageProcessing', label: 'Copy Image Processing' },
   { id: 'pasteImageProcessing', label: 'Paste Image Processing' },
+  { id: 'rotateLeft', label: 'Rotate Left' },
+  { id: 'rotateRight', label: 'Rotate Right' },
+  { id: 'addToTag', label: 'Add to Tag' },
 ];
 
 // `toggleFilmstrip` moved off "F" to "M" to make room for "favorite" - both
@@ -97,6 +103,9 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutId, string> = {
   pasteImageProcessing: 'Ctrl+V',
   copyMetadata: 'Ctrl+Shift+C',
   pasteMetadata: 'Ctrl+Shift+V',
+  rotateLeft: 'Ctrl+[',
+  rotateRight: 'Ctrl+]',
+  addToTag: 'Ctrl+T',
 };
 
 // Canonical stored form: modifier prefixes (Ctrl/Alt/Shift, in that order)
