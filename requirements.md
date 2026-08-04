@@ -100,12 +100,17 @@
 ### 1.5 Editing & metadata
 - ✅ Open in RAW Editor / External Editor, app picker, local-path resolution — real (§7.21).
   Preferences → Applications now detects installed native/Flatpak/Snap apps and lets the
-  user pick a RAW Editor and an External Editor, each launched on the asset's resolved local
-  path from the Viewer toolbar. Launch-only, by design (§7.21) — no file-watching/auto-
-  refresh/auto-stacking; see §1.6 for why. **Exception**: when an `ART-cli` binary path is
-  also configured (Preferences → Applications), the RAW Editor role stops being launch-only
-  and becomes the deterministic **ART CLI round trip** instead (§1.6/§7.25) — the button
-  relabels to "Tweak RAW Roundtrip".
+  user pick an External Editor (top-level) and, separately, a RAW Editor **per RAW
+  converter** (§7.30 — ART/RawTherapee/DarkTable each own their own app *and* CLI path
+  together in their own vertical sub-tab, rather than one app picker shared across all
+  three), each launched on the asset's resolved local path from the Viewer toolbar.
+  Launch-only, by design (§7.21) — no file-watching/auto-refresh/auto-stacking; see §1.6 for
+  why. **Exception**: when a RAW converter is selected as active (Preferences → Applications
+  → RAW Roundtrip CLI, one active-converter selector across the three sub-tabs) and its own
+  CLI path is also configured (currently ART or RawTherapee), the RAW Editor role stops being
+  launch-only and becomes the deterministic **RAW CLI round trip** instead (§1.6/§7.25/§7.30)
+  — the button relabels to "Tweak RAW Roundtrip". With no converter selected as active at
+  all, there's simply no RAW Editor app configured, same as an unset External Editor.
 - 🟡 **Metadata panel** is real (`MetadataPanel.tsx` / `MetadataRows.tsx`, §7.6) but with a
   much smaller field set than the prototype:
   - ⬜ IPTC (title, caption, keywords, creator, copyright) — not implemented; Immich's
@@ -138,17 +143,26 @@
 - ⬜ Create Version, auto-stacked renditions, version lineage — confirmed dead scope, not
   revisited.
 - ✅ RAW-editor round-trip, in the launch-only sense that decision left behind (§7.21).
-- ✅ **ART CLI round trip** (§7.25) — a deeper, deterministic alternative to the launch-only
-  round trip above, but scoped to ART specifically (only active when an `ART-cli` binary path
-  is configured). **Variant 1 ("Tweak RAW Roundtrip")** still opens ART's GUI and waits for
-  the user to edit/save/close it (same as the plain launch-only flow), but then runs
-  `ART-cli` itself against the sidecar ART just wrote to produce the export — no manual
-  "export" step inside ART's own UI. **Variant 2 ("Headless RAW Roundtrip")** skips the GUI
-  entirely: batch-exports N selected RAW assets' own sidecars (or the user's ART default
-  profile, for ones with none) straight through `ART-cli` in the background, with visible
+- ✅ **RAW CLI round trip** (§7.25 built this for ART; §7.30 generalized it to also cover
+  RawTherapee) — a deeper, deterministic alternative to the launch-only round trip above,
+  active only when a converter is selected in Preferences → Applications and its CLI path is
+  configured. **Variant 1 ("Tweak RAW Roundtrip")** still opens the editor's GUI and waits for
+  the user to edit/save/close it (same as the plain launch-only flow), but then runs the
+  converter's own CLI against the sidecar it just wrote to produce the export — no manual
+  "export" step inside the editor's own UI. **Variant 2 ("Headless RAW Roundtrip")** skips the
+  GUI entirely: batch-exports N selected RAW assets' own sidecars (or the converter's default
+  profile, for ones with none) straight through its CLI in the background, with visible
   per-asset progress and cancellation. Both variants feed the same Immich-side ingestion the
   generic round trip's file watcher already used (thumbnail regen, capture-date fix,
   rating/favorite/description carryover, auto-stack with the RAW original).
+- ⬜ **DarkTable CLI round trip** — planned but not implemented (§7.30). DarkTable can be
+  selected in Preferences → Applications and its `darktable-cli` path saved like the other
+  two, but doing so leaves the roundtrip buttons on the plain launch-only flow rather than
+  enabling them: unlike ART's `.arp`/RawTherapee's `.pp3`, darktable's processing history
+  lives inside the same `.xmp` sidecar this app already reads/writes for rating/description
+  (§2.4), so detecting "does this asset have darktable edits to apply" needs a surgical
+  `.xmp`-history read rather than the plain sidecar-file-exists check `paths::find_processing_sidecar`
+  already does for the other two — not yet built.
 
 ### 1.7 Sharing & export
 > **Prototype only — none of this exists in the real app.** No Sharing preferences content,
@@ -215,18 +229,35 @@
   of that kind to trigger it).
 
 ### 2.4 Sidecar & metadata compatibility
-- ⬜ Sidecar storage (XMP, `.arp`), read/write, ExifTool-backed arbitrary fields — all
-  still planned, matching the prototype's own status here.
+- ✅ `.arp` (ART) and `.pp3` (RawTherapee) processing-sidecar detection
+  (`paths::find_processing_sidecar`) drives both tools' CLI round trip (§1.6/§7.25/§7.30) —
+  real for both append- and replaced-extension forms.
+- ⬜ Sidecar storage (XMP), read/write, ExifTool-backed arbitrary fields — still planned,
+  matching the prototype's own status here. Darktable's `.xmp`-embedded processing history
+  specifically remains unread/unwritten for CLI-round-trip purposes (§1.6) — it shares the
+  same file this app already patches for rating/description, which needs a surgical merge
+  rather than the plain whole-sidecar handling ART/RawTherapee get.
 
 ### 2.5 External applications
 - ✅ Detect/launch native, Flatpak, Snap apps; custom executable (also covers AppImage,
   via the same fallback) — real (§7.21).
-- ✅ Separate RAW editor / external editor roles — real, Preferences → Applications
-  (§7.21; §7.15's placeholder-list mention of Applications is now stale).
-- ✅ **ART-cli path** — a third, separate Preferences → Applications field (a plain
-  file-browsed path, not an app-picker `AppChoice`, since there's no `.desktop` entry for a
-  CLI tool to pick). Configuring it is the single switch that turns on the ART CLI round trip
-  (§1.6/§7.25) in place of the plain launch-only RAW Editor role.
+- ✅ External editor role — real, Preferences → Applications (§7.21; §7.15's placeholder-list
+  mention of Applications is now stale). The RAW editor role no longer exists as a separate,
+  independently-configured role (see below) — it's superseded by per-converter config.
+- ✅ **Per-converter RAW editor app + CLI path, combined** (§7.25 for ART; §7.30 generalized,
+  then corrected mid-round to merge in the desktop app choice) — three Preferences →
+  Applications vertical sub-tabs, one per converter (ART/RawTherapee/DarkTable), each pairing
+  that tool's own GUI app (an app-picker `AppChoice`, same mechanism External Editor uses) with
+  its own CLI path (a plain file-browsed path, no `.desktop` entry for a CLI tool to pick) —
+  deliberately *not* independent settings, since launching one tool's GUI and running a
+  different tool's CLI against what it wrote was never coherent (different sidecar formats).
+  Switching between sub-tabs never loses a saved app/path. A separate **active converter**
+  selector (segmented control: None/ART/RawTherapee/DarkTable) is the single switch that
+  decides which sub-tab's app is "the RAW Editor" for the Viewer/selection-bar buttons, and
+  additionally turns on the RAW CLI round trip (§1.6) when that same tool's CLI path is also
+  configured — only ART and RawTherapee actually enable the CLI round trip today (DarkTable
+  has no working CLI invocation yet, §1.6), but all three can hold a configured app for the
+  plain launch-only case.
 - ✅ **Show in File Manager** (§7.25) — reveals, and where the desktop supports it
   selects/highlights, an asset's local file in the OS file manager. Not app-picker-related,
   but grouped here as another direct OS-integration touchpoint alongside editor launch.
@@ -2119,3 +2150,123 @@
   live count from `TagsBrowser`'s `onCount` callback (count of *tags*, not photos — matches
   Albums'/People's "count of items in this collection" convention for the sidebar row, not
   the deliberately-omitted per-tag photo count above).
+
+### 7.30 Multi-tool RAW roundtrip: RawTherapee (real) + DarkTable (scaffold, August 2026)
+> §7.25's ART CLI round trip was written ART-specific throughout — module names (`art.rs`,
+> `art_queue.rs`), the config field (`art_cli_path`), the frontend derived flag
+> (`artRoundTripEnabled`). This round generalizes that to also roundtrip through
+> **RawTherapee-cli** (ART's parent project — full working implementation, both variants, at
+> parity with ART) and documents **darktable-cli** as planned scope with code-level
+> placeholders (config field + Preferences panel that persists a path) but no working CLI
+> invocation, since darktable's processing history lives inside the same `.xmp` sidecar this
+> app already reads/writes for rating/description (§2.4) rather than a separate file.
+- ✅ **`cli_process.rs`** (new) — the generic child-process spawn/stream/cancel driver
+  extracted out of what was `art.rs`'s own `run_art_cli_with_progress` (it never actually
+  depended on ART specifically — takes the binary path as a plain `&str`), plus a generic
+  `classify_exit_generic` fallback (non-zero exit, raw stderr) and the shared
+  `SidecarCliMode` enum (`ApplySidecar`/`DefaultThenSidecarOverride`/`DefaultOnly`, renamed
+  from ART-only `ArtCliMode`) — both ART and RawTherapee's argv builders map onto the same
+  three-mode shape, since RawTherapee-cli is what ART's own CLI grammar was forked from.
+  `art.rs` re-exports `CANCELLED_BY_USER`/`ART_CLI_RUN_TIMEOUT` (now `cli_process::RAW_CLI_RUN_TIMEOUT`)
+  under their original names so `export_queue.rs`'s independent RAW-to-JPEG conversion call
+  site (Export to Folder, unrelated to this feature) needed no changes.
+- ✅ **`rawtherapee.rs`** (new) — mirrors `art.rs`'s shape: `build_rawtherapee_cli_args`
+  (pure, unit-tested per mode) plus `run_rawtherapee_cli_with_progress`/`run_rawtherapee_cli`
+  delegating to `cli_process`'s shared driver. Deliberately **no** Exiv2-crash retry/
+  metadata-fallback workaround — that's an ART/Exiv2-specific bug (§7.25); RawTherapee starts
+  with a plain run and gets its own recovery logic only if real testing finds it needs one.
+  ⚠️ **Flag semantics are carried over from ART's own confirmed argv on the assumption that
+  RawTherapee-cli accepts the same `-o`/`-j<n>`/`-Y`/`-s`/`-d -S`/`-d`/`-c` grammar — not yet
+  independently confirmed against a real `rawtherapee-cli -h`/version dump the way ART's args
+  were confirmed against a real `ART-cli -x` usage dump (ART 1.26.7, §7.25). ART's own `-s`
+  is already known to diverge from RawTherapee's documented `-s` behavior (warns + falls back
+  to neutral values vs. falls back to the default profile), so `SidecarCliMode`'s flag mapping
+  may need tool-specific correction once verified live — flagged for the user's own testing
+  pass across all three tools.** `--progress`/`-V` are deliberately omitted (unlike ART's
+  argv) since RawTherapee-cli's own progress-reporting convention, if any, isn't confirmed
+  either — until checked, RawTherapee round-trip jobs simply get no live percentage updates
+  (a silent no-op, not an error).
+- ✅ **`config.rs`** — new `RawConverterKind` enum (`Art`/`RawTherapee`/`DarkTable`) and
+  `ApplicationsConfig.active_raw_converter: Option<RawConverterKind>` (the single switch,
+  replacing bare `art_cli_path` non-emptiness). The old single shared `raw_editor: Option<AppChoice>`
+  field is **gone** — each converter now owns its own `RawConverterConfig { app: Option<AppChoice>,
+  cli_path: String }` (`ApplicationsConfig.art`/`.rawtherapee`/`.darktable`), pairing the GUI
+  app "Tweak RAW Roundtrip" launches with the CLI path that then processes what it wrote,
+  since the two were never actually independent — ART's GUI writing a `.arp` that gets fed to
+  `rawtherapee-cli` (or vice versa) was never coherent, so letting them be configured
+  separately (one shared `raw_editor` picker at the top of Preferences, three unrelated CLI
+  paths below it) was a real design mistake corrected this round, not a preference. There is
+  no more standalone "RAW Editor" role independent of a chosen converter — with no
+  `active_raw_converter` selected, there's simply no RAW Editor app configured (same
+  "redirect to Preferences" contract `external_editor` unset already had).
+  `ApplicationsConfig::active_raw_cli()` centralizes resolving "which tool, which path, or
+  which error" for both `commands.rs` call sites so they can't drift. `config::load`'s
+  migration handles **two** legacy shapes: the original ART-only one (single `rawEditor` +
+  flat `artCliPath`) and the brief intermediate one this went through mid-session (flat
+  per-tool `*CliPath` fields, still one shared `rawEditor`) — both get spliced into the new
+  `art`/`rawtherapee`/`darktable` structs by re-reading the raw JSON, and
+  `active_raw_converter` defaults to `Some(Art)` whenever either a legacy `rawEditor` app or a
+  non-empty `artCliPath` is recovered, so an existing user's setup (launch-only or full CLI
+  round trip) survives the upgrade with no re-configuration.
+- ✅ **`art_queue.rs`** generalized in place rather than renamed (kept `ArtQueue`/`ArtJob`
+  module/type names to hold the frontend/API diff down) — `QueuedArtWork`/`ArtJob` both gained
+  a `tool: RawConverterKind` field, `MAX_CONCURRENT_ART_JOBS` renamed to
+  `MAX_CONCURRENT_RAW_CLI_JOBS` (still `1`, same RAM-pressure reasoning as §7.25, now applied
+  to RawTherapee jobs on the same shared queue/semaphore too on the assumption its demosaic
+  pass costs the same class of memory — not yet independently confirmed live). New
+  `run_round_trip_cli` dispatch function is the one place both `art_queue::run` (Variant 2's
+  worker) and `commands.rs`'s Variant 1 handlers pick `art::run_art_cli_with_metadata_fallback`
+  vs. `rawtherapee::run_rawtherapee_cli` per job's `tool`, so the two can't diverge in
+  behavior for the same `RawConverterKind`.
+- ✅ **`commands.rs`** — the five ART-named commands renamed to tool-agnostic
+  (`launch_art_round_trip` → `launch_raw_cli_round_trip`, `batch_art_round_trip` →
+  `batch_raw_cli_round_trip`, `finish_art_round_trip_with_default_profile` →
+  `finish_raw_cli_round_trip_with_default_profile`, `cancel_art_round_trip` →
+  `cancel_raw_cli_round_trip`, `cancel_art_job` → `cancel_raw_cli_job`, plus
+  `get_art_queue_status`/`clear_completed_art_jobs` → `get_raw_cli_queue_status`/
+  `clear_completed_raw_cli_jobs`), each now resolving the active tool/path via
+  `applications.active_raw_cli()` instead of reading `art_cli_path` directly. Internal type
+  names (`ArtRoundTripOutcome`, `ArtRoundTripTarget`, `ArtQueueStatus`) deliberately kept
+  as-is — a lower-diff choice than renaming the whole serialized IPC surface for what's
+  already a working, tested feature. `paths.rs`/`export_naming.rs` needed **no changes** for
+  RawTherapee — `find_processing_sidecar` already resolved `.pp3` via `ProcessingKind::Pp3`,
+  and export-filename generation was already tool-agnostic.
+- ✅ **Frontend** — `lib/applications.tsx`'s derived `artRoundTripEnabled` replaced with
+  `rawRoundTripEnabled` (true only when `activeRawConverter` is `'art'`/`'rawtherapee'` and
+  that tool's own path is non-empty — `'darktable'` never enables it), plus new
+  `activeRawConverter`/per-tool path state and setters. `lib/api.ts`'s five ART-named command
+  wrappers renamed to match the backend; `ArtJob` gained a `tool: RawConverterKind` field.
+  Mechanical rename of `artRoundTripEnabled`/`launchArtRoundTrip`/`batchArtRoundTrip` call
+  sites across `Viewer.tsx`, `PhotosBrowser.tsx`, `FoldersBrowser.tsx`. `ActivityPanel.tsx`'s
+  "ART Round Trip" section retitled "RAW Round Trip" with a per-job tool label (ART/
+  RawTherapee/DarkTable) now that the board holds both tools' jobs.
+- ✅ **`PreferencesApplications.tsx`** — the old single "ART CLI Round Trip" section replaced
+  with the user's own requested layout: an "Active converter" segmented selector (None/ART/
+  RawTherapee/DarkTable) above a vertical sub-tab list (one per converter), each showing that
+  tool's own **Desktop App** row (the app picker, moved down from the old top-level shared
+  "RAW Editor" row — user feedback, live during this same round: having the desktop app
+  picker separate from the per-tool CLI config "doesn't make sense... each app will have its
+  own desktop config") stacked directly above its own CLI-path Browse/Clear row, both
+  independent of which converter is currently *active* — so a user can review/fill in all
+  three tools' apps and paths and freely switch the active selector between them without
+  re-entering anything, matching real multi-tool testing workflow. The top "Applications"
+  panel now holds only External Editor (unrelated to RAW conversion). DarkTable's sub-tab
+  persists both the same way but carries an inline note that CLI roundtrip isn't implemented
+  yet.
+- ⬜ **DarkTable CLI round trip itself** — not implemented, scope deliberately deferred this
+  round (§1.6/§2.4). `ApplicationsConfig::active_raw_cli()` refuses to hand out a path for
+  `RawConverterKind::DarkTable`, and `art_queue::run_round_trip_cli`'s `DarkTable` match arm
+  is unreachable in practice as a result — both exist only to keep their respective matches
+  exhaustive against a future real implementation, not as a reachable code path today. The
+  real blocker to build next: darktable-cli takes an explicit `.xmp` sidecar path as an
+  argument (no `-s`/`-S`-style "look for one automatically" flag the way ART/RawTherapee do),
+  and that `.xmp` is the *same file* `xmp.rs` already patches for rating/description — so
+  "does this asset have darktable edits to roundtrip" needs a surgical read of the `.xmp`'s
+  darktable `history` stack, not the plain sidecar-file-exists check
+  `paths::find_processing_sidecar` does for `.arp`/`.pp3`.
+- ⚠️ **Not yet manually verified against real installs** — `cargo test`/`tsc`/`cargo build`
+  all pass (232 backend unit tests, including new `rawtherapee.rs` argv/spawn tests mirroring
+  `art.rs`'s own), but this hasn't yet been run live against a real `rawtherapee-cli` binary
+  and a real RAW asset the way §7.25's ART work was — the flag-semantics caveat above is the
+  main open question a real run would settle. The user plans to test all three converters
+  personally.

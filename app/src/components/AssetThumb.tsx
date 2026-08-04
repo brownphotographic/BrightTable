@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { thumbnailSrc, type AssetSummary } from '../lib/api';
 import { decodeThumbHash } from '../lib/thumbhash';
-import { useImageVersion } from '../lib/imageVersion';
+import { refreshAssetImage, useImageVersion, useRotatePending } from '../lib/imageVersion';
 
 // Shared image layer (thumbhash blur placeholder -> real thumbnail, with a
 // retry-on-failure state) used by both the main grid and the viewer's
@@ -17,6 +17,13 @@ export default function AssetThumbImage({
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const imgVersion = useImageVersion(asset.id);
+  // Set by the Viewer's rotate action once the exiftool write is confirmed
+  // (markRotatePending) - Immich's own thumbnail regen job it also kicks off
+  // has no completion signal ImmAture can observe, so rather than guess with
+  // a timer this tile just surfaces a manual "pull the rotated version" badge
+  // instead, same reasoning as the main preview's "Refresh from Server"
+  // button (see Viewer.tsx's handleRefreshFromServer doc comment).
+  const rotatePending = useRotatePending(asset.id);
   const placeholder = useMemo(
     () => (asset.thumbHash ? decodeThumbHash(asset.thumbHash) : null),
     [asset.thumbHash],
@@ -81,6 +88,39 @@ export default function AssetThumbImage({
             transition: 'opacity 150ms',
           }}
         />
+      )}
+      {rotatePending && !failed && (
+        // Top-center so it doesn't collide with AssetTile's own corner
+        // overlays (select circle top-left, open/stack badge top-right,
+        // rating bar bottom-left, favorite/extension bottom-right). Stays up
+        // until clicked - clicking is what actually pulls fresh bytes
+        // (refreshAssetImage), and is safe to click again if Immich's regen
+        // job hasn't landed on the server yet.
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            refreshAssetImage(asset.id);
+          }}
+          title="Rotated - click to pull the updated image from the server"
+          style={{
+            position: 'absolute',
+            top: 7,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: 20,
+            height: 20,
+            borderRadius: 6,
+            background: 'rgba(0,0,0,0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'default',
+            fontSize: 13,
+            color: '#fff',
+          }}
+        >
+          ⟳
+        </div>
       )}
     </>
   );

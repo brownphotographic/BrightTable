@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import {
   evictThumbCacheForAsset,
   getStack,
-  launchArtRoundTrip,
+  launchRawCliRoundTrip,
   launchEditor,
   openVideoExternally,
   pasteImageProcessing,
@@ -117,7 +117,7 @@ const Viewer = forwardRef<ViewerHandle, {
   // clicks an editor button with no app chosen for that role yet.
   onOpenApplicationsPreferences?: () => void;
   // Fired once the ART CLI round trip (Variant 1) has handed its export off
-  // to the background ArtQueue (see launch_art_round_trip's doc comment) -
+  // to the background ArtQueue (see launch_raw_cli_round_trip's doc comment) -
   // the parent (PhotosBrowser/FoldersBrowser) tracks jobId via its own
   // trackArtJobs the same way it already does for a Variant 2 (Headless RAW
   // Roundtrip) job, applying the outcome to its assetCache/stackByAssetId
@@ -204,7 +204,7 @@ const Viewer = forwardRef<ViewerHandle, {
   // the export path/sidecar are resolved) - disables/relabels the Tweak RAW
   // Roundtrip button so a second click can't overlap a second launch for the
   // *same* asset. Not held for the ART-cli conversion itself - that runs in
-  // the background once kicked off (see launch_art_round_trip's doc
+  // the background once kicked off (see launch_raw_cli_round_trip's doc
   // comment), which is what lets this button be used again for a *different*
   // asset right away instead of waiting on the whole export to finish.
   const [artBusy, setArtBusy] = useState(false);
@@ -227,7 +227,7 @@ const Viewer = forwardRef<ViewerHandle, {
   // cache-bust doc comment).
   const [visualRotation, setVisualRotation] = useState(0);
   const rotateVisualResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { applications, artRoundTripEnabled } = useApplications();
+  const { applications, activeRawEditorApp, rawRoundTripEnabled } = useApplications();
   const { copiedProcessingSource, setCopiedProcessingSource, copiedMetadata, setCopiedMetadata } = useClipboard();
   // Clicking a non-pick stack member in the info panel "peeks" at it in the
   // main stage without actually navigating there (that member is hidden from
@@ -397,25 +397,25 @@ const Viewer = forwardRef<ViewerHandle, {
   // instead of launching when that role has no app chosen yet, rather than
   // just disabling the button with no way to fix it from here.
   //
-  // When ART round trip is configured (artRoundTripEnabled), the rawEditor
-  // role becomes "Tweak RAW Roundtrip" and branches to the ART CLI flow
-  // instead: awaits ART's own process exit (launchArtRoundTrip), then hands
-  // the resulting jobId to the parent via onArtRoundTripQueued as soon as the
-  // export is running in the background, rather than waiting for it to
-  // finish - no dependency on round_trip.rs's passive file watcher for this
-  // path.
+  // When a RAW converter CLI is configured and active (rawRoundTripEnabled),
+  // the rawEditor role becomes "Tweak RAW Roundtrip" and branches to the CLI
+  // round trip flow instead: awaits the editor's own process exit
+  // (launchRawCliRoundTrip), then hands the resulting jobId to the parent via
+  // onArtRoundTripQueued as soon as the export is running in the background,
+  // rather than waiting for it to finish - no dependency on round_trip.rs's
+  // passive file watcher for this path.
   const handleLaunch = useCallback(
     async (role: 'rawEditor' | 'externalEditor') => {
-      const choice = applications[role];
+      const choice = role === 'rawEditor' ? activeRawEditorApp : applications.externalEditor;
       if (!choice) {
         onOpenApplicationsPreferences?.();
         return;
       }
       setLaunchError(null);
-      if (role === 'rawEditor' && artRoundTripEnabled) {
+      if (role === 'rawEditor' && rawRoundTripEnabled) {
         setArtBusy(true);
         try {
-          const rtOutcome = await launchArtRoundTrip(shown.id, shown.originalPath, shown.fileName, shown.fileExtension, choice);
+          const rtOutcome = await launchRawCliRoundTrip(shown.id, shown.originalPath, shown.fileName, shown.fileExtension, choice);
           const jobId = await resolveArtRoundTripOutcome(rtOutcome);
           onArtRoundTripQueued?.(jobId);
         } catch (e) {
@@ -431,7 +431,7 @@ const Viewer = forwardRef<ViewerHandle, {
         setLaunchError(String(e));
       }
     },
-    [applications, artRoundTripEnabled, shown, onOpenApplicationsPreferences, onArtRoundTripQueued, resolveArtRoundTripOutcome],
+    [applications, activeRawEditorApp, rawRoundTripEnabled, shown, onOpenApplicationsPreferences, onArtRoundTripQueued, resolveArtRoundTripOutcome],
   );
 
   // Same clipboard, same fields, as the grid's Copy/Paste Image Processing/

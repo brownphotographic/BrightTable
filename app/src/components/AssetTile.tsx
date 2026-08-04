@@ -1,12 +1,10 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useState } from 'react';
 import AssetThumbImage from './AssetThumb';
 import { RejectIcon, Star } from './MetadataRows';
 import type { AssetSummary, UnsyncedMetadata } from '../lib/api';
 import { isRawAsset } from '../lib/filters';
 
 export type ClickMods = { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean };
-
-const DOUBLE_CLICK_MS = 400;
 
 function unsyncedMetadataTooltip(gap: UnsyncedMetadata): string {
   const parts: string[] = [];
@@ -48,46 +46,38 @@ const AssetTile = memo(function AssetTile({
   const isStackPrimary = !!asset.stack && asset.stack.primaryAssetId === asset.id && asset.stack.assetCount > 1;
   const isRaw = isRawAsset(asset);
   // Native dblclick is unreliable for this: some touchpad "double tap" drivers
-  // never synthesize a real dblclick event, only two plain clicks - tracking
-  // this ourselves works uniformly for mouse, touchpad, and touch. A plain
-  // click doesn't select immediately - it's held in a pending timer so a
-  // following second click can cancel it and open instead, without ever
-  // toggling selection first (no select-then-open flicker, and no need to
-  // already be selected before double-clicking/double-tapping to open).
-  const clickTimer = useRef<number | null>(null);
+  // never synthesize a real dblclick event, only two plain clicks - but both
+  // still carry the browser/OS's own click count in `e.detail` (computed by
+  // the platform's double-click timing *before* the event is even dispatched
+  // to us), so reading that instead of a native 'dblclick' listener still
+  // works uniformly for mouse, touchpad, and touch.
+  //
+  // This used to track double-clicks with a manual setTimeout instead - a
+  // pending-first-click flag that a following second click would read within
+  // a fixed window. That raced this component's own render work: applying
+  // the first click's selection (mounting the selection bar, re-rendering
+  // the grid, React StrictMode's double-render in dev) could keep the main
+  // thread busy past the timer's deadline, so by the time the second click's
+  // event handler actually ran, the timer had already fired and cleared the
+  // flag - the second click then read as a fresh first click (re-toggling
+  // selection) instead of a second one, and never opened anything. `e.detail`
+  // sidesteps that entirely: it's decided at dispatch time by the platform,
+  // not raced against whatever this component's last render was doing.
   const [hovered, setHovered] = useState(false);
-
-  useEffect(
-    () => () => {
-      if (clickTimer.current !== null) window.clearTimeout(clickTimer.current);
-    },
-    [],
-  );
 
   const handleClick = (e: React.MouseEvent) => {
     const mods: ClickMods = { shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey };
     const plain = !e.shiftKey && !e.ctrlKey && !e.metaKey;
 
-    if (clickTimer.current !== null) {
-      // Second click within the window - the first click below already
-      // applied the selection, so a plain second click means "open" instead
-      // of toggling again; a modified one (shift/ctrl) toggles a second time,
-      // same as any other modified click.
-      window.clearTimeout(clickTimer.current);
-      clickTimer.current = null;
-      if (plain) onOpen(asset.id);
-      else onToggleSelect(asset.id, mods);
+    // A plain click that's the 2nd+ (or later) of a double/triple-click
+    // means "open" instead of toggling selection again - the first click
+    // already applied it. A modified (shift/ctrl) repeat click just toggles
+    // again, same as any other modified click.
+    if (e.detail >= 2 && plain) {
+      onOpen(asset.id);
       return;
     }
-
-    // Applied immediately - selection must never wait on double-click
-    // detection to feel responsive. The timer below only exists to let a
-    // following second click within the window be read as "open" instead of
-    // a second toggle; it doesn't delay this one.
     onToggleSelect(asset.id, mods);
-    clickTimer.current = window.setTimeout(() => {
-      clickTimer.current = null;
-    }, DOUBLE_CLICK_MS);
   };
 
   return (

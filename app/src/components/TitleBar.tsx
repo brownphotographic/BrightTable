@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import ActivityIndicator from './ActivityIndicator';
 import { useWindowControls } from '../lib/windowControls';
+import appIcon from '../assets/app-icon.png';
 
 const appWindow = getCurrentWindow();
 
@@ -73,14 +74,10 @@ export default function TitleBar({ activeTab, onOpenActivity }: { activeTab: str
       {onLeft && <WindowButtons />}
       {onLeft && <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.12)' }} />}
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0, pointerEvents: 'none' }}>
-        <div
-          style={{
-            width: 18,
-            height: 18,
-            borderRadius: 5,
-            background: 'linear-gradient(135deg, #62a0ea, #1c71d8)',
-            boxShadow: 'inset 0 0 0 1px rgba(255,255,255,.18)',
-          }}
+        <img
+          src={appIcon}
+          alt=""
+          style={{ width: 18, height: 18, borderRadius: 5, display: 'block' }}
         />
         <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}>ImmAture</span>
         <span

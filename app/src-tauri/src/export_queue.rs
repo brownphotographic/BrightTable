@@ -386,7 +386,7 @@ async fn run_one(
     let (bytes, filename, mime) = resolve_rendition(
         &immich,
         library_cfg,
-        &applications_cfg.art_cli_path,
+        &applications_cfg.art.cli_path,
         &applications_cfg.exiftool_path,
         art_queue,
         &work.asset_id,

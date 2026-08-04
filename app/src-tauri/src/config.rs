@@ -265,37 +265,123 @@ impl Default for SmartStackSettings {
     }
 }
 
-/// The user's chosen RAW/external editor, one per role - Preferences →
-/// Applications persists this. `None` until the user picks something in the
-/// app picker; `Viewer.tsx`'s editor buttons redirect there instead of
-/// launching when a role is unset.
+/// Which RAW converter's CLI is currently active for "Tweak RAW Roundtrip"/
+/// "Headless RAW Roundtrip" - Preferences → Applications lets the user
+/// configure all three converters at once (each with its own vertical
+/// sub-tab, own desktop app *and* own CLI path together - see
+/// `RawConverterConfig` - settings preserved when switching between them)
+/// but only one is ever "live" for the roundtrip buttons at a time, matching
+/// how the old single shared `raw_editor` field was already one chosen app
+/// rather than a list. `DarkTable` can be selected and configured like the
+/// other two, but has no working CLI invocation yet -
+/// `ApplicationsConfig::active_raw_cli` returns an error for it, same as an
+/// unconfigured path would for ART/RawTherapee. See `requirements.md`
+/// §1.6/§2.5.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RawConverterKind {
+    Art,
+    RawTherapee,
+    DarkTable,
+}
+
+/// One RAW converter's own settings - its GUI app *and* its CLI path
+/// together, rather than a shared `raw_editor` app picked separately from
+/// which CLI processes the result. Keeping them paired here is deliberate:
+/// launching ART's GUI and then running `rawtherapee-cli` against the
+/// sidecar it wrote (or vice versa) would never actually work, since each
+/// tool's sidecar format (`.arp`/`.pp3`) is its own, so there's no reason to
+/// let the two drift apart in Preferences the way a single shared
+/// `raw_editor` field used to allow.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RawConverterConfig {
+    /// The GUI app "Tweak RAW Roundtrip" opens and waits on before running
+    /// this tool's CLI (or, with no CLI path set, the plain launch-only RAW
+    /// Editor round trip uses this alone) - `None` until chosen in the app
+    /// picker, same "redirect to Preferences instead of launching" contract
+    /// `external_editor` already has.
+    pub app: Option<AppChoice>,
+    /// Path to this tool's CLI binary - a plain string, not an `AppChoice`,
+    /// since there's no `.desktop` entry for a CLI tool to pick from the app
+    /// picker, only a manual file-browse in Preferences → Applications.
+    /// `#[serde(default)]` so a config.json saved before this field existed
+    /// still deserializes cleanly.
+    #[serde(default)]
+    pub cli_path: String,
+}
+
+/// The user's chosen editors - Preferences → Applications persists this.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplicationsConfig {
-    pub raw_editor: Option<AppChoice>,
     pub external_editor: Option<AppChoice>,
-    /// Path to the `ART-cli` binary - a plain string, not an `AppChoice`,
-    /// since there's no `.desktop` entry for it to pick from the app picker,
-    /// only a manual file-browse in Preferences → Applications. A non-empty
-    /// value is the single signal that switches "Tweak RAW Roundtrip"/the new
-    /// "Headless RAW Roundtrip" action over to the ART CLI round trip (see
-    /// `commands::launch_art_round_trip`/`batch_art_round_trip`) - empty
-    /// (the default) means the existing generic round trip's behavior stays
-    /// byte-for-byte unchanged. `#[serde(default)]` so existing config.json
-    /// files (saved before this field existed) still deserialize cleanly.
+    /// Which converter's own config (below) actually drives "Tweak RAW
+    /// Roundtrip"/"Headless RAW Roundtrip"/the plain launch-only RAW Editor
+    /// role - `None` (the default) means no RAW Editor app is configured at
+    /// all, same "redirect to Preferences" contract `external_editor` unset
+    /// already has. `#[serde(default)]` so existing config.json files still
+    /// deserialize cleanly; `config::load`'s migration step sets this to
+    /// `Some(Art)` for an old config that had a `rawEditor` app and/or a
+    /// non-empty ART-cli path under the pre-per-converter shapes this config
+    /// went through, so upgrading needs no re-configuration.
     #[serde(default)]
-    pub art_cli_path: String,
-    /// Path to the `exiftool` binary - same shape as `art_cli_path` (a
-    /// plain string, manual file-browse only, no `.desktop` entry to pick
+    pub active_raw_converter: Option<RawConverterKind>,
+    #[serde(default)]
+    pub art: RawConverterConfig,
+    #[serde(default)]
+    pub rawtherapee: RawConverterConfig,
+    /// Persisted the same as the other two so the user's Preferences entry
+    /// survives switching the active converter back and forth, but not yet
+    /// read by any working roundtrip command (`ApplicationsConfig::active_raw_cli`
+    /// errors for `RawConverterKind::DarkTable`) - darktable's processing
+    /// history lives inside the same `.xmp` sidecar `paths.rs` already
+    /// reads/writes for rating/description, which needs its own
+    /// surgical-merge support before a CLI round trip can invoke it safely
+    /// (see `paths::find_processing_sidecar`'s doc comment). Tracked as
+    /// planned scope in `requirements.md` §1.6/§2.4.
+    #[serde(default)]
+    pub darktable: RawConverterConfig,
+    /// Path to the `exiftool` binary - same shape as each `RawConverterConfig::cli_path`
+    /// (a plain string, manual file-browse only, no `.desktop` entry to pick
     /// from). A non-empty value is required by the Export to Folder/Share to
     /// Flickr dialogs' "Keep all metadata"/"Remove GPS only" options (see
     /// `export_queue.rs`/`exiftool.rs`) - "Strip all metadata" needs no
     /// external tool for a JPEG-format rendition (the `image` crate re-encode
     /// already drops everything), so it works with this unset.
-    /// `#[serde(default)]` for the same old-config.json-compatibility reason
-    /// as `art_cli_path`.
+    /// `#[serde(default)]` for the same old-config.json-compatibility reason.
     #[serde(default)]
     pub exiftool_path: String,
+}
+
+impl ApplicationsConfig {
+    /// Resolves the active converter's CLI path, or an error describing why
+    /// no RAW CLI round trip is available right now - the single place
+    /// `commands::launch_raw_cli_round_trip`/`batch_raw_cli_round_trip` (and
+    /// the frontend's `rawRoundTripEnabled`, mirrored in `lib/applications.tsx`)
+    /// decide this, so the two can't drift apart.
+    pub fn active_raw_cli(&self) -> Result<(RawConverterKind, &str), String> {
+        match self.active_raw_converter {
+            None => Err("No RAW converter chosen — pick one in Preferences → Applications".into()),
+            Some(RawConverterKind::Art) => {
+                if self.art.cli_path.trim().is_empty() {
+                    Err("No ART-cli path configured — set one in Preferences → Applications".into())
+                } else {
+                    Ok((RawConverterKind::Art, self.art.cli_path.as_str()))
+                }
+            }
+            Some(RawConverterKind::RawTherapee) => {
+                if self.rawtherapee.cli_path.trim().is_empty() {
+                    Err("No RawTherapee-cli path configured — set one in Preferences → Applications".into())
+                } else {
+                    Ok((RawConverterKind::RawTherapee, self.rawtherapee.cli_path.as_str()))
+                }
+            }
+            Some(RawConverterKind::DarkTable) => {
+                Err("DarkTable CLI round trip isn't implemented yet — choose ART or RawTherapee in Preferences → Applications".into())
+            }
+        }
+    }
 }
 
 /// Last-used SD-card/disk import settings - the chosen folder hierarchy and
@@ -351,10 +437,66 @@ pub fn load(app: &AppHandle) -> AppConfig {
     let Ok(path) = config_path(app, &default_cfg) else {
         return default_cfg;
     };
-    match fs::read_to_string(&path) {
-        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-        Err(_) => default_cfg,
+    let Ok(raw) = fs::read_to_string(&path) else {
+        return default_cfg;
+    };
+    let mut cfg: AppConfig = serde_json::from_str(&raw).unwrap_or_default();
+
+    // Migrates a config.json saved under either of two shapes this app went
+    // through before settling on `RawConverterConfig` (app + CLI path
+    // together, per converter): the original ART-only shape (a single shared
+    // `applications.rawEditor` app plus a flat `applications.artCliPath`),
+    // and a brief intermediate shape with flat per-tool `*CliPath` fields but
+    // still one shared `rawEditor`. Serde already silently dropped whichever
+    // of these legacy keys it found (unknown fields are ignored, not an
+    // error) and left the new `art`/`rawtherapee`/`darktable` structs at
+    // their all-empty `Default` above - re-reading the raw JSON `Value`
+    // directly recovers them into their new per-converter home instead of
+    // silently losing an existing user's setup on upgrade.
+    if let Ok(raw_value) = serde_json::from_str::<serde_json::Value>(&raw) {
+        if let Some(applications) = raw_value.get("applications") {
+            // A pre-existing `rawEditor` was necessarily ART's own GUI (ART
+            // was the only converter this app ever supported before
+            // RawTherapee/DarkTable existed) - migrated into `art.app`
+            // specifically, whether or not `artCliPath` was also set (a
+            // user in plain launch-only mode, no CLI configured at all, gets
+            // their editor choice preserved here just as faithfully).
+            if cfg.applications.art.app.is_none() {
+                if let Some(app_value) = applications.get("rawEditor") {
+                    if let Ok(app_choice) = serde_json::from_value::<AppChoice>(app_value.clone()) {
+                        cfg.applications.art.app = Some(app_choice);
+                    }
+                }
+            }
+            if cfg.applications.art.cli_path.trim().is_empty() {
+                if let Some(p) = applications.get("artCliPath").and_then(|v| v.as_str()) {
+                    cfg.applications.art.cli_path = p.to_string();
+                }
+            }
+            if cfg.applications.rawtherapee.cli_path.trim().is_empty() {
+                if let Some(p) = applications.get("rawtherapeeCliPath").and_then(|v| v.as_str()) {
+                    cfg.applications.rawtherapee.cli_path = p.to_string();
+                }
+            }
+            if cfg.applications.darktable.cli_path.trim().is_empty() {
+                if let Some(p) = applications.get("darktableCliPath").and_then(|v| v.as_str()) {
+                    cfg.applications.darktable.cli_path = p.to_string();
+                }
+            }
+        }
     }
+    // A non-empty `art.app`/`art.cli_path` recovered above (from either
+    // legacy shape) used to mean "ART is the editor in use" all by itself,
+    // with no explicit `active_raw_converter` concept existing at all -
+    // preserve that exact behavior for an existing user rather than
+    // silently leaving the RAW Editor role unconfigured until they revisit
+    // Preferences.
+    if cfg.applications.active_raw_converter.is_none()
+        && (cfg.applications.art.app.is_some() || !cfg.applications.art.cli_path.trim().is_empty())
+    {
+        cfg.applications.active_raw_converter = Some(RawConverterKind::Art);
+    }
+    cfg
 }
 
 pub fn save(app: &AppHandle, cfg: &AppConfig) -> Result<(), String> {

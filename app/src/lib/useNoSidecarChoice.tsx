@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { cancelArtRoundTrip, finishArtRoundTripWithDefaultProfile, type ArtRoundTripOutcome } from './api';
+import { cancelRawCliRoundTrip, finishRawCliRoundTripWithDefaultProfile, type ArtRoundTripOutcome } from './api';
 import NoSidecarDialog from '../components/NoSidecarDialog';
 
 interface PendingChoice {
@@ -9,15 +9,16 @@ interface PendingChoice {
 }
 
 // Shared by Viewer.tsx/PhotosBrowser.tsx/FoldersBrowser.tsx's single "Tweak
-// RAW Roundtrip" flow (Variant 1 of the ART CLI round trip): `resolve` turns
-// launchArtRoundTrip's ArtRoundTripOutcome into the id of the ArtQueue job
+// RAW Roundtrip" flow (Variant 1 of the RAW CLI round trip): `resolve` turns
+// launchRawCliRoundTrip's ArtRoundTripOutcome into the id of the ArtQueue job
 // now running the export in the background - the caller tracks it via
 // useArtJobReconciliation exactly like a Variant 2 job, same as when the
 // outcome is `processing` already - except when the outcome is `noSidecar`
-// (ART closed with no edit made or saved), where it shows NoSidecarDialog and
-// waits for the user's choice before kicking that job off. Rejects with a
-// clear message if the user cancels - callers' existing try/catch around the
-// launchArtRoundTrip call handles it exactly like any other launch failure.
+// (the editor closed with no edit made or saved), where it shows
+// NoSidecarDialog and waits for the user's choice before kicking that job
+// off. Rejects with a clear message if the user cancels - callers' existing
+// try/catch around the launchRawCliRoundTrip call handles it exactly like any
+// other launch failure.
 export function useNoSidecarChoice() {
   const [pending, setPending] = useState<PendingChoice | null>(null);
   const settleRef = useRef<{ resolve: (jobId: number) => void; reject: (e: unknown) => void } | null>(null);
@@ -37,7 +38,7 @@ export function useNoSidecarChoice() {
   const handlePrimary = useCallback(async () => {
     if (!pending) return;
     const { jobId, rawPath, exportPath } = pending;
-    await finishArtRoundTripWithDefaultProfile(jobId, rawPath, exportPath);
+    await finishRawCliRoundTripWithDefaultProfile(jobId, rawPath, exportPath);
     setPending(null);
     settleRef.current?.resolve(jobId);
   }, [pending]);
@@ -46,8 +47,8 @@ export function useNoSidecarChoice() {
     if (!pending) return;
     const { jobId, exportPath } = pending;
     setPending(null);
-    await cancelArtRoundTrip(jobId, exportPath).catch(() => {});
-    settleRef.current?.reject(new Error('Cancelled — no edits were saved in ART for this photo'));
+    await cancelRawCliRoundTrip(jobId, exportPath).catch(() => {});
+    settleRef.current?.reject(new Error('Cancelled — no edits were saved for this photo'));
   }, [pending]);
 
   const dialog = pending ? <NoSidecarDialog onPrimary={handlePrimary} onSecondary={handleSecondary} /> : null;

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { clearCompletedArtJobs, getArtQueueStatus, type ArtJob } from './api';
+import { clearCompletedRawCliJobs, getRawCliQueueStatus, type ArtJob } from './api';
 
 interface ArtQueueContextValue {
   jobs: ArtJob[];
@@ -48,7 +48,7 @@ export function ArtQueueProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     const poll = () => {
-      getArtQueueStatus()
+      getRawCliQueueStatus()
         .then((status) => {
           if (cancelled) return;
           setJobs(status.jobs);
@@ -80,7 +80,7 @@ export function ArtQueueProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearCompleted = useCallback(() => {
-    clearCompletedArtJobs()
+    clearCompletedRawCliJobs()
       .then(() => setJobs((js) => js.filter((j) => j.status === 'pending' || j.status === 'running')))
       .catch(() => {});
   }, []);

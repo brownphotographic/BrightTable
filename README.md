@@ -1,3 +1,5 @@
+<img src="screenshots/icon.png" width="96" height="96" alt="ImmAture icon" />
+
 # ImmAture
 
 **An LLM coded project. Human generated requirements and testing.**

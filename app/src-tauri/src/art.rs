@@ -7,7 +7,7 @@
 //! Every flag used here (`-o`, `-j<n>`, `-Y`, `-V`, `--progress`, `-s`,
 //! `-d -S`, `-c`) is confirmed against a real `ART-cli -x` usage dump (ART
 //! 1.26.7) - `-j92` (no space) is correct, and each mode layers as
-//! `ArtCliMode`'s own doc comments describe. What's still unconfirmed: the
+//! `SidecarCliMode`'s own doc comments describe. What's still unconfirmed: the
 //! GUI-mode launch flags for `ART` itself (as opposed to `ART-cli`) - out of
 //! scope for this module, which only ever invokes `ART-cli`.
 //!
@@ -18,81 +18,33 @@
 //! ("sidecar file requested but not found") and falls back to neutral
 //! values, exiting **0**; `-d -S` together instead exits non-zero with
 //! "Error: no sidecar procparams found for: ...". Both are handled correctly
-//! today (`ApplySidecar`'s pre-check in `commands::launch_art_round_trip`
+//! today (`ApplySidecar`'s pre-check in `commands::launch_raw_cli_round_trip`
 //! means `-s` is never actually reached without a sidecar in practice, and
 //! `art_queue::mode_for_sidecar` now avoids `-S` entirely for a target
 //! already confirmed to have none) - documented here so a future change to
 //! either doesn't reintroduce the mismatch blind.
 
 use std::path::Path;
-use std::process::Stdio;
 
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::watch;
 
+use crate::cli_process::{self, SidecarCliMode};
 use crate::exiftool;
 use crate::paths;
 
-/// The exact error text `run_art_cli_with_progress` returns when `cancel`
-/// fires - `art_queue.rs`'s `finish` and `commands.rs`'s Variant 1 handlers
-/// both just thread this straight through as the job's `error`, same as any
-/// other `ART-cli` failure, so a cancelled job reads "Failed" with this
-/// message rather than needing its own `ArtJobStatus` variant. Exposed as a
-/// constant (rather than repeating the literal) so the frontend's "was this
-/// cancelled, not really a failure" check and this fn's own tests can't drift
-/// apart.
-pub const CANCELLED_BY_USER: &str = "Cancelled by user";
+/// Re-exported under their original names - `art_queue.rs`, `commands.rs`,
+/// and `export_queue.rs`'s independent (Export to Folder's own RAW-to-JPEG
+/// conversion) call sites all still refer to these as `art::CANCELLED_BY_USER`/
+/// `art::ART_CLI_RUN_TIMEOUT`. The values now live in `cli_process.rs` since
+/// neither is actually ART-specific (`rawtherapee.rs` uses both too), but
+/// re-exporting here avoids rippling the rename through every existing call
+/// site for values that didn't change meaning.
+pub use crate::cli_process::CANCELLED_BY_USER;
+pub use crate::cli_process::RAW_CLI_RUN_TIMEOUT as ART_CLI_RUN_TIMEOUT;
 
 /// Fixed JPEG export quality for v1 - no Preferences control for
 /// format/quality yet (batch export format is fixed per the plan).
 const JPEG_QUALITY: u8 = 92;
-
-/// Bounds how long a caller should wait on one `ART-cli` invocation before
-/// giving up - demosaic/denoise on a full-resolution RAW, especially with a
-/// heavy sidecar profile and writing the output over a slow NFS/network
-/// mount, can legitimately run for several minutes (confirmed live: ~95% CPU,
-/// ~2GB RSS, several minutes elapsed for one real-world export during
-/// testing) - generous enough not to falsely time out real work, while still
-/// eventually surfacing an error instead of leaving the UI showing "Working…"
-/// forever with zero feedback for a genuinely hung process. Same "don't hang
-/// forever on an unreachable NFS mount" reasoning as
-/// `commands::IMPORT_SCAN_TIMEOUT`, just a different (much longer-running)
-/// operation. The child process itself is left running in the background on
-/// timeout, not killed - same trade-off `commands::scan_import_source`'s own
-/// doc comment already accepts for its abandoned blocking task.
-pub const ART_CLI_RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20 * 60);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArtCliMode {
-    /// Variant 1 (interactive round trip): use the raw's own sidecar - ART
-    /// itself just wrote it, from the user's edit inside the GUI. ART-cli's
-    /// `-s`. `commands::launch_art_round_trip` already confirms via
-    /// `paths::find_processing_sidecar` that a sidecar exists before ever
-    /// using this mode, so in practice `-s` always finds one - but confirmed
-    /// live, if it somehow didn't (e.g. a race where the sidecar is deleted
-    /// between that check and `ART-cli` actually running), plain `-s` does
-    /// *not* error: it just warns and falls back to neutral values, exiting
-    /// 0. `classify_exit`'s "no sidecar procparams found" match against this
-    /// mode's stderr is therefore a defensive fallback that real `-s` never
-    /// actually triggers, not the primary way `ApplySidecar` reports "nothing
-    /// to export" (the upfront check is).
-    ApplySidecar,
-    /// Variant 2 (batch round trip): start from the user's ART default
-    /// profile, then layer each asset's own sidecar over it if one exists.
-    /// ART-cli's `-d -S`. Confirmed live: unlike `-s` above, `-S` does *not*
-    /// silently skip to the default profile when there's no sidecar - it
-    /// exits non-zero with "no sidecar procparams found", same message
-    /// `classify_exit` maps for `ApplySidecar`. Only ever built for a target
-    /// `art_queue::mode_for_sidecar` already knows has a sidecar - see
-    /// `DefaultOnly` for the sidecar-less case.
-    DefaultThenSidecarOverride,
-    /// The user explicitly chose "use ART's default processing profile" from
-    /// the no-sidecar prompt (`commands::launch_art_round_trip` already
-    /// confirmed via `paths::find_processing_sidecar` that none exists before
-    /// ever offering this choice) - plain `-d`, no `-s`/`-S` at all, since
-    /// there's nothing to layer over it.
-    DefaultOnly,
-}
 
 /// Pure argv construction for one `ART-cli` invocation - isolated from
 /// `run_art_cli`/`run_art_cli_with_progress` specifically so the flag syntax
@@ -105,7 +57,7 @@ pub enum ArtCliMode {
 /// (`run_art_cli` never reads stdout at all), so that
 /// `run_art_cli_with_progress` can report live percentage as ART-cli's own
 /// zenity-compatible progress protocol emits it.
-pub fn build_art_cli_args(mode: ArtCliMode, export_path: &Path, raw_path: &Path) -> Vec<String> {
+pub fn build_art_cli_args(mode: SidecarCliMode, export_path: &Path, raw_path: &Path) -> Vec<String> {
     let mut args = vec![
         "-o".to_string(),
         export_path.to_string_lossy().to_string(),
@@ -115,12 +67,12 @@ pub fn build_art_cli_args(mode: ArtCliMode, export_path: &Path, raw_path: &Path)
         "--progress".to_string(),
     ];
     match mode {
-        ArtCliMode::ApplySidecar => args.push("-s".to_string()),
-        ArtCliMode::DefaultThenSidecarOverride => {
+        SidecarCliMode::ApplySidecar => args.push("-s".to_string()),
+        SidecarCliMode::DefaultThenSidecarOverride => {
             args.push("-d".to_string());
             args.push("-S".to_string());
         }
-        ArtCliMode::DefaultOnly => args.push("-d".to_string()),
+        SidecarCliMode::DefaultOnly => args.push("-d".to_string()),
     }
     args.push("-c".to_string());
     args.push(raw_path.to_string_lossy().to_string());
@@ -155,57 +107,11 @@ pub fn build_art_cli_args(mode: ArtCliMode, export_path: &Path, raw_path: &Path)
 /// die - same "abandon it, don't block on it" trade-off `ART_CLI_RUN_TIMEOUT`'s
 /// own doc comment already accepts for the timeout case, just reached sooner
 /// and with a kill signal at least attempted.
-pub async fn run_art_cli_with_progress<F>(art_cli_path: &str, args: &[String], mut on_progress: F, mut cancel: watch::Receiver<bool>) -> Result<(), String>
+pub async fn run_art_cli_with_progress<F>(art_cli_path: &str, args: &[String], on_progress: F, cancel: watch::Receiver<bool>) -> Result<(), String>
 where
     F: FnMut(u8) + Send,
 {
-    let mut child = tokio::process::Command::new(art_cli_path)
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Couldn't run ART-cli: {e}"))?;
-
-    if *cancel.borrow() {
-        let _ = child.start_kill();
-        return Err(CANCELLED_BY_USER.to_string());
-    }
-
-    let stdout = child.stdout.take().expect("stdout was piped");
-    let mut stderr = child.stderr.take().expect("stderr was piped");
-    let stderr_handle = tauri::async_runtime::spawn(async move {
-        let mut buf = Vec::new();
-        let _ = stderr.read_to_end(&mut buf).await;
-        buf
-    });
-
-    let mut lines = BufReader::new(stdout).lines();
-    loop {
-        tokio::select! {
-            line = lines.next_line() => {
-                match line {
-                    Ok(Some(l)) => {
-                        if let Ok(percent) = l.trim().parse::<u8>() {
-                            if percent <= 100 {
-                                on_progress(percent);
-                            }
-                        }
-                    }
-                    _ => break,
-                }
-            }
-            _ = cancel.changed() => {
-                if *cancel.borrow() {
-                    let _ = child.start_kill();
-                    return Err(CANCELLED_BY_USER.to_string());
-                }
-            }
-        }
-    }
-
-    let status = child.wait().await.map_err(|e| format!("Couldn't wait for ART-cli: {e}"))?;
-    let stderr_bytes = stderr_handle.await.unwrap_or_default();
-    classify_exit(status, &stderr_bytes)
+    cli_process::run_cli_with_progress(art_cli_path, "ART-cli", args, on_progress, cancel, classify_exit).await
 }
 
 fn classify_exit(status: std::process::ExitStatus, stderr_bytes: &[u8]) -> Result<(), String> {
@@ -239,7 +145,7 @@ fn classify_exit(status: std::process::ExitStatus, stderr_bytes: &[u8]) -> Resul
         // sidecar (it warns and falls back to neutral values instead, exit
         // 0), so this remains a defensive catch-all for both modes rather
         // than the primary way either reports "nothing to export".
-        // `commands::launch_art_round_trip` already checks with
+        // `commands::launch_raw_cli_round_trip` already checks with
         // `paths::find_processing_sidecar` *before* ever running ART-cli in
         // `ApplySidecar` mode, offering the user a choice (default profile
         // vs. cancel) instead of reaching this branch at all in the common
@@ -268,7 +174,7 @@ const EXIV2_CRASH_ERROR_PREFIX: &str = "ART-cli crashed reading this RAW file's 
 /// single-threaded caller).
 ///
 /// Only used in two places now, both on paths where a blind retry is
-/// actually worth its ~30-60s-per-attempt cost: `finish_art_round_trip_with_default_profile`
+/// actually worth its ~30-60s-per-attempt cost: `finish_raw_cli_round_trip_with_default_profile`
 /// (`DefaultOnly`, no sidecar - there's no known fix to fall back to, so
 /// retrying the only option available is all that can be done), and the
 /// *patched* `Mode=0` attempt inside `run_art_cli_with_metadata_fallback`
@@ -285,7 +191,7 @@ const EXIV2_CRASH_RETRIES: u32 = 4;
 /// (up to `EXIV2_CRASH_RETRIES` extra attempts) when it fails with the
 /// racy Exiv2 crash `EXIV2_CRASH_RETRIES`'s doc comment describes - every
 /// other error (including cancellation) is returned immediately, same as a
-/// single `run_art_cli_with_progress` call. `finish_art_round_trip_with_default_profile`
+/// single `run_art_cli_with_progress` call. `finish_raw_cli_round_trip_with_default_profile`
 /// calls this directly (see `EXIV2_CRASH_RETRIES`'s doc comment for why);
 /// `run_art_cli_with_metadata_fallback` calls this only for its own patched
 /// `Mode=0` fallback attempt, not for the original `Mode=1` one. The plain
@@ -455,7 +361,7 @@ pub async fn run_art_cli_with_metadata_fallback<F>(
     exiftool_path: &str,
     raw_path: &Path,
     export_path: &Path,
-    mode: ArtCliMode,
+    mode: SidecarCliMode,
     mut on_progress: F,
     cancel: watch::Receiver<bool>,
 ) -> Result<(), String>
@@ -534,7 +440,7 @@ mod tests {
 
     #[test]
     fn build_art_cli_args_apply_sidecar_mode() {
-        let args = build_art_cli_args(ArtCliMode::ApplySidecar, Path::new("/out/IMG_1_converted-1.jpg"), Path::new("/raw/IMG_1.DNG"));
+        let args = build_art_cli_args(SidecarCliMode::ApplySidecar, Path::new("/out/IMG_1_converted-1.jpg"), Path::new("/raw/IMG_1.DNG"));
         assert_eq!(
             args,
             vec![
@@ -553,7 +459,7 @@ mod tests {
 
     #[test]
     fn build_art_cli_args_default_then_sidecar_override_mode() {
-        let args = build_art_cli_args(ArtCliMode::DefaultThenSidecarOverride, Path::new("/out/x.jpg"), Path::new("/raw/x.DNG"));
+        let args = build_art_cli_args(SidecarCliMode::DefaultThenSidecarOverride, Path::new("/out/x.jpg"), Path::new("/raw/x.DNG"));
         assert_eq!(
             args,
             vec![
@@ -573,7 +479,7 @@ mod tests {
 
     #[test]
     fn build_art_cli_args_default_only_mode() {
-        let args = build_art_cli_args(ArtCliMode::DefaultOnly, Path::new("/out/x.jpg"), Path::new("/raw/x.DNG"));
+        let args = build_art_cli_args(SidecarCliMode::DefaultOnly, Path::new("/out/x.jpg"), Path::new("/raw/x.DNG"));
         assert_eq!(
             args,
             vec![
@@ -935,7 +841,7 @@ mod tests {
                 exiftool_stub.to_str().unwrap(),
                 &raw_path,
                 &export_path,
-                ArtCliMode::ApplySidecar,
+                SidecarCliMode::ApplySidecar,
                 |_| {},
                 no_cancel(),
             )
@@ -977,7 +883,7 @@ mod tests {
         );
 
         let result = retrying_on_text_file_busy(|| {
-            run_art_cli_with_metadata_fallback(script.to_str().unwrap(), "", &raw_path, &export_path, ArtCliMode::ApplySidecar, |_| {}, no_cancel())
+            run_art_cli_with_metadata_fallback(script.to_str().unwrap(), "", &raw_path, &export_path, SidecarCliMode::ApplySidecar, |_| {}, no_cancel())
         })
         .await;
         let err = result.unwrap_err();
@@ -1038,7 +944,7 @@ mod tests {
         let art_cli = write_default_mode_fallback_aware_stub(&dir, &calls_log, &profile_copy);
 
         let result = retrying_on_text_file_busy(|| {
-            run_art_cli_with_metadata_fallback(art_cli.to_str().unwrap(), "", &raw_path, &export_path, ArtCliMode::DefaultOnly, |_| {}, no_cancel())
+            run_art_cli_with_metadata_fallback(art_cli.to_str().unwrap(), "", &raw_path, &export_path, SidecarCliMode::DefaultOnly, |_| {}, no_cancel())
         })
         .await;
         assert!(result.is_ok(), "{result:?}");
@@ -1067,7 +973,7 @@ mod tests {
         let script = write_stub_script(&dir, "art-cli-deterministic-fail.sh", "#!/bin/sh\necho 'some other error' >&2\nexit 1\n");
 
         let result = retrying_on_text_file_busy(|| {
-            run_art_cli_with_metadata_fallback(script.to_str().unwrap(), "", &raw_path, &export_path, ArtCliMode::ApplySidecar, |_| {}, no_cancel())
+            run_art_cli_with_metadata_fallback(script.to_str().unwrap(), "", &raw_path, &export_path, SidecarCliMode::ApplySidecar, |_| {}, no_cancel())
         })
         .await;
         assert_eq!(result, Err("some other error".to_string()));

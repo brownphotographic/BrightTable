@@ -7,6 +7,7 @@ use crate::io_guard::IoGuard;
 use crate::processing_queue::ProcessingQueue;
 use crate::round_trip::RoundTripWatcher;
 use std::sync::{Arc, Mutex};
+use sysinfo::System;
 
 pub struct AppState {
     pub config: Mutex<AppConfig>,
@@ -51,6 +52,14 @@ pub struct AppState {
     /// `export_queue.rs`. Same "spawned once from `.setup()`" pattern as
     /// the other background queues.
     pub export_queue: Arc<ExportQueue>,
+    /// Kept alive across polls (rather than a fresh `System` per call) so
+    /// `Process::cpu_usage()` has a previous sample to diff against - see
+    /// `commands::get_resource_usage`.
+    pub resource_monitor: Mutex<System>,
+    /// Logical CPU count, sampled once at startup - normalizes
+    /// `Process::cpu_usage()` (100 = one core) down to 0-100 of total
+    /// system capacity for `get_resource_usage`.
+    pub num_cpus: usize,
 }
 
 impl AppState {
@@ -79,6 +88,8 @@ impl AppState {
             processing_queue,
             art_queue,
             export_queue,
+            resource_monitor: Mutex::new(System::new()),
+            num_cpus: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
         }
     }
 

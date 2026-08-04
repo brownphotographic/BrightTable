@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useDeferredValue, useEffect, useImperativeHand
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { listen } from '@tauri-apps/api/event';
 import {
-  batchArtRoundTrip,
+  batchRawCliRoundTrip,
   checkSidecarMetadata,
   createStack,
   deleteAssets,
@@ -10,7 +10,7 @@ import {
   getStack,
   getTimelineBuckets,
   getTimelineBucketAssets,
-  launchArtRoundTrip,
+  launchRawCliRoundTrip,
   launchEditor,
   listStacks,
   pasteImageProcessing,
@@ -761,7 +761,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // `failed` job surfaces its error in the same banner a synchronous
   // rejection would. Declared before launchEditorForSelection since Variant
   // 1's own launch now just kicks the export off in the background
-  // (launch_art_round_trip returns as soon as it's running, not once it's
+  // (launch_raw_cli_round_trip returns as soon as it's running, not once it's
   // done - see its own doc comment) and relies on this same reconciliation
   // to pick up the result, instead of awaiting the export inline.
   const { jobs: artJobs } = useArtQueue();
@@ -796,7 +796,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // (same redirect-to-Preferences-when-unconfigured behavior and ART CLI
   // round-trip branch), just sourced from the selection bar's one selected
   // asset instead of the open asset.
-  const { applications, artRoundTripEnabled } = useApplications();
+  const { applications, activeRawEditorApp, rawRoundTripEnabled } = useApplications();
   // True while ART itself is open for the selection bar's single selected
   // asset (and briefly after, while the export path/sidecar are resolved) -
   // see SelectionBar.tsx's rawEditorBusy prop. Cleared as soon as the
@@ -809,16 +809,16 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   const launchEditorForSelection = useCallback(
     async (role: 'rawEditor' | 'externalEditor') => {
       if (selectedAssets.length !== 1) return;
-      const choice = applications[role];
+      const choice = role === 'rawEditor' ? activeRawEditorApp : applications.externalEditor;
       if (!choice) {
         onOpenApplicationsPreferences?.();
         return;
       }
       const asset = selectedAssets[0];
-      if (role === 'rawEditor' && artRoundTripEnabled) {
+      if (role === 'rawEditor' && rawRoundTripEnabled) {
         setArtLaunchBusy(true);
         try {
-          const rtOutcome = await launchArtRoundTrip(asset.id, asset.originalPath, asset.fileName, asset.fileExtension, choice);
+          const rtOutcome = await launchRawCliRoundTrip(asset.id, asset.originalPath, asset.fileName, asset.fileExtension, choice);
           const jobId = await resolveArtRoundTripOutcome(rtOutcome);
           trackArtJobs([jobId]);
         } finally {
@@ -828,7 +828,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       }
       await launchEditor(asset.originalPath, choice, asset.id, asset.fileName);
     },
-    [selectedAssets, applications, artRoundTripEnabled, onOpenApplicationsPreferences, resolveArtRoundTripOutcome, trackArtJobs],
+    [selectedAssets, applications, activeRawEditorApp, rawRoundTripEnabled, onOpenApplicationsPreferences, resolveArtRoundTripOutcome, trackArtJobs],
   );
 
   // Writes each id's sidecar/embedded-discovered rating and/or description
@@ -934,7 +934,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
 
   // Headless RAW Roundtrip (ART CLI round trip Variant 2) - fully headless,
   // background-queued export of one or more RAW assets at once. Only
-  // reachable when artRoundTripEnabled (see PreferencesApplications.tsx).
+  // reachable when rawRoundTripEnabled (see PreferencesApplications.tsx).
   // RAW-filtered here (not left to the backend) for the same reason
   // requestPasteImageProcessing is: the confirm dialog's count should
   // reflect what's really about to be exported. artJobs/reconcileArtJob/
@@ -959,7 +959,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
         const a = assetByIdAll.get(id)!;
         return { id, originalPath: a.originalPath, fileName: a.fileName, fileExtension: a.fileExtension };
       });
-      const jobIds = await batchArtRoundTrip(targets);
+      const jobIds = await batchRawCliRoundTrip(targets);
       trackArtJobs(jobIds);
       setSelected(new Set());
     },
@@ -968,7 +968,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
 
   // Some selected RAW photos may have no saved ART edits at all (no
   // `.arp`/`.pp3` next to the RAW) - rather than silently exporting those
-  // with ART's default profile the way batch_art_round_trip's `-d -S` already
+  // with ART's default profile the way batch_raw_cli_round_trip's `-d -S` already
   // would, this surfaces the choice explicitly once the outer "Headless RAW
   // Roundtrip?" confirm above is accepted: export everyone (default profile
   // for the affected ones) or exclude just the affected ones from this batch.
@@ -1001,7 +1001,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     // for this one warning-dialog judgment call by the context-menu-open
     // live recheck effect below and by reconcileArtJob/reconcileProcessingJob
     // updating it the moment a real sidecar is written - and even a stale
-    // "no sidecar" read here can't cause data loss, since batch_art_round_trip
+    // "no sidecar" read here can't cause data loss, since batch_raw_cli_round_trip
     // itself still re-checks each target's sidecar on disk before deciding
     // whether to apply the default profile.
     const withoutSidecarCount = targets.filter((id) => !assetByIdAll.get(id)?.hasProcessingSidecar).length;
@@ -1088,7 +1088,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
         onClick: () => requestPasteImageProcessing(pasteTargetIds),
       });
     }
-    if (artRoundTripEnabled) {
+    if (rawRoundTripEnabled) {
       const rawTargetIds = pasteTargetIds.filter((id) => {
         const a = assetByIdAll.get(id);
         return !!a && isRawAsset(a);
@@ -1139,7 +1139,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     requestPasteImageProcessing,
     handleCopyMetadata,
     handlePasteMetadata,
-    artRoundTripEnabled,
+    rawRoundTripEnabled,
     requestBatchArtRoundTrip,
   ]);
 
@@ -1547,14 +1547,14 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           canPasteMetadata={!!copiedMetadata}
           onPasteMetadata={() => handlePasteMetadata([...selected])}
           rawSelectedCount={
-            artRoundTripEnabled
+            rawRoundTripEnabled
               ? [...selected].filter((id) => {
                   const a = assetByIdAll.get(id);
                   return !!a && isRawAsset(a);
                 }).length
               : undefined
           }
-          onBatchArtRoundTrip={artRoundTripEnabled ? () => requestBatchArtRoundTrip([...selected]) : undefined}
+          onBatchArtRoundTrip={rawRoundTripEnabled ? () => requestBatchArtRoundTrip([...selected]) : undefined}
           onAddToAlbum={() => setAddToAlbumTargets([...selected])}
           onAddToTag={() => setAddToTagTargets([...selected])}
         />

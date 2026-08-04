@@ -12,7 +12,7 @@ const EditQueueContext = createContext<EditQueueContextValue | null>(null);
 const POLL_MS = 1000;
 
 // Polls get_edit_queue_status on a plain interval (same shape as
-// useMemoryUsage.ts) rather than a Tauri event stream per edit - the queue
+// useResourceUsage.ts) rather than a Tauri event stream per edit - the queue
 // is already fully decoupled from the optimistic UI (see edit_queue.rs), so
 // a transition missed or coalesced between polls only affects how
 // granularly "in progress" briefly renders, never correctness. Polled once

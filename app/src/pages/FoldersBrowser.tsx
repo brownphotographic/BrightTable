@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
-  batchArtRoundTrip,
+  batchRawCliRoundTrip,
   checkSidecarMetadata,
   createStack,
   deleteAssets,
@@ -9,7 +9,7 @@ import {
   getFolderAssets,
   getFolderPaths,
   getStack,
-  launchArtRoundTrip,
+  launchRawCliRoundTrip,
   launchEditor,
   listStacks,
   pasteImageProcessing,
@@ -668,7 +668,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // `failed` job surfaces its error in the same banner a synchronous
   // rejection would. Declared before launchEditorForSelection since Variant
   // 1's own launch now just kicks the export off in the background
-  // (launch_art_round_trip returns as soon as it's running, not once it's
+  // (launch_raw_cli_round_trip returns as soon as it's running, not once it's
   // done - see its own doc comment) and relies on this same reconciliation
   // to pick up the result, instead of awaiting the export inline.
   const { jobs: artJobs } = useArtQueue();
@@ -701,8 +701,8 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
 
   // See PhotosBrowser.tsx's identical callback for the full explanation -
   // launch-only, single-asset, redirects to Preferences when unconfigured,
-  // branches to the ART CLI round trip when artRoundTripEnabled.
-  const { applications, artRoundTripEnabled } = useApplications();
+  // branches to the ART CLI round trip when rawRoundTripEnabled.
+  const { applications, activeRawEditorApp, rawRoundTripEnabled } = useApplications();
   // True while ART itself is open for the selection bar's single selected
   // asset (and briefly after, while the export path/sidecar are resolved) -
   // see SelectionBar.tsx's rawEditorBusy prop. Cleared as soon as the
@@ -714,16 +714,16 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   const launchEditorForSelection = useCallback(
     async (role: 'rawEditor' | 'externalEditor') => {
       if (selectedAssets.length !== 1) return;
-      const choice = applications[role];
+      const choice = role === 'rawEditor' ? activeRawEditorApp : applications.externalEditor;
       if (!choice) {
         onOpenApplicationsPreferences?.();
         return;
       }
       const asset = selectedAssets[0];
-      if (role === 'rawEditor' && artRoundTripEnabled) {
+      if (role === 'rawEditor' && rawRoundTripEnabled) {
         setArtLaunchBusy(true);
         try {
-          const rtOutcome = await launchArtRoundTrip(asset.id, asset.originalPath, asset.fileName, asset.fileExtension, choice);
+          const rtOutcome = await launchRawCliRoundTrip(asset.id, asset.originalPath, asset.fileName, asset.fileExtension, choice);
           const jobId = await resolveArtRoundTripOutcome(rtOutcome);
           trackArtJobs([jobId]);
         } finally {
@@ -733,7 +733,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       }
       await launchEditor(asset.originalPath, choice);
     },
-    [selectedAssets, applications, artRoundTripEnabled, onOpenApplicationsPreferences, resolveArtRoundTripOutcome, trackArtJobs],
+    [selectedAssets, applications, activeRawEditorApp, rawRoundTripEnabled, onOpenApplicationsPreferences, resolveArtRoundTripOutcome, trackArtJobs],
   );
 
   // See PhotosBrowser.tsx's identical callback for the full explanation -
@@ -854,7 +854,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         const a = assetByIdAll.get(id)!;
         return { id, originalPath: a.originalPath, fileName: a.fileName, fileExtension: a.fileExtension };
       });
-      const jobIds = await batchArtRoundTrip(targets);
+      const jobIds = await batchRawCliRoundTrip(targets);
       trackArtJobs(jobIds);
       setSelected(new Set());
     },
@@ -881,7 +881,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     // already closed, pill not up yet) for up to two minutes. The cache is
     // kept fresh enough for this one judgment call by the context-menu-open
     // live recheck effect below; a stale read here can't cause data loss
-    // since batch_art_round_trip itself still re-checks each target's
+    // since batch_raw_cli_round_trip itself still re-checks each target's
     // sidecar on disk before deciding whether to apply the default profile.
     // Errors are caught explicitly and routed to the standing enqueueError
     // banner since the dialog is already unmounted by the time any of this
@@ -965,7 +965,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         onClick: () => requestPasteImageProcessing(pasteTargetIds),
       });
     }
-    if (artRoundTripEnabled) {
+    if (rawRoundTripEnabled) {
       const rawTargetIds = pasteTargetIds.filter((id) => {
         const a = assetByIdAll.get(id);
         return !!a && isRawAsset(a);
@@ -1016,7 +1016,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     requestPasteImageProcessing,
     handleCopyMetadata,
     handlePasteMetadata,
-    artRoundTripEnabled,
+    rawRoundTripEnabled,
     requestBatchArtRoundTrip,
   ]);
 
@@ -1385,14 +1385,14 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           canPasteMetadata={!!copiedMetadata}
           onPasteMetadata={() => handlePasteMetadata([...selected])}
           rawSelectedCount={
-            artRoundTripEnabled
+            rawRoundTripEnabled
               ? [...selected].filter((id) => {
                   const a = assetByIdAll.get(id);
                   return !!a && isRawAsset(a);
                 }).length
               : undefined
           }
-          onBatchArtRoundTrip={artRoundTripEnabled ? () => requestBatchArtRoundTrip([...selected]) : undefined}
+          onBatchArtRoundTrip={rawRoundTripEnabled ? () => requestBatchArtRoundTrip([...selected]) : undefined}
           onAddToAlbum={() => setAddToAlbumTargets([...selected])}
           onAddToTag={() => setAddToTagTargets([...selected])}
         />

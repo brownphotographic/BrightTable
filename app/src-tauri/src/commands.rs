@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 use crate::apps::{self, AppChoice};
-use crate::art;
-use crate::art_queue::{ArtJob, ArtJobStatus, ArtQueue};
-use crate::config::{self, AppConfig, ApplicationsConfig, ImportSettings, LibraryConfig, SharingConfig, SmartStackSettings, WindowControlsPosition};
+use crate::art_queue::{self, ArtJob, ArtJobStatus, ArtQueue};
+use crate::cli_process;
+use crate::config::{self, AppConfig, ApplicationsConfig, ImportSettings, LibraryConfig, RawConverterKind, SharingConfig, SmartStackSettings, WindowControlsPosition};
 use crate::edit_queue::EditJob;
 use crate::export_naming;
 use crate::export_queue::{self, ExportDelivery, ExportFormat, ExportJob, ExportTarget, FlickrAlbumChoice, RenditionOptions};
@@ -378,13 +378,13 @@ pub fn clear_completed_processing_jobs(state: State<AppState>) {
     state.processing_queue.clear_completed();
 }
 
-/// Resolves `file_name`/`smart_stack.suffix` down to the export path
-/// `ART-cli` should write - shared by `launch_art_round_trip` (one target) and
-/// `batch_art_round_trip` (many, via its own `guarded_spawn_blocking`
-/// closure). Not `#[tauri::command]` itself - pure enough to call directly
-/// from inside an already-blocking closure without another layer of
-/// `spawn_blocking`.
-fn resolve_art_export_path(
+/// Resolves `file_name`/`smart_stack.suffix` down to the export path the
+/// active converter's CLI should write - shared by `launch_raw_cli_round_trip`
+/// (one target) and `batch_raw_cli_round_trip` (many, via its own
+/// `guarded_spawn_blocking` closure). Not `#[tauri::command]` itself - pure
+/// enough to call directly from inside an already-blocking closure without
+/// another layer of `spawn_blocking`.
+fn resolve_round_trip_export_path(
     original_path: &str,
     file_name: &str,
     file_extension: &str,
@@ -402,23 +402,23 @@ fn resolve_art_export_path(
     Ok((local_path, export_path))
 }
 
-/// Bounds how long resolving an ART round trip's export path (a real disk
+/// Bounds how long resolving a RAW CLI round trip's export path (a real disk
 /// scan for the first free collision-numbered filename, see
 /// `export_naming::next_export_path`) will wait before giving up - same
 /// "don't hang forever on an unreachable NFS/network mount" reasoning as
 /// `IMPORT_ENQUEUE_TIMEOUT`, which this mirrors in both budget and shape.
-const ART_EXPORT_PATH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+const ROUND_TRIP_EXPORT_PATH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
-/// What `launch_art_round_trip` resolves to - either the export was handed
-/// off to the background (`ApplySidecar` found a sidecar ART wrote from the
-/// user's edit, so `ART-cli` is now running under `job_id` on the same
-/// `ArtQueue` board Variant 2 uses - the frontend tracks it via
-/// `useArtJobReconciliation`/`ingestRoundTripExport` exactly like a Variant 2
-/// job, rather than waiting on this call), or ART closed with no `.arp`/`.pp3`
-/// ever written (no edit made/saved), in which case the frontend is expected
-/// to show a choice - "use ART's default profile anyway"
-/// (`finish_art_round_trip_with_default_profile`) or "cancel"
-/// (`cancel_art_round_trip`) - rather than the command erroring outright.
+/// What `launch_raw_cli_round_trip` resolves to - either the export was
+/// handed off to the background (`ApplySidecar` found a sidecar the editor
+/// wrote from the user's edit, so the converter's CLI is now running under
+/// `job_id` on the same `ArtQueue` board Variant 2 uses - the frontend tracks
+/// it via `useArtJobReconciliation`/`ingestRoundTripExport` exactly like a
+/// Variant 2 job, rather than waiting on this call), or the editor closed
+/// with no sidecar ever written (no edit made/saved), in which case the
+/// frontend is expected to show a choice - "use the default profile anyway"
+/// (`finish_raw_cli_round_trip_with_default_profile`) or "cancel"
+/// (`cancel_raw_cli_round_trip`) - rather than the command erroring outright.
 /// `raw_path`/`export_path` are already-resolved, ready to hand straight back
 /// to either follow-up command with no further path resolution.
 #[derive(Debug, Serialize)]
@@ -441,34 +441,34 @@ pub enum ArtRoundTripOutcome {
     NoSidecar { job_id: u64, raw_path: String, export_path: String },
 }
 
-/// Variant 1 of the ART CLI round trip (see the feature plan): hooks into the
-/// existing "Tweak RAW Roundtrip" action when ART round-trip is configured
-/// (`applications.art_cli_path` non-empty). Opens ART itself as its own
-/// dedicated process (`apps::launch_app_and_wait` - see its own doc comment
-/// for why a shared `-R` instance isn't used) and awaits the user finishing
-/// their edit there, then - once a sidecar confirms there's something to
-/// export - hands the actual `ART-cli` run off to a background task and
-/// returns immediately, rather than awaiting it too. This is what lets the
-/// frontend re-enable "Tweak RAW Roundtrip" for another asset as soon as this
-/// one's export is under way, instead of blocking until `ART-cli` finishes:
-/// found live that with the whole run awaited inline, the button stayed
-/// disabled for the full multi-second `ART-cli` pass even though the user was
-/// already done interacting with ART itself. The backgrounded task is tracked
-/// on the same `ArtQueue` board Variant 2's worker uses (`set_status`/
-/// `set_progress`/`finish`), and the frontend reconciles its completion the
-/// same way it does a Variant 2 job (`useArtJobReconciliation` +
-/// `ingestRoundTripExport`) rather than getting the export filename back
-/// directly from this call.
+/// Variant 1 of the RAW CLI round trip (see the feature plan): hooks into the
+/// existing "Tweak RAW Roundtrip" action once a RAW converter CLI is
+/// configured and active (`applications.active_raw_cli()` resolves to a
+/// path). Opens the RAW editor itself as its own dedicated process
+/// (`apps::launch_app_and_wait` - see its own doc comment for why a shared
+/// `-R` instance isn't used) and awaits the user finishing their edit there,
+/// then - once a sidecar confirms there's something to export - hands the
+/// actual CLI run off to a background task and returns immediately, rather
+/// than awaiting it too. This is what lets the frontend re-enable "Tweak RAW
+/// Roundtrip" for another asset as soon as this one's export is under way,
+/// instead of blocking until the CLI finishes: found live (for ART) that with
+/// the whole run awaited inline, the button stayed disabled for the full
+/// multi-second CLI pass even though the user was already done interacting
+/// with the editor itself. The backgrounded task is tracked on the same
+/// `ArtQueue` board Variant 2's worker uses (`set_status`/`set_progress`/
+/// `finish`), and the frontend reconciles its completion the same way it does
+/// a Variant 2 job (`useArtJobReconciliation` + `ingestRoundTripExport`)
+/// rather than getting the export filename back directly from this call.
 ///
-/// Gated **upfront**, before ART even opens - read-only mode blocks this
-/// command entirely rather than just failing at the final export step, since
-/// unlike the generic (non-ART) editor flow, this one really does write a
-/// new file to disk itself.
+/// Gated **upfront**, before the editor even opens - read-only mode blocks
+/// this command entirely rather than just failing at the final export step,
+/// since unlike the generic (non-CLI-driven) editor flow, this one really
+/// does write a new file to disk itself.
 ///
 /// `id` only needs to be good enough to label/thumbnail the board row for
 /// `ActivityIndicator`/`ActivityPanel` (`start_manual`).
 #[tauri::command]
-pub async fn launch_art_round_trip(
+pub async fn launch_raw_cli_round_trip(
     state: State<'_, AppState>,
     id: String,
     original_path: Option<String>,
@@ -476,16 +476,16 @@ pub async fn launch_art_round_trip(
     file_extension: String,
     raw_editor: AppChoice,
 ) -> Result<ArtRoundTripOutcome, String> {
-    let (cfg, art_cli_path, exiftool_path, suffix_pattern) = {
+    let (cfg, applications, suffix_pattern) = {
         let guard = state.config.lock().unwrap();
-        (guard.library.clone(), guard.applications.art_cli_path.clone(), guard.applications.exiftool_path.clone(), guard.smart_stack.suffix.clone())
+        (guard.library.clone(), guard.applications.clone(), guard.smart_stack.suffix.clone())
     };
     if cfg.read_only {
-        return Err("Read-only mode is on — turn it off in Preferences → Library to use ART Round Trip".into());
+        return Err("Read-only mode is on — turn it off in Preferences → Library to use RAW Roundtrip".into());
     }
-    if art_cli_path.trim().is_empty() {
-        return Err("No ART-cli path configured — set one in Preferences → Applications".into());
-    }
+    let (tool, cli_path) = applications.active_raw_cli()?;
+    let cli_path = cli_path.to_string();
+    let exiftool_path = applications.exiftool_path.clone();
     if 1 > cfg.max_writes_per_batch {
         return Err(format!("Your cap of {} per action doesn't allow any writes", cfg.max_writes_per_batch));
     }
@@ -495,7 +495,7 @@ pub async fn launch_art_round_trip(
     )?;
 
     let art_queue = state.art_queue.clone();
-    let job_id = art_queue.start_manual(id);
+    let job_id = art_queue.start_manual(id, tool);
 
     let setup: Result<(PathBuf, PathBuf, bool), String> = async {
         apps::launch_app_and_wait(&raw_editor, &local_path).await?;
@@ -504,27 +504,27 @@ pub async fn launch_art_round_trip(
         let file_name_for_scan = file_name.clone();
         let file_extension_for_scan = file_extension.clone();
         let suffix_for_scan = suffix_pattern.clone();
-        // Checks for an existing `.arp`/`.pp3` in the same blocking closure
-        // as path resolution, rather than a separate `guarded_spawn_blocking`
+        // Checks for an existing sidecar in the same blocking closure as
+        // path resolution, rather than a separate `guarded_spawn_blocking`
         // hop afterward - both touch the same (possibly NFS-backed) mount.
-        // Checked here, before ever running ART-cli in `ApplySidecar` mode
-        // (`-s`), rather than parsing ART-cli's own "no sidecar procparams
-        // found" stderr after the fact - lets the frontend offer a real
-        // choice (default profile vs. cancel) instead of just erroring, and
-        // avoids a wasted `ART-cli` invocation.
+        // Checked here, before ever running the CLI in `ApplySidecar` mode
+        // (`-s`), rather than parsing the CLI's own "no sidecar" stderr after
+        // the fact - lets the frontend offer a real choice (default profile
+        // vs. cancel) instead of just erroring, and avoids a wasted CLI
+        // invocation.
         let Some(handle) = io_guard::guarded_spawn_blocking(&state.io_guard, move || {
             let (raw_path, export_path) =
-                resolve_art_export_path(&original_path, &file_name_for_scan, &file_extension_for_scan, &cfg_for_scan, &suffix_for_scan)?;
+                resolve_round_trip_export_path(&original_path, &file_name_for_scan, &file_extension_for_scan, &cfg_for_scan, &suffix_for_scan)?;
             let has_sidecar = paths::find_processing_sidecar(&raw_path).is_some();
             Ok::<_, String>((raw_path, export_path, has_sidecar))
         }) else {
             return Err("Skipped: system is about to suspend, try again after it wakes".to_string());
         };
-        match tokio::time::timeout(ART_EXPORT_PATH_TIMEOUT, handle).await {
+        match tokio::time::timeout(ROUND_TRIP_EXPORT_PATH_TIMEOUT, handle).await {
             Ok(join_result) => join_result.map_err(|e| e.to_string())?,
             Err(_) => Err(format!(
                 "Timed out after {}s resolving the export path — check your library's local mount is actually connected/reachable",
-                ART_EXPORT_PATH_TIMEOUT.as_secs()
+                ROUND_TRIP_EXPORT_PATH_TIMEOUT.as_secs()
             )),
         }
     }
@@ -551,22 +551,22 @@ pub async fn launch_art_round_trip(
         });
     }
 
-    // From here on, the actual `ART-cli` run happens in the background -
-    // this command returns as soon as it's kicked off, rather than waiting
-    // for it to finish, so "Tweak RAW Roundtrip" can be pressed again for a
+    // From here on, the actual CLI run happens in the background - this
+    // command returns as soon as it's kicked off, rather than waiting for it
+    // to finish, so "Tweak RAW Roundtrip" can be pressed again for a
     // different asset right away. Mirrors `art_queue::run`'s Variant 2
     // worker almost exactly (acquire the shared permit, re-check cancel,
     // run, finish), just spawned directly here instead of drained off `tx`.
     let queue_for_job = art_queue.clone();
     tauri::async_runtime::spawn(async move {
         // Shares Variant 2's concurrency cap (`ArtQueue::acquire_permit`) -
-        // confirmed live that without this, an interactive round trip
-        // running alongside an already-full batch queue stacks a 3rd
-        // concurrent full-resolution `ART-cli` process on top of the other
-        // two, which is enough to push a memory-constrained machine into
-        // swap thrashing (see `art_queue.rs`'s `semaphore` doc comment).
-        // Stays Pending ("Queued" in the UI) while waiting on a slot, same as
-        // Variant 2's worker, only flipping to Running once ART-cli actually
+        // confirmed live (for ART) that without this, an interactive round
+        // trip running alongside an already-full batch queue stacks a 3rd
+        // concurrent full-resolution CLI process on top of the other two,
+        // which is enough to push a memory-constrained machine into swap
+        // thrashing (see `art_queue.rs`'s `semaphore` doc comment). Stays
+        // Pending ("Queued" in the UI) while waiting on a slot, same as
+        // Variant 2's worker, only flipping to Running once the CLI actually
         // starts.
         let _permit = queue_for_job.acquire_permit().await;
         // Re-checked here (not just at `request_cancel` time) since a cancel
@@ -575,26 +575,27 @@ pub async fn launch_art_round_trip(
         let cancel_rx = queue_for_job.cancel_receiver(job_id).unwrap_or_else(|| tokio::sync::watch::channel(false).1);
         if *cancel_rx.borrow() {
             let _ = std::fs::remove_file(&export_path);
-            queue_for_job.finish(job_id, ArtJobStatus::Failed, None, Some(art::CANCELLED_BY_USER.to_string()));
+            queue_for_job.finish(job_id, ArtJobStatus::Failed, None, Some(cli_process::CANCELLED_BY_USER.to_string()));
             return;
         }
         queue_for_job.set_status(job_id, ArtJobStatus::Running);
 
         let progress_queue = queue_for_job.clone();
-        let run = art::run_art_cli_with_metadata_fallback(
-            &art_cli_path,
+        let run = art_queue::run_round_trip_cli(
+            tool,
+            &cli_path,
             &exiftool_path,
             &raw_path,
             &export_path,
-            art::ArtCliMode::ApplySidecar,
+            cli_process::SidecarCliMode::ApplySidecar,
             move |percent| progress_queue.set_progress(job_id, percent),
             cancel_rx,
         );
-        let result = match tokio::time::timeout(art::ART_CLI_RUN_TIMEOUT, run).await {
+        let result = match tokio::time::timeout(cli_process::RAW_CLI_RUN_TIMEOUT, run).await {
             Ok(result) => result,
             Err(_) => Err(format!(
-                "Timed out after {}s running ART-cli — it may still be processing in the background",
-                art::ART_CLI_RUN_TIMEOUT.as_secs()
+                "Timed out after {}s running the RAW converter CLI — it may still be processing in the background",
+                cli_process::RAW_CLI_RUN_TIMEOUT.as_secs()
             )),
         };
         match result {
@@ -610,25 +611,34 @@ pub async fn launch_art_round_trip(
 }
 
 /// Second half of Variant 1's no-sidecar choice (see `ArtRoundTripOutcome`) -
-/// the user picked "use ART's default processing profile" instead of
-/// cancelling. Takes the exact `raw_path`/`export_path` `launch_art_round_trip`
-/// already resolved (and claimed) rather than re-resolving them, since ART
-/// isn't reopened here - there's nothing new on disk to look for a sidecar
-/// against. Same "kick off `ART-cli` in the background and return
-/// immediately" shape as `launch_art_round_trip`'s own sidecar path (see its
-/// doc comment) - the frontend already has `job_id` from the `NoSidecar`
+/// the user picked "use the default processing profile" instead of
+/// cancelling. Takes the exact `raw_path`/`export_path` `launch_raw_cli_round_trip`
+/// already resolved (and claimed) rather than re-resolving them, since the
+/// editor isn't reopened here - there's nothing new on disk to look for a
+/// sidecar against. Same "kick off the CLI in the background and return
+/// immediately" shape as `launch_raw_cli_round_trip`'s own sidecar path (see
+/// its doc comment) - the frontend already has `job_id` from the `NoSidecar`
 /// outcome, so it tracks completion via `useArtJobReconciliation` the same
 /// way rather than getting an export filename back from this call.
 #[tauri::command]
-pub fn finish_art_round_trip_with_default_profile(
+pub fn finish_raw_cli_round_trip_with_default_profile(
     state: State<AppState>,
     job_id: u64,
     raw_path: String,
     export_path: String,
 ) {
-    let (art_cli_path, exiftool_path) = {
+    let (tool, cli_path, exiftool_path) = {
         let cfg = state.config.lock().unwrap();
-        (cfg.applications.art_cli_path.clone(), cfg.applications.exiftool_path.clone())
+        // Re-resolves the active converter rather than trusting a value
+        // threaded through from `launch_raw_cli_round_trip` - Preferences
+        // could theoretically change between the two calls, and this is the
+        // one call already reading `state.config` fresh anyway. Falls back
+        // to `Art`/empty on an error here only in the pathological case the
+        // active converter changed since the no-sidecar dialog opened; the
+        // CLI invocation below still fails cleanly if that leaves `cli_path`
+        // empty.
+        let (tool, cli_path) = cfg.applications.active_raw_cli().unwrap_or((RawConverterKind::Art, ""));
+        (tool, cli_path.to_string(), cfg.applications.exiftool_path.clone())
     };
     let art_queue = state.art_queue.clone();
     let raw_path = PathBuf::from(raw_path);
@@ -639,14 +649,14 @@ pub fn finish_art_round_trip_with_default_profile(
         let cancel_rx = art_queue.cancel_receiver(job_id).unwrap_or_else(|| tokio::sync::watch::channel(false).1);
         if *cancel_rx.borrow() {
             let _ = std::fs::remove_file(&export_path);
-            art_queue.finish(job_id, ArtJobStatus::Failed, None, Some(art::CANCELLED_BY_USER.to_string()));
+            art_queue.finish(job_id, ArtJobStatus::Failed, None, Some(cli_process::CANCELLED_BY_USER.to_string()));
             return;
         }
         art_queue.set_status(job_id, ArtJobStatus::Running);
 
         let progress_queue = art_queue.clone();
-        // Goes through the same Exiv2-crash fallback as Variant 1's sidecar
-        // path and Variant 2's worker (`run_art_cli_with_metadata_fallback`)
+        // For ART, goes through the same Exiv2-crash fallback as Variant 1's
+        // sidecar path and Variant 2's worker (`run_art_cli_with_metadata_fallback`)
         // rather than a plain retry - ART's own `-d` default profile carries
         // the identical `Mode=1` a real sidecar does (see
         // `MINIMAL_METADATA_OFF_PROFILE`'s doc comment), so a RAW that
@@ -654,20 +664,21 @@ pub fn finish_art_round_trip_with_default_profile(
         // does with a saved sidecar, and blind retries alone never recover
         // from that for a file where the crash is deterministic rather than
         // the racy case those retries are actually good for.
-        let run = art::run_art_cli_with_metadata_fallback(
-            &art_cli_path,
+        let run = art_queue::run_round_trip_cli(
+            tool,
+            &cli_path,
             &exiftool_path,
             &raw_path,
             &export_path,
-            art::ArtCliMode::DefaultOnly,
+            cli_process::SidecarCliMode::DefaultOnly,
             move |percent| progress_queue.set_progress(job_id, percent),
             cancel_rx,
         );
-        let result = match tokio::time::timeout(art::ART_CLI_RUN_TIMEOUT, run).await {
+        let result = match tokio::time::timeout(cli_process::RAW_CLI_RUN_TIMEOUT, run).await {
             Ok(result) => result,
             Err(_) => Err(format!(
-                "Timed out after {}s running ART-cli — it may still be processing in the background",
-                art::ART_CLI_RUN_TIMEOUT.as_secs()
+                "Timed out after {}s running the RAW converter CLI — it may still be processing in the background",
+                cli_process::RAW_CLI_RUN_TIMEOUT.as_secs()
             )),
         };
         match result {
@@ -682,9 +693,9 @@ pub fn finish_art_round_trip_with_default_profile(
     });
 }
 
-/// Shared by `launch_art_round_trip`'s and
-/// `finish_art_round_trip_with_default_profile`'s background tasks - both
-/// finish a job the same way once `ART-cli` actually succeeds.
+/// Shared by `launch_raw_cli_round_trip`'s and
+/// `finish_raw_cli_round_trip_with_default_profile`'s background tasks - both
+/// finish a job the same way once the converter CLI actually succeeds.
 fn queue_progress_to_done(art_queue: &ArtQueue, job_id: u64, export_path: &std::path::Path) {
     art_queue.set_progress(job_id, 100);
     let export_file_name = export_path.file_name().and_then(|n| n.to_str()).map(str::to_string);
@@ -692,31 +703,31 @@ fn queue_progress_to_done(art_queue: &ArtQueue, job_id: u64, export_path: &std::
 }
 
 /// The other half of Variant 1's no-sidecar choice - the user picked "cancel"
-/// instead of exporting with ART's default profile. Releases the empty
-/// placeholder `launch_art_round_trip` claimed (see
+/// instead of exporting with the default profile. Releases the empty
+/// placeholder `launch_raw_cli_round_trip` claimed (see
 /// `export_naming::next_export_path`) and marks the queue row `Failed` with a
 /// clear "cancelled" message rather than leaving it `Pending` forever.
 #[tauri::command]
-pub fn cancel_art_round_trip(state: State<AppState>, job_id: u64, export_path: String) {
+pub fn cancel_raw_cli_round_trip(state: State<AppState>, job_id: u64, export_path: String) {
     let _ = std::fs::remove_file(&export_path);
-    state.art_queue.finish(job_id, ArtJobStatus::Failed, None, Some("Cancelled — no edits were saved in ART for this photo".to_string()));
+    state.art_queue.finish(job_id, ArtJobStatus::Failed, None, Some("Cancelled — no edits were saved for this photo".to_string()));
 }
 
 /// General-purpose cancel for any still-`Pending`/`Running` row on
 /// `ArtQueue`'s board - the Activity panel's "Cancel Selected" bulk action,
 /// covering both Headless RAW Roundtrip's own queue and a Variant 1
 /// interactive round trip (tracked on the same board via `start_manual`).
-/// Unlike `cancel_art_round_trip` above (which only ever applies to a job
-/// paused mid-flow waiting on the no-sidecar choice, before ART-cli has run
+/// Unlike `cancel_raw_cli_round_trip` above (which only ever applies to a job
+/// paused mid-flow waiting on the no-sidecar choice, before the CLI has run
 /// at all), this can reach a job that's already `Running` - it requests
 /// cancellation via `ArtQueue::request_cancel` and returns immediately;
 /// the job's own worker/command task does the actual finishing once it
-/// notices (see `art::run_art_cli_with_progress`'s cancellation branch).
+/// notices (see `cli_process::run_cli_with_progress`'s cancellation branch).
 /// Returns `false` if `job_id` was already done or never existed - not an
 /// error, since by the time a bulk "Cancel Selected" click reaches the
 /// backend the job may well have finished on its own in the meantime.
 #[tauri::command]
-pub fn cancel_art_job(state: State<AppState>, job_id: u64) -> bool {
+pub fn cancel_raw_cli_job(state: State<AppState>, job_id: u64) -> bool {
     state.art_queue.request_cancel(job_id)
 }
 
@@ -732,37 +743,36 @@ pub struct ArtRoundTripTarget {
     pub file_extension: String,
 }
 
-/// Variant 2 of the ART CLI round trip: fully headless, applies each asset's
-/// own sidecar (if any) over the user's ART default profile and exports every
-/// target in the background via `ArtQueue`, returning immediately with the
-/// assigned job ids (same "enqueue and let the frontend poll" shape as
-/// `start_import`/`paste_image_processing`). Every target's local/export path
-/// is resolved up front, inside one `guarded_spawn_blocking` closure (mirrors
-/// `scan_import_source`'s "resolve everything, then enqueue synchronously"
-/// shape) - a target that can't be resolved fails the whole call rather than
-/// silently dropping just that one asset, so the confirm dialog's count
-/// always matches what's actually queued. Also resolves each target's own
-/// `has_sidecar` here (one more `find_processing_sidecar` stat alongside the
-/// path resolution, same blocking closure) so `art_queue::run` can pick
-/// `-d -S` (`ArtCliMode::DefaultThenSidecarOverride`) for a target that has
-/// one and plain `-d` (`ArtCliMode::DefaultOnly`) for one that doesn't -
-/// confirmed live that `-S` actually errors ("no sidecar procparams found")
-/// rather than falling back when there's no sidecar to layer, so leaving
-/// every target on `-d -S` unconditionally would fail exactly the assets the
-/// no-sidecar prompt's "export with default profile" choice was supposed to
-/// rescue.
+/// Variant 2 of the RAW CLI round trip: fully headless, applies each asset's
+/// own sidecar (if any) over the active converter's default profile and
+/// exports every target in the background via `ArtQueue`, returning
+/// immediately with the assigned job ids (same "enqueue and let the frontend
+/// poll" shape as `start_import`/`paste_image_processing`). Every target's
+/// local/export path is resolved up front, inside one `guarded_spawn_blocking`
+/// closure (mirrors `scan_import_source`'s "resolve everything, then enqueue
+/// synchronously" shape) - a target that can't be resolved fails the whole
+/// call rather than silently dropping just that one asset, so the confirm
+/// dialog's count always matches what's actually queued. Also resolves each
+/// target's own `has_sidecar` here (one more `find_processing_sidecar` stat
+/// alongside the path resolution, same blocking closure) so `art_queue::run`
+/// can pick `-d -S` (`SidecarCliMode::DefaultThenSidecarOverride`) for a
+/// target that has one and plain `-d` (`SidecarCliMode::DefaultOnly`) for one
+/// that doesn't - confirmed live for ART that `-S` actually errors ("no
+/// sidecar procparams found") rather than falling back when there's no
+/// sidecar to layer, so leaving every target on `-d -S` unconditionally would
+/// fail exactly the assets the no-sidecar prompt's "export with default
+/// profile" choice was supposed to rescue.
 #[tauri::command]
-pub async fn batch_art_round_trip(state: State<'_, AppState>, targets: Vec<ArtRoundTripTarget>) -> Result<Vec<u64>, String> {
-    let (cfg, art_cli_path, suffix_pattern) = {
+pub async fn batch_raw_cli_round_trip(state: State<'_, AppState>, targets: Vec<ArtRoundTripTarget>) -> Result<Vec<u64>, String> {
+    let (cfg, applications, suffix_pattern) = {
         let guard = state.config.lock().unwrap();
-        (guard.library.clone(), guard.applications.art_cli_path.clone(), guard.smart_stack.suffix.clone())
+        (guard.library.clone(), guard.applications.clone(), guard.smart_stack.suffix.clone())
     };
     if cfg.read_only {
         return Err("Read-only mode is on — turn it off in Preferences → Library to use Headless RAW Roundtrip".into());
     }
-    if art_cli_path.trim().is_empty() {
-        return Err("No ART-cli path configured — set one in Preferences → Applications".into());
-    }
+    let (tool, cli_path) = applications.active_raw_cli()?;
+    let cli_path = cli_path.to_string();
     if targets.len() as u32 > cfg.max_writes_per_batch {
         return Err(format!(
             "This would roundtrip {} assets at once, over your cap of {} per action",
@@ -772,15 +782,15 @@ pub async fn batch_art_round_trip(state: State<'_, AppState>, targets: Vec<ArtRo
     }
 
     let art_queue = state.art_queue.clone();
-    let art_cli_path_for_worker = art_cli_path.clone();
+    let cli_path_for_worker = cli_path.clone();
     let Some(handle) = io_guard::guarded_spawn_blocking(&state.io_guard, move || -> Result<Vec<u64>, String> {
         let mut resolved: Vec<(String, PathBuf, PathBuf, bool)> = Vec::with_capacity(targets.len());
         let resolve_result: Result<(), String> = (|| {
             for t in &targets {
                 let original_path = t.original_path.as_deref().ok_or_else(|| format!("{} has no server-side path to resolve", t.file_name))?;
-                let (raw_path, export_path) = resolve_art_export_path(original_path, &t.file_name, &t.file_extension, &cfg, &suffix_pattern)?;
-                // Resolved up front, same as `launch_art_round_trip`'s own
-                // `has_sidecar` check - lets `art_queue::run` pick `-d -S`
+                let (raw_path, export_path) = resolve_round_trip_export_path(original_path, &t.file_name, &t.file_extension, &cfg, &suffix_pattern)?;
+                // Resolved up front, same as `launch_raw_cli_round_trip`'s
+                // own `has_sidecar` check - lets `art_queue::run` pick `-d -S`
                 // vs. plain `-d` per target (see `QueuedArtWork::has_sidecar`'s
                 // doc comment for why that distinction actually matters).
                 let has_sidecar = paths::find_processing_sidecar(&raw_path).is_some();
@@ -799,20 +809,20 @@ pub async fn batch_art_round_trip(state: State<'_, AppState>, targets: Vec<ArtRo
             }
             return Err(e);
         }
-        Ok(art_queue.enqueue(&art_cli_path_for_worker, resolved))
+        Ok(art_queue.enqueue(tool, &cli_path_for_worker, resolved))
     }) else {
         return Err("Skipped: system is about to suspend, try again after it wakes".to_string());
     };
-    match tokio::time::timeout(ART_EXPORT_PATH_TIMEOUT, handle).await {
+    match tokio::time::timeout(ROUND_TRIP_EXPORT_PATH_TIMEOUT, handle).await {
         Ok(join_result) => join_result.map_err(|e| e.to_string())?,
         Err(_) => Err(format!(
             "Timed out after {}s resolving export paths — check your library's local mount is actually connected/reachable",
-            ART_EXPORT_PATH_TIMEOUT.as_secs()
+            ROUND_TRIP_EXPORT_PATH_TIMEOUT.as_secs()
         )),
     }
 }
 
-/// Poll target for the ART queue's advisory activity panel, same shape as
+/// Poll target for the RAW CLI queue's advisory activity panel, same shape as
 /// `get_processing_queue_status`.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -822,12 +832,12 @@ pub struct ArtQueueStatus {
 }
 
 #[tauri::command]
-pub fn get_art_queue_status(state: State<AppState>) -> ArtQueueStatus {
+pub fn get_raw_cli_queue_status(state: State<AppState>) -> ArtQueueStatus {
     ArtQueueStatus { jobs: state.art_queue.snapshot(), pending_count: state.art_queue.pending_count() }
 }
 
 #[tauri::command]
-pub fn clear_completed_art_jobs(state: State<AppState>) {
+pub fn clear_completed_raw_cli_jobs(state: State<AppState>) {
     state.art_queue.clear_completed();
 }
 
@@ -1626,46 +1636,60 @@ pub async fn check_sidecar_metadata(
         // callers already treat as a normal per-query outcome.
         return Ok(Vec::new());
     };
-    // Bounded the same way as `batch_art_round_trip`'s own export-path scan
-    // (`ART_EXPORT_PATH_TIMEOUT`) - without this, a stat() stuck on an
-    // unreachable NFS mount left this `await` pending forever. Confirmed
+    // Bounded the same way as `batch_raw_cli_round_trip`'s own export-path
+    // scan (`ROUND_TRIP_EXPORT_PATH_TIMEOUT`) - without this, a stat() stuck
+    // on an unreachable NFS mount left this `await` pending forever. Confirmed
     // live: that hung `confirmBatchArtRoundTrip`'s dialog indefinitely with
     // Cancel disabled the whole time, since `ConfirmDialog` only re-enables
     // Cancel once its `onConfirm` promise settles one way or the other.
     // Every frontend caller already `.catch()`s this call and falls back to
     // "nothing detected this round", so erroring out here on timeout is safe.
-    match tokio::time::timeout(ART_EXPORT_PATH_TIMEOUT, handle).await {
+    match tokio::time::timeout(ROUND_TRIP_EXPORT_PATH_TIMEOUT, handle).await {
         Ok(join_result) => join_result.map_err(|e| e.to_string()),
         Err(_) => Err(format!(
             "Timed out after {}s checking for sidecars — check your library's local mount is actually connected/reachable",
-            ART_EXPORT_PATH_TIMEOUT.as_secs()
+            ROUND_TRIP_EXPORT_PATH_TIMEOUT.as_secs()
         )),
     }
 }
 
-/// Current process's resident-set size, in bytes - a lightweight diagnostic
-/// readout for tracking the app's memory footprint over a session, not a
-/// profiler. `sysinfo` requires a fresh-enough `System`/`refresh_process`
-/// call each time; there's no cached instance to keep around, and this is
-/// cheap enough (single-process, no full system scan) to just do inline.
+/// Current process's resident memory and CPU load, for the Sidebar's rolling
+/// resource chart - a lightweight live readout, not a profiler. `cpu_percent`
+/// is normalized to 0-100 of total system capacity (raw `Process::cpu_usage`
+/// is 100 per core); `ram_percent` is RSS as a fraction of total system RAM.
+/// Reuses `AppState::resource_monitor`'s `System` across calls, since
+/// `Process::cpu_usage()` needs a previous sample to diff against - a fresh
+/// `System` every call would always read 0.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MemoryUsage {
+pub struct ResourceUsage {
     pub rss_bytes: u64,
+    pub ram_percent: f32,
+    pub cpu_percent: f32,
 }
 
 #[tauri::command]
-pub fn get_memory_usage() -> MemoryUsage {
-    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+pub fn get_resource_usage(state: State<AppState>) -> ResourceUsage {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate};
     let pid = sysinfo::get_current_pid().unwrap_or(Pid::from(0));
-    let mut sys = System::new();
+    let mut sys = state.resource_monitor.lock().unwrap();
+    sys.refresh_memory();
     sys.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[pid]),
         false,
-        ProcessRefreshKind::nothing().with_memory(),
+        ProcessRefreshKind::nothing().with_memory().with_cpu(),
     );
-    let rss_bytes = sys.process(pid).map(|p| p.memory()).unwrap_or(0);
-    MemoryUsage { rss_bytes }
+    let process = sys.process(pid);
+    let rss_bytes = process.map(|p| p.memory()).unwrap_or(0);
+    let raw_cpu = process.map(|p| p.cpu_usage()).unwrap_or(0.0);
+    let cpu_percent = raw_cpu / state.num_cpus as f32;
+    let total_bytes = sys.total_memory();
+    let ram_percent = if total_bytes > 0 {
+        rss_bytes as f32 / total_bytes as f32 * 100.0
+    } else {
+        0.0
+    };
+    ResourceUsage { rss_bytes, ram_percent, cpu_percent }
 }
 
 /// Preferences → Configuration's "Thumbnail Cache" panel - reports the

@@ -1,21 +1,42 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { getConfig, saveApplicationsConfig, type AppChoice, type ApplicationsConfig } from './api';
+import { getConfig, saveApplicationsConfig, type AppChoice, type ApplicationsConfig, type RawConverterKind } from './api';
 
-const DEFAULT_APPLICATIONS: ApplicationsConfig = { rawEditor: null, externalEditor: null, artCliPath: '', exiftoolPath: '' };
+const DEFAULT_APPLICATIONS: ApplicationsConfig = {
+  externalEditor: null,
+  activeRawConverter: null,
+  art: { app: null, cliPath: '' },
+  rawtherapee: { app: null, cliPath: '' },
+  darktable: { app: null, cliPath: '' },
+  exiftoolPath: '',
+};
 
 interface ApplicationsContextValue {
   applications: ApplicationsConfig;
-  setEditor: (role: 'rawEditor' | 'externalEditor', choice: AppChoice) => void;
-  setArtCliPath: (path: string) => void;
+  setExternalEditor: (choice: AppChoice) => void;
+  // Sets one converter's GUI app - each tool owns its own app *and* CLI path
+  // together (see ApplicationsConfig's own doc comment for why), so unlike
+  // the old shared `rawEditor` field this always targets a specific tool.
+  setToolApp: (tool: RawConverterKind, choice: AppChoice) => void;
+  setToolCliPath: (tool: RawConverterKind, path: string) => void;
+  setActiveRawConverter: (tool: RawConverterKind | null) => void;
   setExiftoolPath: (path: string) => void;
-  // Whether the ART CLI round trip is configured - the single signal that
-  // switches "Tweak RAW Roundtrip"/adds "Headless RAW Roundtrip" over to the
-  // new flow (see the feature plan's decision on this). Derived rather than
-  // stored separately so it can never drift from applications.artCliPath.
-  artRoundTripEnabled: boolean;
+  // The GUI app that "Open in RAW Editor"/"Tweak RAW Roundtrip" launches -
+  // the active converter's own `app`, or null if no converter is active
+  // (redirects to Preferences the same way an unset externalEditor does).
+  // Derived rather than read as a flat field, since which tool's `app`
+  // applies depends on `activeRawConverter`.
+  activeRawEditorApp: AppChoice | null;
+  // Whether the RAW CLI round trip is configured and actually usable - the
+  // single signal that switches "Tweak RAW Roundtrip"/adds "Headless RAW
+  // Roundtrip" over to the CLI-driven flow (see the feature plan's decision
+  // on this). True only when activeRawConverter is 'art' or 'rawtherapee'
+  // (darktable has no working CLI invocation yet) and that tool's own
+  // cliPath is non-empty. Derived rather than stored separately so it can
+  // never drift from the underlying config.
+  rawRoundTripEnabled: boolean;
   // Whether exiftool is configured - required by the export dialogs' "Keep
   // all metadata"/"Remove GPS only" options. Derived, same idiom as
-  // artRoundTripEnabled.
+  // rawRoundTripEnabled.
   exiftoolConfigured: boolean;
 }
 
@@ -34,17 +55,33 @@ export function ApplicationsProvider({ children }: { children: ReactNode }) {
       .catch(() => {});
   }, []);
 
-  const setEditor = useCallback((role: 'rawEditor' | 'externalEditor', choice: AppChoice) => {
+  const setExternalEditor = useCallback((choice: AppChoice) => {
     setApplicationsState((prev) => {
-      const next = { ...prev, [role]: choice };
+      const next = { ...prev, externalEditor: choice };
       saveApplicationsConfig(next).catch(() => {});
       return next;
     });
   }, []);
 
-  const setArtCliPath = useCallback((path: string) => {
+  const setToolApp = useCallback((tool: RawConverterKind, choice: AppChoice) => {
     setApplicationsState((prev) => {
-      const next = { ...prev, artCliPath: path };
+      const next = { ...prev, [tool]: { ...prev[tool], app: choice } };
+      saveApplicationsConfig(next).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const setToolCliPath = useCallback((tool: RawConverterKind, path: string) => {
+    setApplicationsState((prev) => {
+      const next = { ...prev, [tool]: { ...prev[tool], cliPath: path } };
+      saveApplicationsConfig(next).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const setActiveRawConverter = useCallback((tool: RawConverterKind | null) => {
+    setApplicationsState((prev) => {
+      const next = { ...prev, activeRawConverter: tool };
       saveApplicationsConfig(next).catch(() => {});
       return next;
     });
@@ -58,12 +95,26 @@ export function ApplicationsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const artRoundTripEnabled = applications.artCliPath.trim().length > 0;
+  const activeTool = applications.activeRawConverter ? applications[applications.activeRawConverter] : null;
+  const activeRawEditorApp = activeTool?.app ?? null;
+  const rawRoundTripEnabled =
+    (applications.activeRawConverter === 'art' || applications.activeRawConverter === 'rawtherapee') &&
+    (activeTool?.cliPath.trim().length ?? 0) > 0;
   const exiftoolConfigured = applications.exiftoolPath.trim().length > 0;
 
   return (
     <ApplicationsContext.Provider
-      value={{ applications, setEditor, setArtCliPath, setExiftoolPath, artRoundTripEnabled, exiftoolConfigured }}
+      value={{
+        applications,
+        setExternalEditor,
+        setToolApp,
+        setToolCliPath,
+        setActiveRawConverter,
+        setExiftoolPath,
+        activeRawEditorApp,
+        rawRoundTripEnabled,
+        exiftoolConfigured,
+      }}
     >
       {children}
     </ApplicationsContext.Provider>

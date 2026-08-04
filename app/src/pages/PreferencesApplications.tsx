@@ -2,35 +2,88 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useApplications } from '../lib/applications';
 import AppPickerDialog from '../components/AppPickerDialog';
-import type { AppChoice } from '../lib/api';
+import type { AppChoice, RawConverterKind } from '../lib/api';
 
-type Role = 'rawEditor' | 'externalEditor';
-
-const ROLE_LABEL: Record<Role, string> = { rawEditor: 'RAW Editor', externalEditor: 'External Editor' };
-const ROLE_HELP: Record<Role, string> = {
-  rawEditor: 'Used for RAW formats (ARW, CR3, NEF, DNG…).',
-  externalEditor: 'Used for all other image formats.',
+// One entry per RAW converter's own settings block below - label, the
+// binary this build actually shells out to, the file-browse dialog title,
+// and whether it has a working CLI round trip yet (darktable doesn't - its
+// processing history lives inside the same .xmp sidecar already used for
+// rating/description, which needs its own surgical-merge support first; see
+// requirements.md §1.6/§2.4).
+const TOOL_META: Record<RawConverterKind, { label: string; binary: string; browseTitle: string; implemented: boolean; docsUrl: string }> = {
+  art: {
+    label: 'ART',
+    binary: 'ART-cli',
+    browseTitle: 'Choose the ART-cli binary',
+    implemented: true,
+    docsUrl: 'https://bitbucket.org/agriggio/art/',
+  },
+  rawtherapee: {
+    label: 'RawTherapee',
+    binary: 'rawtherapee-cli',
+    browseTitle: 'Choose the rawtherapee-cli binary',
+    implemented: true,
+    docsUrl: 'https://rawtherapee.com/',
+  },
+  darktable: {
+    label: 'DarkTable',
+    binary: 'darktable-cli',
+    browseTitle: 'Choose the darktable-cli binary',
+    implemented: false,
+    docsUrl: 'https://www.darktable.org/',
+  },
 };
 
+const TOOL_ORDER: RawConverterKind[] = ['art', 'rawtherapee', 'darktable'];
+
+// What the "RAW Editor & Roundtrip" heading's info tooltip explains - kept
+// as a hover tooltip rather than its own always-visible heading/paragraph
+// (the previous layout) since the section below is now self-explanatory
+// enough (each tool's own app + CLI path, an active-converter selector) not
+// to need a permanent block of prose above it.
+const RAW_ROUNDTRIP_INFO =
+  'Each RAW converter below owns its own GUI app and CLI path together - the app is what "Open in RAW Editor"/' +
+  '"Tweak RAW Roundtrip" launches and waits on; once its CLI binary is also configured and this converter is ' +
+  'selected as active, that same action then runs the CLI to produce the export deterministically - no more ' +
+  'manually exporting inside the editor’s own UI. A "Headless RAW Roundtrip" action also becomes available ' +
+  'for exporting one or more RAW photos straight through the CLI, with no editor UI involved at all. Each ' +
+  "tool's own settings are saved independently, so switching the active converter never loses the others'.";
+
+// Which app picker is currently open - 'externalEditor', a specific RAW
+// converter (its own GUI app, paired with that tool's own CLI path right
+// below it - see ApplicationsConfig's own doc comment for why the two are
+// no longer a single shared `rawEditor` picked separately from the CLI),
+// or none.
+type PickerTarget = 'externalEditor' | RawConverterKind;
+
 export default function PreferencesApplications() {
-  const { applications, setEditor, setArtCliPath, setExiftoolPath, artRoundTripEnabled, exiftoolConfigured } = useApplications();
-  const [pickerRole, setPickerRole] = useState<Role | null>(null);
-  const [browseError, setBrowseError] = useState<string | null>(null);
+  const {
+    applications,
+    setExternalEditor,
+    setToolApp,
+    setToolCliPath,
+    setActiveRawConverter,
+    setExiftoolPath,
+    exiftoolConfigured,
+  } = useApplications();
+  const [pickerTarget, setPickerTarget] = useState<PickerTarget | null>(null);
+  const [cliBrowseError, setCliBrowseError] = useState<string | null>(null);
   const [exiftoolBrowseError, setExiftoolBrowseError] = useState<string | null>(null);
 
   function handlePick(choice: AppChoice) {
-    if (pickerRole) setEditor(pickerRole, choice);
-    setPickerRole(null);
+    if (pickerTarget === 'externalEditor') setExternalEditor(choice);
+    else if (pickerTarget) setToolApp(pickerTarget, choice);
+    setPickerTarget(null);
   }
 
-  async function browseForArtCli() {
-    setBrowseError(null);
+  async function browseForCli(tool: RawConverterKind) {
+    setCliBrowseError(null);
     try {
-      const path = await open({ multiple: false, directory: false, title: 'Choose the ART-cli binary' });
+      const path = await open({ multiple: false, directory: false, title: TOOL_META[tool].browseTitle });
       if (!path || typeof path !== 'string') return;
-      setArtCliPath(path);
+      setToolCliPath(tool, path);
     } catch (e) {
-      setBrowseError(String(e));
+      setCliBrowseError(String(e));
     }
   }
 
@@ -47,75 +100,7 @@ export default function PreferencesApplications() {
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '24px 0' }}>
-      <div style={{ fontSize: 14, fontWeight: 700, margin: '0 4px 12px' }}>Applications</div>
-      <div style={{ fontSize: 12.5, color: 'var(--text-dimmer)', margin: '0 4px 16px', lineHeight: 1.5 }}>
-        Choose which application opens when you click "Tweak RAW Roundtrip"/"Open in Ext. Editor" in the
-        photo viewer.
-      </div>
-      <div style={panel}>
-        {(['rawEditor', 'externalEditor'] as Role[]).map((role, i) => {
-          const choice = applications[role];
-          return (
-            <div key={role}>
-              <div style={row}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.85)' }}>{ROLE_LABEL[role]}</div>
-                  <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)', marginTop: 2 }}>{ROLE_HELP[role]}</div>
-                  <div style={{ fontSize: 12, marginTop: 6, color: choice ? '#fff' : 'var(--text-dimmer)' }}>
-                    {choice ? choice.name : 'No application chosen'}
-                  </div>
-                  {choice && <div style={execText}>{choice.exec}</div>}
-                  {choice && (
-                    <ExtraArgsRow
-                      choice={choice}
-                      onCommit={(extraArgs) => setEditor(role, { ...choice, extraArgs })}
-                    />
-                  )}
-                </div>
-                <button onClick={() => setPickerRole(role)} style={btnSecondary}>
-                  Change…
-                </button>
-              </div>
-              {i === 0 && <Divider />}
-            </div>
-          );
-        })}
-      </div>
-
-      <div style={{ fontSize: 14, fontWeight: 700, margin: '24px 4px 12px' }}>ART CLI Round Trip</div>
-      <div style={{ fontSize: 12.5, color: 'var(--text-dimmer)', margin: '0 4px 16px', lineHeight: 1.5 }}>
-        Requires the RAW Editor above to actually be{' '}
-        <a href="https://bitbucket.org/agriggio/art/" target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>
-          ART
-        </a>{' '}
-        (the RawTherapee fork). When its <code>ART-cli</code> binary is configured here, "Tweak RAW Roundtrip" opens
-        ART itself, waits for you to finish, then runs <code>ART-cli</code> to produce the export deterministically -
-        no more manually exporting inside ART's own UI. A "Headless RAW Roundtrip" action also becomes available for
-        exporting one or more RAW photos straight through <code>ART-cli</code>, with no ART UI involved at all.
-      </div>
-      <div style={panel}>
-        <div style={row}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.85)' }}>ART-cli path</div>
-            <div style={{ fontSize: 12, marginTop: 6, color: artRoundTripEnabled ? '#fff' : 'var(--text-dimmer)' }}>
-              {artRoundTripEnabled ? applications.artCliPath : 'Not configured'}
-            </div>
-          </div>
-          <button onClick={browseForArtCli} style={btnSecondary}>
-            Browse…
-          </button>
-          {artRoundTripEnabled && (
-            <button onClick={() => setArtCliPath('')} style={{ ...btnSecondary, marginLeft: 8 }}>
-              Clear
-            </button>
-          )}
-        </div>
-        {browseError && (
-          <div style={{ padding: '0 16px 13px', fontSize: 12, color: 'var(--danger)' }}>{browseError}</div>
-        )}
-      </div>
-
-      <div style={{ fontSize: 14, fontWeight: 700, margin: '24px 4px 12px' }}>Metadata (exiftool)</div>
+      <div style={{ fontSize: 14, fontWeight: 700, margin: '0 4px 12px' }}>Metadata</div>
       <div style={{ fontSize: 12.5, color: 'var(--text-dimmer)', margin: '0 4px 16px', lineHeight: 1.5 }}>
         Used by Export to Folder/Share to Flickr's "Keep all metadata" and "Remove GPS only" options - "Strip all
         metadata" needs no configuration. Get{' '}
@@ -146,19 +131,173 @@ export default function PreferencesApplications() {
         )}
       </div>
 
-      {pickerRole && (
-        <AppPickerDialog roleLabel={ROLE_LABEL[pickerRole]} onClose={() => setPickerRole(null)} onPick={handlePick} />
+      <div style={{ fontSize: 14, fontWeight: 700, margin: '24px 4px 12px' }}>External Editor</div>
+      <div style={panel}>
+        <div style={row}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.85)' }}>External Editor</div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)', marginTop: 2 }}>Used for all other image formats.</div>
+            <div style={{ fontSize: 12, marginTop: 6, color: applications.externalEditor ? '#fff' : 'var(--text-dimmer)' }}>
+              {applications.externalEditor ? applications.externalEditor.name : 'No application chosen'}
+            </div>
+            {applications.externalEditor && <div style={execText}>{applications.externalEditor.exec}</div>}
+            {applications.externalEditor && (
+              <ExtraArgsRow
+                choice={applications.externalEditor}
+                onCommit={(extraArgs) => setExternalEditor({ ...applications.externalEditor!, extraArgs })}
+              />
+            )}
+          </div>
+          <button onClick={() => setPickerTarget('externalEditor')} style={btnSecondary}>
+            Change…
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '24px 4px 12px' }}>
+        <div style={{ fontSize: 14, fontWeight: 700 }}>RAW Editor & Roundtrip</div>
+        <InfoTooltip text={RAW_ROUNDTRIP_INFO} />
+      </div>
+
+      <div style={{ ...panel, marginBottom: 16 }}>
+        <div style={{ ...row, gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.85)', marginRight: 4 }}>Active converter</div>
+          <div style={{ display: 'flex', gap: 3, background: 'rgba(0,0,0,0.25)', padding: 3, borderRadius: 10 }}>
+            {(['none', ...TOOL_ORDER] as const).map((opt) => {
+              const active = opt === 'none' ? applications.activeRawConverter === null : applications.activeRawConverter === opt;
+              return (
+                <div
+                  key={opt}
+                  onClick={() => setActiveRawConverter(opt === 'none' ? null : opt)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 8,
+                    fontSize: 12.5,
+                    cursor: 'default',
+                    background: active ? '#3584e4' : 'transparent',
+                    color: active ? '#fff' : 'rgba(255,255,255,0.65)',
+                  }}
+                >
+                  {opt === 'none' ? 'None' : TOOL_META[opt].label}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {TOOL_ORDER.map((tool, i) => {
+        const config = applications[tool];
+        const isActive = applications.activeRawConverter === tool;
+        return (
+          <div key={tool} style={{ marginTop: i === 0 ? 0 : 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 4px 8px' }}>
+              <a
+                href={TOOL_META[tool].docsUrl}
+                target="_blank"
+                rel="noreferrer"
+                style={{ fontSize: 13, fontWeight: 600, color: isActive ? '#fff' : 'rgba(255,255,255,0.85)' }}
+              >
+                {TOOL_META[tool].label}
+              </a>
+              {isActive && <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#3584e4', flexShrink: 0 }} />}
+              {!TOOL_META[tool].implemented && (
+                <span style={{ fontSize: 11.5, color: 'var(--text-dimmer)' }}>
+                  - CLI roundtrip isn't implemented yet; settings are saved but selecting it as active leaves the roundtrip buttons on the
+                  plain launch-only flow.
+                </span>
+              )}
+            </div>
+
+            <div style={{ ...panel, marginBottom: 10 }}>
+              <div style={row}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.85)' }}>Desktop App</div>
+                  <div style={{ fontSize: 12, marginTop: 6, color: config.app ? '#fff' : 'var(--text-dimmer)' }}>
+                    {config.app ? config.app.name : 'No application chosen'}
+                  </div>
+                  {config.app && <div style={execText}>{config.app.exec}</div>}
+                  {config.app && (
+                    <ExtraArgsRow choice={config.app} onCommit={(extraArgs) => setToolApp(tool, { ...config.app!, extraArgs })} />
+                  )}
+                </div>
+                <button onClick={() => setPickerTarget(tool)} style={btnSecondary}>
+                  Change…
+                </button>
+              </div>
+            </div>
+
+            <div style={panel}>
+              <div style={row}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.85)' }}>{TOOL_META[tool].binary} path</div>
+                  <div style={{ fontSize: 12, marginTop: 6, color: config.cliPath ? '#fff' : 'var(--text-dimmer)' }}>
+                    {config.cliPath || 'Not configured'}
+                  </div>
+                </div>
+                <button onClick={() => browseForCli(tool)} style={btnSecondary}>
+                  Browse…
+                </button>
+                {config.cliPath && (
+                  <button onClick={() => setToolCliPath(tool, '')} style={{ ...btnSecondary, marginLeft: 8 }}>
+                    Clear
+                  </button>
+                )}
+              </div>
+              {cliBrowseError && (
+                <div style={{ padding: '0 16px 13px', fontSize: 12, color: 'var(--danger)' }}>{cliBrowseError}</div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      {pickerTarget && (
+        <AppPickerDialog
+          roleLabel={pickerTarget === 'externalEditor' ? 'External Editor' : TOOL_META[pickerTarget].label}
+          onClose={() => setPickerTarget(null)}
+          onPick={handlePick}
+        />
       )}
     </div>
   );
 }
 
-function Divider() {
-  return <div style={{ height: 1, background: 'var(--border)', marginLeft: 16 }} />;
+// A small "i" glyph that shows `text` on hover - the plain native `title`
+// attribute this app already uses everywhere for hover hints (e.g.
+// AssetTile.tsx's unsyncedMetadataTooltip), just wrapped in a fixed-size
+// circle so it reads as a deliberate "more info" affordance next to a
+// heading rather than a stray title on the heading text itself. No custom
+// hover-popover component exists anywhere else in this app to reuse -
+// this is the simplest thing consistent with that existing convention.
+function InfoTooltip({ text }: { text: string }) {
+  return (
+    <span
+      title={text}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 15,
+        height: 15,
+        borderRadius: '50%',
+        fontSize: 10.5,
+        fontWeight: 700,
+        fontStyle: 'italic',
+        color: 'var(--text-dimmer)',
+        border: '1px solid var(--text-dimmer)',
+        cursor: 'default',
+        flexShrink: 0,
+      }}
+    >
+      i
+    </span>
+  );
 }
 
 // Local draft state so every keystroke doesn't trigger a save - only commits
-// (via useApplications' setEditor, which persists immediately) on blur.
+// (via useApplications' setExternalEditor/setToolApp, which persist
+// immediately) on blur.
 function ExtraArgsRow({ choice, onCommit }: { choice: AppChoice; onCommit: (extraArgs: string) => void }) {
   const [value, setValue] = useState(choice.extraArgs);
 

@@ -9,7 +9,7 @@ import NoSidecarDialog from './NoSidecarDialog';
 // Folder modal (Immich Desktop.dc.html) - enqueues one ExportJob per asset
 // onto the backend's ExportQueue (export_queue.rs) and returns immediately;
 // progress/results show up in the Activity panel's Export section, same
-// "fire and watch the Activity panel" shape as batchArtRoundTrip/startImport.
+// "fire and watch the Activity panel" shape as batchRawCliRoundTrip/startImport.
 export default function ExportToFolderDialog({ assets, onClose, onExported }: { assets: AssetSummary[]; onClose: () => void; onExported: () => void }) {
   const [format, setFormat] = useState<ExportFormat>('jpeg');
   // Default to Full size (was 2048px) - RAW assets now headless-convert

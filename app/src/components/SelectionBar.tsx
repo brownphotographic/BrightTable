@@ -68,7 +68,7 @@ export default function SelectionBar({
   canPasteMetadata?: boolean;
   onPasteMetadata?: () => void;
   // How many of the current selection are RAW - "Headless RAW Roundtrip"
-  // (only shown when artRoundTripEnabled, gated by the caller) needs 1+ RAW
+  // (only shown when rawRoundTripEnabled, gated by the caller) needs 1+ RAW
   // assets selected, whether that's a single photo or a batch.
   rawSelectedCount?: number;
   onBatchArtRoundTrip?: () => void;

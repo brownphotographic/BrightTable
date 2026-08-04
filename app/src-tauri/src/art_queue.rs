@@ -13,7 +13,7 @@
 //! backstop for an in-progress export during a suspend transition, same
 //! pre-existing limitation class as other long-running I/O in this app. Each
 //! job's own `raw_path`/`export_path` are resolved up front by
-//! `commands::batch_art_round_trip` (through its own `guarded_spawn_blocking`
+//! `commands::batch_raw_cli_round_trip` (through its own `guarded_spawn_blocking`
 //! call, since *that* resolution is real blocking disk work) - `enqueue`
 //! itself does no I/O.
 
@@ -27,20 +27,27 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use tokio::sync::{mpsc, watch, OwnedSemaphorePermit, Semaphore};
 
-use crate::art::{self, ArtCliMode};
+use crate::art;
+use crate::cli_process::{self, SidecarCliMode};
+use crate::config::RawConverterKind;
+use crate::rawtherapee;
 use crate::state::AppState;
 
-/// Deliberately lower than the other queues' `4` - ART-cli's demosaic/
-/// denoise pass is CPU/RAM-heavy, unlike a sidecar copy or XMP write.
-/// Serialized to 1 (confirmed live): a single full-resolution `ART-cli`
-/// process was observed using 1-2.5GB resident / 12GB+ virtual memory on its
-/// own - with ordinary other apps also running, even 2 concurrent exports
-/// left a 15GB machine little headroom before swapping, and once genuinely
-/// thrashing every concurrent `ART-cli` stalls in "D (disk sleep)" on
-/// `folio_wait_bit_common` indefinitely rather than just running slower. A
-/// tunable default, not a hard requirement - raise it back on a machine
-/// confirmed to have the RAM headroom for more concurrent exports.
-pub const MAX_CONCURRENT_ART_JOBS: usize = 1;
+/// Deliberately lower than the other queues' `4` - a RAW converter CLI's
+/// demosaic/denoise pass is CPU/RAM-heavy, unlike a sidecar copy or XMP
+/// write. Serialized to 1 (confirmed live for ART-cli): a single full-
+/// resolution `ART-cli` process was observed using 1-2.5GB resident / 12GB+
+/// virtual memory on its own - with ordinary other apps also running, even 2
+/// concurrent exports left a 15GB machine little headroom before swapping,
+/// and once genuinely thrashing every concurrent `ART-cli` stalls in
+/// "D (disk sleep)" on `folio_wait_bit_common` indefinitely rather than just
+/// running slower. Applied to RawTherapee-cli jobs on this same shared queue
+/// too, on the assumption its demosaic pass is the same class of cost (ART
+/// forked RawTherapee's own processing pipeline) - not yet independently
+/// confirmed live. A tunable default, not a hard requirement - raise it back
+/// on a machine confirmed to have the RAM headroom for more concurrent
+/// exports.
+pub const MAX_CONCURRENT_RAW_CLI_JOBS: usize = 1;
 
 /// Same cap and reasoning as `edit_queue::MAX_COMPLETED_HISTORY`.
 const MAX_COMPLETED_HISTORY: usize = 200;
@@ -59,6 +66,10 @@ pub enum ArtJobStatus {
 pub struct ArtJob {
     pub job_id: u64,
     pub asset_id: String,
+    /// Which converter this job runs through - lets the Activity panel label
+    /// each row (e.g. "ART" vs "RawTherapee") instead of assuming ART like
+    /// this board did before RawTherapee shared it.
+    pub tool: RawConverterKind,
     pub status: ArtJobStatus,
     /// Set once `Done` - the generated export's bare filename (same
     /// directory as the original RAW), used by the frontend's incremental
@@ -66,10 +77,11 @@ pub struct ArtJob {
     /// `ingestRoundTripExport` without needing a second round trip to
     /// discover it.
     pub export_file_name: Option<String>,
-    /// Live 0-100 percentage while `Running`, parsed from `ART-cli`'s own
-    /// `--progress` output (see `art::run_art_cli_with_progress`) - `None`
-    /// until the first progress line arrives, and left at its last value
-    /// (not reset) once the job settles, same "show how far it got" idiom as
+    /// Live 0-100 percentage while `Running`, parsed from the converter
+    /// CLI's own progress output where it emits one (see
+    /// `cli_process::run_cli_with_progress`) - `None` until the first
+    /// progress line arrives, and left at its last value (not reset) once
+    /// the job settles, same "show how far it got" idiom as
     /// `import::ImportJob::bytes_copied`.
     pub progress_percent: Option<u8>,
     pub created_at_ms: u64,
@@ -88,25 +100,26 @@ pub struct ArtJob {
 }
 
 /// What the worker needs to actually perform one job - resolved up front at
-/// enqueue time (by `commands::batch_art_round_trip`), same as
+/// enqueue time (by `commands::batch_raw_cli_round_trip`), same as
 /// `edit_queue::QueuedWork`/`processing_queue::QueuedCopy`.
 pub(crate) struct QueuedArtWork {
     job_id: u64,
     asset_id: String,
-    art_cli_path: String,
+    tool: RawConverterKind,
+    cli_path: String,
     raw_path: PathBuf,
     export_path: PathBuf,
     /// Whether `raw_path` had a `.arp`/`.pp3` sidecar at enqueue time
-    /// (resolved by `commands::batch_art_round_trip`, same
-    /// `find_processing_sidecar` check `launch_art_round_trip` does for
-    /// Variant 1) - picks `run`'s `ArtCliMode` per job. Confirmed live against
+    /// (resolved by `commands::batch_raw_cli_round_trip`, same
+    /// `find_processing_sidecar` check `launch_raw_cli_round_trip` does for
+    /// Variant 1) - picks `run`'s `SidecarCliMode` per job. Confirmed live against
     /// a real ART-cli 1.26.7: unlike `-s` (which just warns and falls back to
     /// neutral values when no sidecar exists), `-S` actually exits non-zero
     /// with "no sidecar procparams found" in that case rather than silently
     /// skipping to the default profile the way this module's own doc
     /// comments used to assume - so a target confirmed to have no sidecar
-    /// must use plain `-d` (`ArtCliMode::DefaultOnly`), not `-d -S`
-    /// (`ArtCliMode::DefaultThenSidecarOverride`), or the export fails
+    /// must use plain `-d` (`SidecarCliMode::DefaultOnly`), not `-d -S`
+    /// (`SidecarCliMode::DefaultThenSidecarOverride`), or the export fails
     /// outright instead of falling back.
     has_sidecar: bool,
 }
@@ -118,11 +131,11 @@ pub struct ArtQueue {
     // Same reasoning as `edit_queue::EditQueue::asset_locks`: serializes
     // same-asset jobs so two exports for the same asset can never race on
     // the same collision-numbered export path, while different assets still
-    // run concurrently up to `MAX_CONCURRENT_ART_JOBS`.
+    // run concurrently up to `MAX_CONCURRENT_RAW_CLI_JOBS`.
     asset_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-    // Shared by both `run` (Variant 2's worker) and `commands::launch_art_round_trip`
+    // Shared by both `run` (Variant 2's worker) and `commands::launch_raw_cli_round_trip`
     // (Variant 1) - confirmed live that without a shared cap, one interactive
-    // round trip running alongside an already-full batch of `MAX_CONCURRENT_ART_JOBS`
+    // round trip running alongside an already-full batch of `MAX_CONCURRENT_RAW_CLI_JOBS`
     // gives 3 concurrent full-resolution `ART-cli` demosaic processes, which
     // is enough to push a 15GB machine into swap thrashing (each process
     // observed at 800MB-1GB+ RSS) - every one of them then stalls in
@@ -133,7 +146,7 @@ pub struct ArtQueue {
     // One `watch` channel per still-live job, created alongside its board row
     // (`enqueue`/`start_manual`) and removed in `finish` - lets
     // `request_cancel` signal a job's own worker task (or, for Variant 1,
-    // `commands::launch_art_round_trip`/`finish_art_round_trip_with_default_profile`)
+    // `commands::launch_raw_cli_round_trip`/`finish_raw_cli_round_trip_with_default_profile`)
     // without either side needing a reference to the other. `watch` rather
     // than a plain `AtomicBool` so the holder can `.changed().await` it
     // instead of polling - a cancel takes effect the moment it's requested,
@@ -149,7 +162,7 @@ impl ArtQueue {
             next_id: AtomicU64::new(1),
             tx,
             asset_locks: Mutex::new(HashMap::new()),
-            semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_ART_JOBS)),
+            semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_RAW_CLI_JOBS)),
             cancel_senders: Mutex::new(HashMap::new()),
         });
         (queue, rx)
@@ -171,10 +184,10 @@ impl ArtQueue {
 
     /// Pushes one `Pending` job per already-resolved target and hands each to
     /// the drain worker, returning the assigned job ids in the same order as
-    /// `targets`. Called from `commands::batch_art_round_trip` after its
+    /// `targets`. Called from `commands::batch_raw_cli_round_trip` after its
     /// `read_only`/`max_writes_per_batch` checks and after resolving every
     /// target's local/export path and sidecar presence.
-    pub fn enqueue(&self, art_cli_path: &str, targets: Vec<(String, PathBuf, PathBuf, bool)>) -> Vec<u64> {
+    pub fn enqueue(&self, tool: RawConverterKind, cli_path: &str, targets: Vec<(String, PathBuf, PathBuf, bool)>) -> Vec<u64> {
         let mut ids = Vec::with_capacity(targets.len());
         let mut board = self.board.lock().unwrap();
         for (asset_id, raw_path, export_path, has_sidecar) in targets {
@@ -182,6 +195,7 @@ impl ArtQueue {
             board.push_back(ArtJob {
                 job_id,
                 asset_id: asset_id.clone(),
+                tool,
                 status: ArtJobStatus::Pending,
                 export_file_name: None,
                 progress_percent: None,
@@ -193,7 +207,7 @@ impl ArtQueue {
             self.register_cancel_channel(job_id);
             // See `edit_queue::EditQueue::enqueue`'s identical comment: a
             // send error here only means the app is shutting down.
-            let _ = self.tx.send(QueuedArtWork { job_id, asset_id, art_cli_path: art_cli_path.to_string(), raw_path, export_path, has_sidecar });
+            let _ = self.tx.send(QueuedArtWork { job_id, asset_id, tool, cli_path: cli_path.to_string(), raw_path, export_path, has_sidecar });
             ids.push(job_id);
         }
         ids
@@ -217,14 +231,15 @@ impl ArtQueue {
     /// `ActivityIndicator`/`ActivityPanel` show it too - unlike `enqueue`,
     /// this sends nothing through `tx`/the drain worker, since Variant 1
     /// always runs inside its own awaited command body
-    /// (`commands::launch_art_round_trip`) rather than this queue's worker
+    /// (`commands::launch_raw_cli_round_trip`) rather than this queue's worker
     /// loop. The caller drives the job's status/progress/completion directly
     /// via `set_status`/`set_progress`/`finish` below.
-    pub fn start_manual(&self, asset_id: String) -> u64 {
+    pub fn start_manual(&self, asset_id: String, tool: RawConverterKind) -> u64 {
         let job_id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.board.lock().unwrap().push_back(ArtJob {
             job_id,
             asset_id,
+            tool,
             status: ArtJobStatus::Pending,
             export_file_name: None,
             progress_percent: None,
@@ -320,21 +335,49 @@ fn trim_completed(board: &mut VecDeque<ArtJob>) {
 /// The drain worker - spawned once from `lib.rs`'s `.setup()`, same shape as
 /// `processing_queue::run`. Batch round trip applies the user's ART default
 /// profile, layering each asset's own sidecar over it when one exists
-/// (`ArtCliMode::DefaultThenSidecarOverride`, ART-cli's `-d -S`) - but for a
-/// target `commands::batch_art_round_trip` already confirmed has none
-/// (`work.has_sidecar`), it uses plain `-d` (`ArtCliMode::DefaultOnly`)
+/// (`SidecarCliMode::DefaultThenSidecarOverride`, ART-cli's `-d -S`) - but for a
+/// target `commands::batch_raw_cli_round_trip` already confirmed has none
+/// (`work.has_sidecar`), it uses plain `-d` (`SidecarCliMode::DefaultOnly`)
 /// instead. Confirmed live: `-S` doesn't silently skip to the default profile
 /// when no sidecar exists the way its own `-h` help text implies - ART-cli
 /// 1.26.7 exits non-zero with "no sidecar procparams found" instead, which
-/// `art::classify_exit` turns into the same "nothing new to export" message
+/// `the exit classifier` turns into the same "nothing new to export" message
 /// Variant 1 shows - so passing `-S` for a target already known to have no
 /// sidecar would fail every one of them outright rather than exporting with
 /// the default profile the user actually asked for.
-/// Picks `run`'s per-job `ArtCliMode` from `QueuedArtWork::has_sidecar` -
+/// Picks `run`'s per-job `SidecarCliMode` from `QueuedArtWork::has_sidecar` -
 /// pulled out as its own pure function so the choice is unit-testable without
 /// spinning up a full `AppHandle`/worker loop.
-pub(crate) fn mode_for_sidecar(has_sidecar: bool) -> ArtCliMode {
-    if has_sidecar { ArtCliMode::DefaultThenSidecarOverride } else { ArtCliMode::DefaultOnly }
+pub(crate) fn mode_for_sidecar(has_sidecar: bool) -> SidecarCliMode {
+    if has_sidecar { SidecarCliMode::DefaultThenSidecarOverride } else { SidecarCliMode::DefaultOnly }
+}
+
+/// Dispatches one round-trip export to the right converter module - the one
+/// place both `run` (Variant 2's worker, below) and `commands.rs`'s Variant 1
+/// handlers pick between `art`/`rawtherapee` so the two can't drift into
+/// different behavior for the same `RawConverterKind`. `DarkTable` has no
+/// working CLI invocation yet (see `ApplicationsConfig::active_raw_cli`,
+/// which already refuses to hand out a `DarkTable` path in the first place -
+/// this arm only exists so the match stays exhaustive against future
+/// converters, not as a reachable path today).
+pub(crate) async fn run_round_trip_cli<F>(
+    tool: RawConverterKind,
+    cli_path: &str,
+    exiftool_path: &str,
+    raw_path: &std::path::Path,
+    export_path: &std::path::Path,
+    mode: SidecarCliMode,
+    on_progress: F,
+    cancel: watch::Receiver<bool>,
+) -> Result<(), String>
+where
+    F: FnMut(u8) + Send,
+{
+    match tool {
+        RawConverterKind::Art => art::run_art_cli_with_metadata_fallback(cli_path, exiftool_path, raw_path, export_path, mode, on_progress, cancel).await,
+        RawConverterKind::RawTherapee => rawtherapee::run_rawtherapee_cli(cli_path, raw_path, export_path, mode, on_progress, cancel).await,
+        RawConverterKind::DarkTable => Err("DarkTable CLI round trip isn't implemented yet".to_string()),
+    }
 }
 
 pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedArtWork>) {
@@ -361,7 +404,7 @@ pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedArtWork>)
             queue.set_status(work.job_id, ArtJobStatus::Running);
 
             // Fetched fresh here (rather than threaded through `QueuedArtWork`
-            // like `art_cli_path` is) since it's only ever needed on the rare
+            // like `cli_path` is) since it's only ever needed on ART's rare
             // Exiv2-crash fallback path inside `run_art_cli_with_metadata_fallback`
             // - not worth widening `enqueue`'s signature (and every call site/test
             // that builds a `QueuedArtWork` tuple) for a value the common case
@@ -369,8 +412,9 @@ pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedArtWork>)
             let exiftool_path = app_for_job.state::<AppState>().config.lock().unwrap().applications.exiftool_path.clone();
             let progress_queue = queue.clone();
             let job_id = work.job_id;
-            let run = art::run_art_cli_with_metadata_fallback(
-                &work.art_cli_path,
+            let run = run_round_trip_cli(
+                work.tool,
+                &work.cli_path,
                 &exiftool_path,
                 &work.raw_path,
                 &work.export_path,
@@ -381,11 +425,11 @@ pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedArtWork>)
                 cancel_rx,
             );
             // Same "surface an error instead of hanging forever" reasoning as
-            // Variant 1 (commands::launch_art_round_trip) - see
-            // art::ART_CLI_RUN_TIMEOUT's doc comment for the budget.
-            let result = match tokio::time::timeout(art::ART_CLI_RUN_TIMEOUT, run).await {
+            // Variant 1 (commands::launch_raw_cli_round_trip) - see
+            // cli_process::RAW_CLI_RUN_TIMEOUT's doc comment for the budget.
+            let result = match tokio::time::timeout(cli_process::RAW_CLI_RUN_TIMEOUT, run).await {
                 Ok(r) => r,
-                Err(_) => Err(format!("Timed out after {}s running ART-cli", art::ART_CLI_RUN_TIMEOUT.as_secs())),
+                Err(_) => Err(format!("Timed out after {}s running the RAW converter CLI", cli_process::RAW_CLI_RUN_TIMEOUT.as_secs())),
             };
             match result {
                 Ok(()) => {
@@ -422,14 +466,15 @@ mod tests {
     /// `-d` (`DefaultOnly`) instead, or every such export in a batch fails.
     #[test]
     fn mode_for_sidecar_picks_default_only_without_a_sidecar() {
-        assert_eq!(mode_for_sidecar(false), ArtCliMode::DefaultOnly);
-        assert_eq!(mode_for_sidecar(true), ArtCliMode::DefaultThenSidecarOverride);
+        assert_eq!(mode_for_sidecar(false), SidecarCliMode::DefaultOnly);
+        assert_eq!(mode_for_sidecar(true), SidecarCliMode::DefaultThenSidecarOverride);
     }
 
     #[test]
     fn enqueue_assigns_ids_and_starts_pending() {
         let (queue, _rx) = ArtQueue::new();
         let ids = queue.enqueue(
+            RawConverterKind::Art,
             "/usr/bin/ART-cli",
             vec![("a".into(), PathBuf::from("/x/a.DNG"), PathBuf::from("/x/a_converted-1.jpg"), true), ("b".into(), PathBuf::from("/x/b.DNG"), PathBuf::from("/x/b_converted-1.jpg"), true)],
         );
@@ -444,7 +489,7 @@ mod tests {
     #[test]
     fn start_manual_tracks_a_variant_1_job_through_running_to_done() {
         let (queue, _rx) = ArtQueue::new();
-        let job_id = queue.start_manual("a".into());
+        let job_id = queue.start_manual("a".into(), RawConverterKind::Art);
         assert_eq!(queue.pending_count(), 1);
         assert_eq!(queue.snapshot()[0].status, ArtJobStatus::Pending);
 
@@ -464,8 +509,8 @@ mod tests {
     #[test]
     fn start_manual_ids_share_the_same_sequence_as_enqueue() {
         let (queue, _rx) = ArtQueue::new();
-        let enqueued = queue.enqueue("/usr/bin/ART-cli", vec![("a".into(), PathBuf::from("/x/a.DNG"), PathBuf::from("/x/a_converted-1.jpg"), true)]);
-        let manual_id = queue.start_manual("b".into());
+        let enqueued = queue.enqueue(RawConverterKind::Art, "/usr/bin/ART-cli", vec![("a".into(), PathBuf::from("/x/a.DNG"), PathBuf::from("/x/a_converted-1.jpg"), true)]);
+        let manual_id = queue.start_manual("b".into(), RawConverterKind::Art);
         assert_eq!(enqueued, vec![1]);
         assert_eq!(manual_id, 2);
     }
@@ -473,8 +518,8 @@ mod tests {
     #[test]
     fn enqueue_ids_keep_increasing_across_calls() {
         let (queue, _rx) = ArtQueue::new();
-        let first = queue.enqueue("/usr/bin/ART-cli", vec![("a".into(), PathBuf::from("/x/a.DNG"), PathBuf::from("/x/a_converted-1.jpg"), true)]);
-        let second = queue.enqueue("/usr/bin/ART-cli", vec![("b".into(), PathBuf::from("/x/b.DNG"), PathBuf::from("/x/b_converted-1.jpg"), true)]);
+        let first = queue.enqueue(RawConverterKind::Art, "/usr/bin/ART-cli", vec![("a".into(), PathBuf::from("/x/a.DNG"), PathBuf::from("/x/a_converted-1.jpg"), true)]);
+        let second = queue.enqueue(RawConverterKind::Art, "/usr/bin/ART-cli", vec![("b".into(), PathBuf::from("/x/b.DNG"), PathBuf::from("/x/b_converted-1.jpg"), true)]);
         assert_eq!(first, vec![1]);
         assert_eq!(second, vec![2]);
     }
@@ -483,12 +528,12 @@ mod tests {
     /// Variant 2's worker permits must draw from the same budget, or an
     /// interactive round trip run alongside an already-full batch queue
     /// oversubscribes concurrent `ART-cli` processes past
-    /// `MAX_CONCURRENT_ART_JOBS`.
+    /// `MAX_CONCURRENT_RAW_CLI_JOBS`.
     #[tokio::test]
     async fn acquire_permit_is_capped_and_shared_across_every_caller() {
         let (queue, _rx) = ArtQueue::new();
         let mut permits = Vec::new();
-        for _ in 0..MAX_CONCURRENT_ART_JOBS {
+        for _ in 0..MAX_CONCURRENT_RAW_CLI_JOBS {
             permits.push(queue.acquire_permit().await);
         }
         // Every slot is held (regardless of which "variant" asked for it) -
@@ -514,7 +559,7 @@ mod tests {
     #[test]
     fn set_progress_updates_the_matching_job_and_survives_finish() {
         let (queue, _rx) = ArtQueue::new();
-        let ids = queue.enqueue("/usr/bin/ART-cli", vec![("a".into(), PathBuf::from("/x/a.DNG"), PathBuf::from("/x/a_converted-1.jpg"), true)]);
+        let ids = queue.enqueue(RawConverterKind::Art, "/usr/bin/ART-cli", vec![("a".into(), PathBuf::from("/x/a.DNG"), PathBuf::from("/x/a_converted-1.jpg"), true)]);
         queue.set_progress(ids[0], 42);
         assert_eq!(queue.snapshot()[0].progress_percent, Some(42));
 
@@ -528,6 +573,7 @@ mod tests {
     fn clear_completed_drops_only_done_and_failed() {
         let (queue, _rx) = ArtQueue::new();
         let ids = queue.enqueue(
+            RawConverterKind::Art,
             "/usr/bin/ART-cli",
             vec![("a".into(), PathBuf::from("/x/a.DNG"), PathBuf::from("/x/a_converted-1.jpg"), true), ("b".into(), PathBuf::from("/x/b.DNG"), PathBuf::from("/x/b_converted-1.jpg"), true)],
         );
@@ -541,7 +587,7 @@ mod tests {
     #[test]
     fn request_cancel_flags_a_pending_job_and_signals_its_receiver() {
         let (queue, _rx) = ArtQueue::new();
-        let ids = queue.enqueue("/usr/bin/ART-cli", vec![("a".into(), PathBuf::from("/x/a.DNG"), PathBuf::from("/x/a_converted-1.jpg"), true)]);
+        let ids = queue.enqueue(RawConverterKind::Art, "/usr/bin/ART-cli", vec![("a".into(), PathBuf::from("/x/a.DNG"), PathBuf::from("/x/a_converted-1.jpg"), true)]);
         let cancel_rx = queue.cancel_receiver(ids[0]).expect("job should have a registered cancel channel");
         assert!(!*cancel_rx.borrow(), "not cancelled yet");
 
@@ -553,7 +599,7 @@ mod tests {
     #[test]
     fn request_cancel_is_a_no_op_once_the_job_has_finished() {
         let (queue, _rx) = ArtQueue::new();
-        let ids = queue.enqueue("/usr/bin/ART-cli", vec![("a".into(), PathBuf::from("/x/a.DNG"), PathBuf::from("/x/a_converted-1.jpg"), true)]);
+        let ids = queue.enqueue(RawConverterKind::Art, "/usr/bin/ART-cli", vec![("a".into(), PathBuf::from("/x/a.DNG"), PathBuf::from("/x/a_converted-1.jpg"), true)]);
         queue.finish(ids[0], ArtJobStatus::Done, Some("a_converted-1.jpg".into()), None);
 
         assert!(!queue.request_cancel(ids[0]), "an already-finished job can't be cancelled");
@@ -569,7 +615,7 @@ mod tests {
     #[test]
     fn finish_removes_the_cancel_channel_so_a_later_cancel_is_a_no_op() {
         let (queue, _rx) = ArtQueue::new();
-        let ids = queue.enqueue("/usr/bin/ART-cli", vec![("a".into(), PathBuf::from("/x/a.DNG"), PathBuf::from("/x/a_converted-1.jpg"), true)]);
+        let ids = queue.enqueue(RawConverterKind::Art, "/usr/bin/ART-cli", vec![("a".into(), PathBuf::from("/x/a.DNG"), PathBuf::from("/x/a_converted-1.jpg"), true)]);
         queue.finish(ids[0], ArtJobStatus::Failed, None, Some("demosaic failed".into()));
         assert!(queue.cancel_receiver(ids[0]).is_none());
     }
@@ -580,6 +626,7 @@ mod tests {
             ArtJob {
                 job_id: 0,
                 asset_id: "a".into(),
+                tool: RawConverterKind::Art,
                 status,
                 export_file_name: None,
                 progress_percent: None,

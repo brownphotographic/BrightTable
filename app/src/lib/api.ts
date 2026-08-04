@@ -47,20 +47,43 @@ export interface AppChoice {
   extraArgs: string;
 }
 
+// Which RAW converter's CLI drives "Tweak RAW Roundtrip"/"Headless RAW
+// Roundtrip" - mirrors config.rs's RawConverterKind. `null` (on
+// ApplicationsConfig.activeRawConverter) means the plain launch-only editor
+// flow (no CLI round trip active). `darktable` can be selected and its own
+// path persisted like the other two, but has no working CLI invocation yet -
+// see lib/applications.tsx's derived `rawRoundTripEnabled`.
+export type RawConverterKind = 'art' | 'rawtherapee' | 'darktable';
+
+// One RAW converter's own settings - its GUI app *and* its CLI path
+// together, rather than a shared `rawEditor` app picked separately from
+// which CLI processes the result (that used to be one combined shape before
+// RawTherapee/DarkTable existed - each tool's sidecar format is its own, so
+// launching ART's GUI and running rawtherapee-cli against what it wrote, or
+// vice versa, was never coherent). Mirrors config.rs's RawConverterConfig.
+export interface RawConverterConfig {
+  app: AppChoice | null;
+  cliPath: string;
+}
+
 export interface ApplicationsConfig {
-  rawEditor: AppChoice | null;
   externalEditor: AppChoice | null;
-  // Path to the ART-cli binary - a plain string (no .desktop entry exists for
-  // it, so it needs its own file-browse UI, not the app picker). A non-empty
-  // value is the single signal that switches "Tweak RAW Roundtrip"/the new
-  // "Headless RAW Roundtrip" action over to the ART CLI round trip - see
-  // lib/applications.tsx's derived `artRoundTripEnabled`.
-  artCliPath: string;
-  // Path to the `exiftool` binary - same shape as artCliPath. Required by
-  // the Export to Folder/Share to Flickr dialogs' "Keep all metadata"/
-  // "Remove GPS only" options (see lib/applications.tsx's derived
-  // `exiftoolConfigured`); "Strip all metadata" needs no external tool for a
-  // JPEG-format rendition.
+  // Which converter's own config below actually drives "Tweak RAW
+  // Roundtrip"/"Headless RAW Roundtrip"/the plain launch-only RAW Editor
+  // role - see lib/applications.tsx's derived `rawRoundTripEnabled`/
+  // `activeRawEditorApp`.
+  activeRawConverter: RawConverterKind | null;
+  art: RawConverterConfig;
+  rawtherapee: RawConverterConfig;
+  // Persisted the same as the other two so switching the active converter
+  // back and forth in Preferences doesn't lose it, but not yet wired to a
+  // working roundtrip.
+  darktable: RawConverterConfig;
+  // Path to the `exiftool` binary - same shape as each RawConverterConfig's
+  // cliPath. Required by the Export to Folder/Share to Flickr dialogs' "Keep
+  // all metadata"/"Remove GPS only" options (see lib/applications.tsx's
+  // derived `exiftoolConfigured`); "Strip all metadata" needs no external
+  // tool for a JPEG-format rendition.
   exiftoolPath: string;
 }
 
@@ -656,53 +679,53 @@ export function clearCompletedProcessingJobs(): Promise<void> {
   return invoke('clear_completed_processing_jobs');
 }
 
-// Variant 1 of the ART CLI round trip (see the feature plan): opens ART
-// itself (launchArtRoundTrip awaits ART's own process exit as the "done
-// editing" signal - a long-running invoke, not fire-and-forget like
-// launchEditor), then - once a sidecar confirms there's something to export -
-// hands the actual ART-cli run off to the backend's ArtQueue and returns
-// immediately, rather than waiting for it to finish too. Only reachable when
-// applications.artCliPath is non-empty (see useApplications' derived
-// artRoundTripEnabled) - the generic (non-ART) "Tweak RAW Roundtrip" flow
-// keeps calling launchEditor unchanged. `id` is only used backend-side to
-// label/thumbnail this export's row in the shared ArtQueue board (see
-// art_queue.rs's `start_manual`), so it shows up in ActivityIndicator/
-// ActivityPanel alongside Headless RAW Roundtrip jobs.
+// Variant 1 of the RAW CLI round trip (see the feature plan): opens the RAW
+// editor itself (launchRawCliRoundTrip awaits the editor's own process exit
+// as the "done editing" signal - a long-running invoke, not fire-and-forget
+// like launchEditor), then - once a sidecar confirms there's something to
+// export - hands the actual converter CLI run off to the backend's ArtQueue
+// and returns immediately, rather than waiting for it to finish too. Only
+// reachable when rawRoundTripEnabled (useApplications) - the generic
+// (non-CLI-driven) "Tweak RAW Roundtrip" flow keeps calling launchEditor
+// unchanged. `id` is only used backend-side to label/thumbnail this export's
+// row in the shared ArtQueue board (see art_queue.rs's `start_manual`), so it
+// shows up in ActivityIndicator/ActivityPanel alongside Headless RAW
+// Roundtrip jobs.
 // Mirrors commands.rs's ArtRoundTripOutcome: either the export is now running
 // in the background under jobId (track it the same way a Headless RAW
-// Roundtrip job is - see useArtJobReconciliation), or ART closed with no
-// `.arp`/`.pp3` ever written (no edit made or saved) - in which case the
-// caller is expected to show a choice ("use ART's default profile anyway" vs.
-// "cancel") via finishArtRoundTripWithDefaultProfile/cancelArtRoundTrip
+// Roundtrip job is - see useArtJobReconciliation), or the editor closed with
+// no sidecar ever written (no edit made or saved) - in which case the caller
+// is expected to show a choice ("use the default profile anyway" vs.
+// "cancel") via finishRawCliRoundTripWithDefaultProfile/cancelRawCliRoundTrip
 // rather than treating this as a hard failure.
 export type ArtRoundTripOutcome =
   | { kind: 'processing'; jobId: number }
   | { kind: 'noSidecar'; jobId: number; rawPath: string; exportPath: string };
 
-export function launchArtRoundTrip(
+export function launchRawCliRoundTrip(
   id: string,
   originalPath: string | null,
   fileName: string,
   fileExtension: string,
   rawEditor: AppChoice,
 ): Promise<ArtRoundTripOutcome> {
-  return invoke('launch_art_round_trip', { id, originalPath, fileName, fileExtension, rawEditor });
+  return invoke('launch_raw_cli_round_trip', { id, originalPath, fileName, fileExtension, rawEditor });
 }
 
-// Second half of the no-sidecar choice - kicks off ART-cli in the background
-// against the already-resolved rawPath/exportPath (from a `noSidecar`
-// outcome) using ART's default profile, the user's alternative to
-// cancelling. Returns immediately, same as launchArtRoundTrip's own
+// Second half of the no-sidecar choice - kicks off the converter CLI in the
+// background against the already-resolved rawPath/exportPath (from a
+// `noSidecar` outcome) using its default profile, the user's alternative to
+// cancelling. Returns immediately, same as launchRawCliRoundTrip's own
 // background export - the caller already has jobId from the `noSidecar`
 // outcome, so it tracks completion via useArtJobReconciliation the same way.
-export function finishArtRoundTripWithDefaultProfile(jobId: number, rawPath: string, exportPath: string): Promise<void> {
-  return invoke('finish_art_round_trip_with_default_profile', { jobId, rawPath, exportPath });
+export function finishRawCliRoundTripWithDefaultProfile(jobId: number, rawPath: string, exportPath: string): Promise<void> {
+  return invoke('finish_raw_cli_round_trip_with_default_profile', { jobId, rawPath, exportPath });
 }
 
 // The other half - releases the reserved export path placeholder and marks
 // the queue row as cancelled, for when the user picks "cancel" instead.
-export function cancelArtRoundTrip(jobId: number, exportPath: string): Promise<void> {
-  return invoke('cancel_art_round_trip', { jobId, exportPath });
+export function cancelRawCliRoundTrip(jobId: number, exportPath: string): Promise<void> {
+  return invoke('cancel_raw_cli_round_trip', { jobId, exportPath });
 }
 
 // One Headless RAW Roundtrip target - mirrors MetadataEditTarget plus the
@@ -717,10 +740,10 @@ export interface ArtRoundTripTarget {
 // Enqueues Variant 2 (Headless RAW Roundtrip) onto the backend's background
 // ArtQueue and returns immediately with the assigned job ids - same
 // "enqueue and let the frontend poll" shape as startImport/
-// pasteImageProcessing. Accepts one target or many; the CLI renders each in
-// turn.
-export function batchArtRoundTrip(targets: ArtRoundTripTarget[]): Promise<number[]> {
-  return invoke('batch_art_round_trip', { targets });
+// pasteImageProcessing. Accepts one target or many; the active converter's
+// CLI renders each in turn.
+export function batchRawCliRoundTrip(targets: ArtRoundTripTarget[]): Promise<number[]> {
+  return invoke('batch_raw_cli_round_trip', { targets });
 }
 
 export type ArtJobStatus = 'pending' | 'running' | 'done' | 'failed';
@@ -730,19 +753,23 @@ export type ArtJobStatus = 'pending' | 'running' | 'done' | 'failed';
 export interface ArtJob {
   jobId: number;
   assetId: string;
+  // Which converter this job ran through - lets the Activity panel label
+  // each row (e.g. "ART" vs "RawTherapee").
+  tool: RawConverterKind;
   status: ArtJobStatus;
   // Set once `done` - the generated export's bare filename, so
   // useArtJobReconciliation can call ingestRoundTripExport without a second
   // round trip to discover it.
   exportFileName: string | null;
-  // Live 0-100 percentage while `running`, parsed backend-side from
-  // ART-cli's own `--progress` output - null until the first progress line
-  // arrives, and left at its last value (not reset) once the job settles.
+  // Live 0-100 percentage while `running`, parsed backend-side from the
+  // converter CLI's own progress output where it emits one - null until the
+  // first progress line arrives, and left at its last value (not reset) once
+  // the job settles.
   progressPercent: number | null;
   createdAtMs: number;
   finishedAtMs: number | null;
   error: string | null;
-  // True once cancel_art_job has been requested for this job while it was
+  // True once cancelRawCliJob has been requested for this job while it was
   // still pending/running - see art_queue.rs's ArtJob::cancel_requested.
   cancelRequested: boolean;
 }
@@ -752,21 +779,21 @@ export interface ArtQueueStatus {
   pendingCount: number;
 }
 
-export function getArtQueueStatus(): Promise<ArtQueueStatus> {
-  return invoke('get_art_queue_status');
+export function getRawCliQueueStatus(): Promise<ArtQueueStatus> {
+  return invoke('get_raw_cli_queue_status');
 }
 
-export function clearCompletedArtJobs(): Promise<void> {
-  return invoke('clear_completed_art_jobs');
+export function clearCompletedRawCliJobs(): Promise<void> {
+  return invoke('clear_completed_raw_cli_jobs');
 }
 
-// Cancels one still-pending/running ART round trip job (Headless RAW
+// Cancels one still-pending/running RAW CLI round trip job (Headless RAW
 // Roundtrip's queue or a Variant 1 interactive round trip, both tracked on
 // the same board) - the Activity panel's "Cancel Selected" bulk action.
 // Resolves to false if the job had already finished by the time the backend
 // looked at it, which isn't an error - just nothing left to cancel.
-export function cancelArtJob(jobId: number): Promise<boolean> {
-  return invoke('cancel_art_job', { jobId });
+export function cancelRawCliJob(jobId: number): Promise<boolean> {
+  return invoke('cancel_raw_cli_job', { jobId });
 }
 
 // Grid cells render at ~160px - "thumbnail" (~30KB) is the right size for that.
@@ -794,12 +821,14 @@ export function personThumbnailSrc(personId: string): string {
   return `immich-thumb://person/${personId}`;
 }
 
-export interface MemoryUsage {
+export interface ResourceUsage {
   rssBytes: number;
+  ramPercent: number;
+  cpuPercent: number;
 }
 
-export function getMemoryUsage(): Promise<MemoryUsage> {
-  return invoke('get_memory_usage');
+export function getResourceUsage(): Promise<ResourceUsage> {
+  return invoke('get_resource_usage');
 }
 
 export interface ThumbCacheStats {

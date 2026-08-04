@@ -1,5 +1,5 @@
 //! Pure filename-generation logic for the ART CLI round trip
-//! (`commands::launch_art_round_trip`/`batch_art_round_trip`) - mirrors
+//! (`commands::launch_raw_cli_round_trip`/`batch_raw_cli_round_trip`) - mirrors
 //! `smartStack.ts`'s naming helpers exactly, since ImmAture itself invokes
 //! `ART-cli` and controls the output filename deterministically (rather than
 //! discovering it after the fact via `round_trip.rs`'s file watcher), and the
@@ -69,7 +69,7 @@ pub fn base_name<'a>(file_name: &'a str, file_extension: &str) -> &'a str {
 /// writing into an already-claimed empty file is expected, not a conflict.
 /// Callers that end up not writing anything to a claimed path (a later error,
 /// a timeout) are expected to remove the leftover empty file themselves - see
-/// `art_queue.rs`'s worker and `commands::launch_art_round_trip`'s cleanup on
+/// `art_queue.rs`'s worker and `commands::launch_raw_cli_round_trip`'s cleanup on
 /// their own error paths.
 pub fn next_export_path(dir: &Path, base: &str, core: &str, ext: &str) -> io::Result<PathBuf> {
     let mut n: u32 = 1;

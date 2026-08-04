@@ -1,6 +1,7 @@
 mod apps;
 mod art;
 mod art_queue;
+mod cli_process;
 mod commands;
 mod config;
 mod edit_queue;
@@ -17,6 +18,7 @@ mod paths;
 mod print;
 mod processing_queue;
 mod protocol;
+mod rawtherapee;
 mod reveal;
 mod rotate;
 mod round_trip;
@@ -193,7 +195,7 @@ pub fn run() {
             commands::get_import_queue_status,
             commands::clear_completed_import_jobs,
             commands::scan_immich_library,
-            commands::get_memory_usage,
+            commands::get_resource_usage,
             commands::get_thumb_cache_info,
             commands::clear_thumb_cache,
             commands::get_edit_queue_status,
@@ -201,13 +203,13 @@ pub fn run() {
             commands::paste_image_processing,
             commands::get_processing_queue_status,
             commands::clear_completed_processing_jobs,
-            commands::launch_art_round_trip,
-            commands::finish_art_round_trip_with_default_profile,
-            commands::cancel_art_round_trip,
-            commands::cancel_art_job,
-            commands::batch_art_round_trip,
-            commands::get_art_queue_status,
-            commands::clear_completed_art_jobs,
+            commands::launch_raw_cli_round_trip,
+            commands::finish_raw_cli_round_trip_with_default_profile,
+            commands::cancel_raw_cli_round_trip,
+            commands::cancel_raw_cli_job,
+            commands::batch_raw_cli_round_trip,
+            commands::get_raw_cli_queue_status,
+            commands::clear_completed_raw_cli_jobs,
             commands::reveal_in_file_manager,
             commands::open_video_externally,
             commands::force_quit,

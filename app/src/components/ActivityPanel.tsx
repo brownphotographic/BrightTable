@@ -5,7 +5,7 @@ import { useProcessingQueue } from '../lib/processingQueue';
 import { useArtQueue } from '../lib/artQueue';
 import { useExportQueue } from '../lib/exportQueue';
 import {
-  cancelArtJob,
+  cancelRawCliJob,
   cancelExportJob,
   thumbnailSrc,
   type ArtJob,
@@ -17,6 +17,7 @@ import {
   type ImportJob,
   type ImportJobStatus,
   type ProcessingJobStatus,
+  type RawConverterKind,
 } from '../lib/api';
 
 function kindLabel(job: EditJob): string {
@@ -78,6 +79,10 @@ function artStatusPill(status: ArtJobStatus): { label: string; color: string; bg
       return { label: 'Failed', color: '#ff8080', bg: 'rgba(224,27,36,0.2)' };
   }
 }
+
+// Display label for each job's `tool` field - lets a row read "ART" vs
+// "RawTherapee" now that both share this same board/section.
+const RAW_CONVERTER_LABEL: Record<RawConverterKind, string> = { art: 'ART', rawtherapee: 'RawTherapee', darktable: 'DarkTable' };
 
 // `art.rs::classify_exit`'s fixed wording for a RAW file whose embedded
 // metadata makes ART-cli's bundled Exiv2 crash outright (confirmed live
@@ -181,7 +186,7 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
   function cancelSelectedArtJobs() {
     const ids = [...selectedArtJobIds];
     setSelectedArtJobIds(new Set());
-    for (const jobId of ids) cancelArtJob(jobId).catch(() => {});
+    for (const jobId of ids) cancelRawCliJob(jobId).catch(() => {});
   }
 
   const hasCompleted =
@@ -356,9 +361,9 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
             })
           )}
 
-          <SectionLabel>ART Round Trip</SectionLabel>
+          <SectionLabel>RAW Round Trip</SectionLabel>
           {sortedArt.length === 0 ? (
-            <EmptyRow>No ART round trips yet this session.</EmptyRow>
+            <EmptyRow>No RAW round trips yet this session.</EmptyRow>
           ) : (
             <>
               <div style={{ display: 'flex', alignItems: 'center', padding: '0 8px 6px', gap: 10 }}>
@@ -433,6 +438,7 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
                     />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={rowTitle}>{job.exportFileName ?? 'RAW Roundtrip'}</div>
+                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 1 }}>{RAW_CONVERTER_LABEL[job.tool]}</div>
                       {job.error && !cancelled && <div style={permanent ? rowWarning : rowError}>{job.error}</div>}
                       {!job.error && stalled && (
                         <div style={rowWarning}>

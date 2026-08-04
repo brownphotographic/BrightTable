@@ -579,7 +579,7 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
   }
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
       {enqueueError && <InlineWarningBanner message={enqueueError} onDismiss={() => setEnqueueError(null)} />}
       <div style={{ flexShrink: 0, height: 46, display: 'flex', alignItems: 'center', gap: 10, padding: '0 16px', borderBottom: '1px solid rgba(0,0,0,0.3)' }}>
         <div onClick={() => setOpenTagId(null)} style={{ cursor: 'default', color: 'var(--accent)', fontSize: 13 }}>
@@ -598,6 +598,12 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
       </div>
 
       {selected.size > 0 && (
+        // Overlaid below the fixed header, not in-flow - see
+        // PhotosBrowser.tsx's identical comment for why: an in-flow bar
+        // reflows the grid on the very click that first selects something,
+        // so a following double-click's second click misses the tile it
+        // started on.
+        <div style={{ position: 'absolute', top: 46, left: 0, right: 0, zIndex: 5 }}>
         <SelectionBar
           count={selected.size}
           onCancel={deselectAll}
@@ -613,6 +619,7 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
           onAddToTag={() => setAddToTagTargets([...selected])}
           onRemoveFromTag={() => setConfirmRemoveSelection(true)}
         />
+        </div>
       )}
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
