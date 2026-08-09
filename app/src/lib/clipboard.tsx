@@ -1,14 +1,19 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
-import type { AssetMetadataPatch } from './api';
+import type { AssetMetadataPatch, RawConverterKind } from './api';
 
 // What "Copy Image Processing" remembers: enough to call
 // pasteImageProcessing (the source's own local/originalPath and a display
 // name for entry-point labels/tooltips), not the sidecar's actual contents -
-// the backend re-reads the source file fresh at paste time.
+// the backend re-reads every source fresh at paste time (paths::find_all_processing_sources
+// runs again then, not just once here). `tools` is display-only for the same
+// reason - which tools' settings the paste confirm dialog says it's about to
+// apply - fetched fresh at copy time (see handleCopyImageProcessing) rather
+// than trusted to still be accurate by the time paste actually runs.
 export interface CopiedProcessingSource {
   assetId: string;
   originalPath: string;
   fileName: string;
+  tools: RawConverterKind[];
 }
 
 interface ClipboardContextValue {

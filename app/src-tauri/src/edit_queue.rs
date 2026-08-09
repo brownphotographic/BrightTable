@@ -23,7 +23,7 @@
 //! shared `hard`+`sync` Tailscale-backed mount for minutes at a time -
 //! unbounded fan-out would risk making that worse, not better.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -33,6 +33,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use tokio::sync::{mpsc, Semaphore};
 
+use crate::asset_locks::AssetLocks;
 use crate::commands::MetadataEditTarget;
 use crate::config::LibraryConfig;
 use crate::immich::ImmichClient;
@@ -101,38 +102,33 @@ pub struct EditQueue {
     board: Mutex<VecDeque<EditJob>>,
     next_id: AtomicU64,
     tx: mpsc::UnboundedSender<QueuedWork>,
-    // One async lock per asset id ever edited this session, created lazily.
-    // The worker holds an asset's lock across its entire write (XMP patch +
-    // Immich PUT) so two jobs for the *same* asset - e.g. a quick re-rate
-    // before the first write finished - can never run concurrently. Without
-    // this, both jobs' XMP writes raced on the identical atomic-write temp
-    // filename (`xmp.rs::write_atomic` names it from the target path plus
-    // this process's pid, which is constant across concurrent jobs), so
-    // whichever job's rename lost the race failed with a misleading
-    // "containing folder appears to be missing" - confirmed live, not
-    // actually an NFS/mount problem. Jobs for *different* assets are
-    // unaffected and still run up to `MAX_CONCURRENT_JOBS` at once. Never
-    // evicted - one `Arc<Mutex<()>>` per distinct asset id touched all
-    // session is a few dozen bytes each, negligible next to the capped job
-    // history above.
-    asset_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    // One async lock per asset id ever edited this session, created lazily -
+    // shared with `ProcessingQueue` via `AssetLocks` (see its own doc
+    // comment for why: `ProcessingQueue`'s darktable-history writes now
+    // target this same `.xmp` file, so the two queues must serialize against
+    // each other, not just against themselves). The worker holds an asset's
+    // lock across its entire write (XMP patch + Immich PUT) so two jobs for
+    // the *same* asset - e.g. a quick re-rate before the first write
+    // finished - can never run concurrently. Without this, both jobs' XMP
+    // writes raced on the identical atomic-write temp filename
+    // (`xmp.rs::write_atomic` names it from the target path plus this
+    // process's pid, which is constant across concurrent jobs), so whichever
+    // job's rename lost the race failed with a misleading "containing folder
+    // appears to be missing" - confirmed live, not actually an NFS/mount
+    // problem. Jobs for *different* assets are unaffected and still run up
+    // to `MAX_CONCURRENT_JOBS` at once.
+    asset_locks: Arc<AssetLocks>,
 }
 
 impl EditQueue {
-    pub fn new() -> (Arc<Self>, mpsc::UnboundedReceiver<QueuedWork>) {
+    pub fn new(asset_locks: Arc<AssetLocks>) -> (Arc<Self>, mpsc::UnboundedReceiver<QueuedWork>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        let queue = Arc::new(Self {
-            board: Mutex::new(VecDeque::new()),
-            next_id: AtomicU64::new(1),
-            tx,
-            asset_locks: Mutex::new(HashMap::new()),
-        });
+        let queue = Arc::new(Self { board: Mutex::new(VecDeque::new()), next_id: AtomicU64::new(1), tx, asset_locks });
         (queue, rx)
     }
 
     fn asset_lock(&self, asset_id: &str) -> Arc<tokio::sync::Mutex<()>> {
-        let mut locks = self.asset_locks.lock().unwrap();
-        locks.entry(asset_id.to_string()).or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))).clone()
+        self.asset_locks.lock_for(asset_id)
     }
 
     /// Pushes one `Pending` job per target and hands each to the drain
@@ -368,7 +364,7 @@ mod tests {
 
     #[test]
     fn enqueue_assigns_ids_and_starts_pending() {
-        let (queue, _rx) = EditQueue::new();
+        let (queue, _rx) = EditQueue::new(AssetLocks::new());
         let ids = queue.enqueue(&LibraryConfig::default(), &[target("a"), target("b")], Some(4), None, None);
         assert_eq!(ids, vec![1, 2]);
 
@@ -378,31 +374,15 @@ mod tests {
         assert_eq!(queue.pending_count(), 2);
     }
 
-    #[test]
-    fn asset_lock_is_shared_per_asset_and_distinct_across_assets() {
-        let (queue, _rx) = EditQueue::new();
-        let a1 = queue.asset_lock("asset-a");
-        let a2 = queue.asset_lock("asset-a");
-        let b = queue.asset_lock("asset-b");
-        assert!(Arc::ptr_eq(&a1, &a2), "same asset id must reuse the same lock");
-        assert!(!Arc::ptr_eq(&a1, &b), "different asset ids must get independent locks");
-    }
-
-    #[tokio::test]
-    async fn asset_lock_serializes_same_asset_but_not_different_assets() {
-        let (queue, _rx) = EditQueue::new();
-        let same_a = queue.asset_lock("asset-a");
-        let same_a2 = queue.asset_lock("asset-a");
-        let other_b = queue.asset_lock("asset-b");
-
-        let _held = same_a.try_lock().expect("uncontended lock must be immediately acquirable");
-        assert!(same_a2.try_lock().is_err(), "a second job for the same asset must not proceed concurrently");
-        assert!(other_b.try_lock().is_ok(), "a different asset's job must be unaffected");
-    }
+    // Shared per-asset lock semantics (same lock reused per asset id,
+    // distinct across ids, serializes concurrent same-asset access) are now
+    // covered by `asset_locks.rs`'s own tests - `EditQueue::asset_lock` is a
+    // thin passthrough to the shared `AssetLocks` instance (see its field
+    // doc comment for why it's shared with `ProcessingQueue`).
 
     #[test]
     fn enqueue_ids_keep_increasing_across_calls() {
-        let (queue, _rx) = EditQueue::new();
+        let (queue, _rx) = EditQueue::new(AssetLocks::new());
         let first = queue.enqueue(&LibraryConfig::default(), &[target("a")], None, Some(true), None);
         let second = queue.enqueue(&LibraryConfig::default(), &[target("b")], None, Some(true), None);
         assert_eq!(first, vec![1]);

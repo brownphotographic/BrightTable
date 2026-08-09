@@ -4,7 +4,7 @@
 
 **An LLM coded project. Human generated requirements and testing.**
 
-I designed this for myself because I dislike the user experience and functionality that exists on GNU/Linux for managing and editing photos. For me, this gap it fills the gap between DAM and raw editing and honestly an experience I have been pining for since the great Apple Aperture bit the dust a decade ago. There are some great tools out there already like RawTherapee/ART, Digikam, RapidRAW, Digikam, Shotwell. But to me, none of them had exactly the user experience and workflow that I really wanted. So after a couple of years of threatening myself to build my own tool: I did. 
+I designed this for myself because I dislike the user experience and functionality that exists on GNU/Linux for managing and editing photos. For me, this gap it fills the gap between DAM and raw editing and honestly an experience I have been pining for since the great Apple Aperture bit the dclust a decade ago. There are some great tools out there already like RawTherapee/ART, Digikam, RapclaiuidRAW, Digikam, Shotwell. But to me, none of them had exactly the user experience and workflow that I really wanted. So after a couple of years of threatening myself to build my own tool: I did. 
 
 If you decide to use this, please read the warnings below.
 

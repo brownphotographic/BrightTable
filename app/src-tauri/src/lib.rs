@@ -1,9 +1,11 @@
 mod apps;
 mod art;
 mod art_queue;
+mod asset_locks;
 mod cli_process;
 mod commands;
 mod config;
+mod darktable;
 mod edit_queue;
 mod embedded;
 mod export_naming;
@@ -76,7 +78,12 @@ pub fn run() {
                 );
             }
             let cfg = config::load(app.handle());
-            let (edit_queue, edit_queue_rx) = edit_queue::EditQueue::new();
+            // Shared between EditQueue and ProcessingQueue - see
+            // `asset_locks.rs`'s own doc comment for why the two queues need
+            // to serialize against each other now, not just against
+            // themselves.
+            let asset_locks = asset_locks::AssetLocks::new();
+            let (edit_queue, edit_queue_rx) = edit_queue::EditQueue::new(asset_locks.clone());
             // Lives under the External Library's own local mount (a hidden
             // `.brighttable` subdir), not the OS app-config dir - the whole
             // point of the dedupe cache is "have I already imported this
@@ -108,7 +115,7 @@ pub fn run() {
             let (import_queue, import_queue_rx) = import::ImportQueue::new(history_path);
             let max_concurrent_import_jobs = cfg.import.max_concurrent_jobs;
             let (round_trip, round_trip_rx) = round_trip::RoundTripWatcher::new();
-            let (processing_queue, processing_queue_rx) = processing_queue::ProcessingQueue::new();
+            let (processing_queue, processing_queue_rx) = processing_queue::ProcessingQueue::new(asset_locks.clone());
             let (art_queue, art_queue_rx) = art_queue::ArtQueue::new();
             let (export_queue, export_queue_rx) = export_queue::ExportQueue::new();
             app.manage(AppState::new(cfg, edit_queue, import_queue, round_trip.clone(), processing_queue, art_queue, export_queue));

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config::LibraryConfig;
+use crate::config::{LibraryConfig, RawConverterKind};
 use crate::{embedded, xmp};
 
 /// Resolves an asset's server-side `original_path` (e.g.
@@ -172,6 +172,125 @@ pub fn find_processing_sidecar(original: &Path) -> Option<(PathBuf, ProcessingKi
         })
         .max_by_key(|(modified, rev_priority, ..)| (*modified, *rev_priority))
         .map(|(_, _, path, kind, form)| (path, kind, form))
+}
+
+/// One tool's develop-adjustment settings found on a source asset, for
+/// Copy/Paste Image Processing's multi-tool paste (`find_all_processing_sources`)
+/// - unlike `find_processing_sidecar`'s single "winner" answer, every
+/// present tool gets its own entry here, since Paste applies "one for each"
+/// tool the source actually has settings from, not just the most-recently-
+/// modified one. `Sidecar` covers ART/RawTherapee's own dedicated files (a
+/// plain copy is always safe - see `processing_queue::atomic_copy_sidecar`);
+/// `DarkTable` instead only carries the `.xmp` path to read from, since its
+/// content can't be blindly copied onto a target's own `.xmp` without
+/// clobbering that file's rating/description (see `xmp::paste_darktable_island`,
+/// which does the actual surgical merge at apply time).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProcessingSource {
+    Sidecar { path: PathBuf, kind: ProcessingKind, form: SidecarForm },
+    DarkTable { xmp_path: PathBuf },
+}
+
+impl ProcessingSource {
+    /// Which tool this source represents, for per-job labeling
+    /// (`processing_queue::ProcessingJob::tool`) - mirrors the
+    /// `RawConverterKind` wire format the RAW CLI roundtrip feature already
+    /// established, so the Activity panel can reuse the same label map for
+    /// both features' job rows.
+    pub fn tool(&self) -> RawConverterKind {
+        match self {
+            ProcessingSource::Sidecar { kind: ProcessingKind::Arp, .. } => RawConverterKind::Art,
+            ProcessingSource::Sidecar { kind: ProcessingKind::Pp3, .. } => RawConverterKind::RawTherapee,
+            ProcessingSource::DarkTable { .. } => RawConverterKind::DarkTable,
+        }
+    }
+}
+
+/// Resolves a single `ProcessingKind`'s own winning form (append vs.
+/// replaced) on disk - the same mtime tie-break `find_processing_sidecar`
+/// uses across all four candidates, scoped down to just the two forms of one
+/// kind, so `find_all_processing_sources` can ask "does *this* kind have
+/// anything" independently per kind rather than picking one global winner
+/// across both kinds the way `find_processing_sidecar` does.
+/// `find_processing_sidecar` itself is left untouched rather than
+/// rewritten in terms of this - its own tests pin its exact global tie-break
+/// behavior, and there's no need to risk that for a function this one
+/// doesn't call.
+fn resolve_kind_sidecar(original: &Path, kind: ProcessingKind) -> Option<(PathBuf, SidecarForm)> {
+    let candidates = [
+        (kind.sidecar_path_with_form(original, SidecarForm::Append), SidecarForm::Append),
+        (kind.sidecar_path_with_form(original, SidecarForm::Replaced), SidecarForm::Replaced),
+    ];
+    candidates
+        .into_iter()
+        .enumerate()
+        .filter_map(|(priority, (path, form))| {
+            let modified = fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+            // Reverse(priority) so Append (priority 0) wins an exact mtime
+            // tie, same tie-break `find_processing_sidecar` gives Append
+            // over Replaced.
+            Some((modified, std::cmp::Reverse(priority), path, form))
+        })
+        .max_by_key(|(modified, rev_priority, ..)| (*modified, *rev_priority))
+        .map(|(_, _, path, form)| (path, form))
+}
+
+/// Resolves *every* tool's develop-adjustment settings present on `original`,
+/// not just the single most-recent one `find_processing_sidecar` picks - an
+/// asset with both an ART `.arp` and darktable history gets two entries
+/// here, not one. `find_processing_sidecar` is unchanged and kept for its
+/// own single-winner caller (`has_round_trip_sidecar`'s ART/RawTherapee arm,
+/// RAW CLI roundtrip), which legitimately only cares about the currently
+/// *active* converter, not "everything present."
+pub fn find_all_processing_sources(original: &Path) -> Vec<ProcessingSource> {
+    let mut sources = Vec::new();
+    for kind in [ProcessingKind::Arp, ProcessingKind::Pp3] {
+        if let Some((path, form)) = resolve_kind_sidecar(original, kind) {
+            sources.push(ProcessingSource::Sidecar { path, kind, form });
+        }
+    }
+    if let Some(xmp_path) = find_darktable_history_sidecar(original) {
+        sources.push(ProcessingSource::DarkTable { xmp_path });
+    }
+    sources
+}
+
+/// darktable's counterpart to `find_processing_sidecar` - but unlike ART's
+/// `.arp`/RawTherapee's `.pp3`, darktable has no dedicated develop-adjustment
+/// sidecar of its own: its history stack lives inside the same `.xmp` file
+/// `xmp_sidecar_path`/`xmp_sidecar_path_replaced` already resolve for
+/// rating/description. A plain "does an `.xmp` exist" check would therefore
+/// false-positive on every asset that merely has a rating/description
+/// written by this app (or digiKam/ART/RawTherapee's own metadata sync) but
+/// no darktable edits at all - so each candidate is actually read and
+/// checked via `xmp::has_darktable_history`, only returning a path once real
+/// history is confirmed present. Checks the append-form path first, same
+/// precedence `xmp_write_path`/`read_asset_metadata` already use, since
+/// there's no separate mtime-priority signal the way `find_processing_sidecar`
+/// has across four candidates - here it's the same one file under two
+/// possible names, never both at once in practice.
+pub fn find_darktable_history_sidecar(original: &Path) -> Option<PathBuf> {
+    for candidate in [xmp_sidecar_path(original), xmp_sidecar_path_replaced(original)] {
+        if let Ok(text) = fs::read_to_string(&candidate) {
+            if xmp::has_darktable_history(&text) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+/// Tool-aware "does this asset have edits to roundtrip" check - the one place
+/// `commands.rs`'s Variant 1/Variant 2 handlers decide this, so neither can
+/// drift into checking the wrong sidecar convention for the active converter
+/// (see `find_processing_sidecar` vs. `find_darktable_history_sidecar`'s own
+/// doc comments for why the two need genuinely different logic, not just a
+/// different file extension).
+pub fn has_round_trip_sidecar(tool: RawConverterKind, original: &Path) -> bool {
+    match tool {
+        RawConverterKind::Art | RawConverterKind::RawTherapee => find_processing_sidecar(original).is_some(),
+        RawConverterKind::DarkTable => find_darktable_history_sidecar(original).is_some(),
+    }
 }
 
 /// Which `.xmp` path a write should target: whichever naming convention
@@ -567,5 +686,160 @@ mod tests {
         assert_eq!(read_asset_metadata(&original).rating, Some(3));
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_darktable_history_sidecar_none_when_xmp_has_no_history() {
+        let dir = std::env::temp_dir().join(format!("brighttable-test-dt-none-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let original = dir.join("img.CR2");
+        // An .xmp exists (e.g. written by this app for rating/description)
+        // but carries no darktable edits - must not be mistaken for one.
+        fs::write(xmp_sidecar_path(&original), r#"<rdf:Description xmp:Rating="3"/>"#).unwrap();
+        assert_eq!(find_darktable_history_sidecar(&original), None);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_darktable_history_sidecar_finds_append_form_with_history() {
+        let dir = std::env::temp_dir().join(format!("brighttable-test-dt-append-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let original = dir.join("img.CR2");
+        fs::write(xmp_sidecar_path(&original), r#"<rdf:Description darktable:history_end="3"><darktable:history/></rdf:Description>"#).unwrap();
+        assert_eq!(find_darktable_history_sidecar(&original), Some(xmp_sidecar_path(&original)));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_darktable_history_sidecar_finds_replaced_extension_form() {
+        let dir = std::env::temp_dir().join(format!("brighttable-test-dt-replaced-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let original = dir.join("20260103_14-56-24.DNG");
+        fs::write(xmp_sidecar_path_replaced(&original), r#"<rdf:Description darktable:history_end="1"><darktable:history/></rdf:Description>"#).unwrap();
+        assert_eq!(find_darktable_history_sidecar(&original), Some(xmp_sidecar_path_replaced(&original)));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn has_round_trip_sidecar_dispatches_by_tool() {
+        let dir = std::env::temp_dir().join(format!("brighttable-test-hrts-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let art_original = dir.join("art.CR2");
+        fs::write(arp_sidecar_path(&art_original), "1\n").unwrap();
+        assert!(has_round_trip_sidecar(RawConverterKind::Art, &art_original));
+        assert!(!has_round_trip_sidecar(RawConverterKind::DarkTable, &art_original));
+
+        let dt_original = dir.join("dt.CR2");
+        fs::write(xmp_sidecar_path(&dt_original), r#"<rdf:Description darktable:history_end="2"><darktable:history/></rdf:Description>"#).unwrap();
+        assert!(has_round_trip_sidecar(RawConverterKind::DarkTable, &dt_original));
+        assert!(!has_round_trip_sidecar(RawConverterKind::RawTherapee, &dt_original));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_all_processing_sources_is_empty_when_nothing_exists() {
+        let dir = std::env::temp_dir().join(format!("brighttable-test-allsrc-none-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let original = dir.join("img.CR2");
+        assert_eq!(find_all_processing_sources(&original), vec![]);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_all_processing_sources_finds_a_single_kind() {
+        let dir = std::env::temp_dir().join(format!("brighttable-test-allsrc-one-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let original = dir.join("img.CR2");
+        fs::write(pp3_sidecar_path(&original), "[General]\nRank=3\n").unwrap();
+        assert_eq!(
+            find_all_processing_sources(&original),
+            vec![ProcessingSource::Sidecar { path: pp3_sidecar_path(&original), kind: ProcessingKind::Pp3, form: SidecarForm::Append }]
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_all_processing_sources_finds_all_three_tools_at_once() {
+        let dir = std::env::temp_dir().join(format!("brighttable-test-allsrc-three-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let original = dir.join("img.CR2");
+        fs::write(arp_sidecar_path(&original), "1\n").unwrap();
+        fs::write(pp3_sidecar_path(&original), "[General]\nRank=3\n").unwrap();
+        fs::write(xmp_sidecar_path(&original), r#"<rdf:Description darktable:history_end="2"><darktable:history/></rdf:Description>"#).unwrap();
+
+        let sources = find_all_processing_sources(&original);
+        assert_eq!(sources.len(), 3, "{sources:?}");
+        assert!(sources.contains(&ProcessingSource::Sidecar { path: arp_sidecar_path(&original), kind: ProcessingKind::Arp, form: SidecarForm::Append }));
+        assert!(sources.contains(&ProcessingSource::Sidecar { path: pp3_sidecar_path(&original), kind: ProcessingKind::Pp3, form: SidecarForm::Append }));
+        assert!(sources.contains(&ProcessingSource::DarkTable { xmp_path: xmp_sidecar_path(&original) }));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_all_processing_sources_ignores_an_xmp_with_no_darktable_history() {
+        let dir = std::env::temp_dir().join(format!("brighttable-test-allsrc-noxmp-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let original = dir.join("img.CR2");
+        fs::write(arp_sidecar_path(&original), "1\n").unwrap();
+        // Rating/description only, no darktable edits - must not surface a
+        // spurious DarkTable source.
+        fs::write(xmp_sidecar_path(&original), r#"<rdf:Description xmp:Rating="3"/>"#).unwrap();
+
+        let sources = find_all_processing_sources(&original);
+        assert_eq!(sources, vec![ProcessingSource::Sidecar { path: arp_sidecar_path(&original), kind: ProcessingKind::Arp, form: SidecarForm::Append }]);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_all_processing_sources_picks_each_kinds_own_winning_form_independently() {
+        let dir = std::env::temp_dir().join(format!("brighttable-test-allsrc-forms-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let original = dir.join("img.CR2");
+        // Arp: only the replaced form exists.
+        fs::write(arp_sidecar_path_replaced(&original), "1\n").unwrap();
+        // Pp3: only the append form exists.
+        fs::write(pp3_sidecar_path(&original), "[General]\nRank=3\n").unwrap();
+
+        let sources = find_all_processing_sources(&original);
+        assert_eq!(sources.len(), 2, "{sources:?}");
+        assert!(sources.contains(&ProcessingSource::Sidecar {
+            path: arp_sidecar_path_replaced(&original),
+            kind: ProcessingKind::Arp,
+            form: SidecarForm::Replaced
+        }));
+        assert!(sources.contains(&ProcessingSource::Sidecar { path: pp3_sidecar_path(&original), kind: ProcessingKind::Pp3, form: SidecarForm::Append }));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn processing_source_tool_maps_each_variant() {
+        let original = Path::new("/x/img.CR2");
+        assert_eq!(
+            ProcessingSource::Sidecar { path: original.to_path_buf(), kind: ProcessingKind::Arp, form: SidecarForm::Append }.tool(),
+            RawConverterKind::Art
+        );
+        assert_eq!(
+            ProcessingSource::Sidecar { path: original.to_path_buf(), kind: ProcessingKind::Pp3, form: SidecarForm::Append }.tool(),
+            RawConverterKind::RawTherapee
+        );
+        assert_eq!(ProcessingSource::DarkTable { xmp_path: original.to_path_buf() }.tool(), RawConverterKind::DarkTable);
     }
 }

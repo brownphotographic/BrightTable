@@ -272,16 +272,30 @@ impl Default for SmartStackSettings {
 /// `RawConverterConfig` - settings preserved when switching between them)
 /// but only one is ever "live" for the roundtrip buttons at a time, matching
 /// how the old single shared `raw_editor` field was already one chosen app
-/// rather than a list. `DarkTable` can be selected and configured like the
-/// other two, but has no working CLI invocation yet -
-/// `ApplicationsConfig::active_raw_cli` returns an error for it, same as an
-/// unconfigured path would for ART/RawTherapee. See `requirements.md`
-/// §1.6/§2.5.
+/// rather than a list. All three converters (including `DarkTable`, via
+/// `darktable.rs`) have a working CLI invocation - `ApplicationsConfig::active_raw_cli`
+/// only errors for any of them when its own `cli_path` isn't configured. See
+/// `requirements.md` §1.6/§2.5.
+/// `#[serde(rename)]`s pinned explicitly on `RawTherapee`/`DarkTable` rather
+/// than left to `rename_all = "camelCase"`'s derivation - the frontend's
+/// `RawConverterKind` type (`lib/api.ts`) uses plain lowercase product-name
+/// strings (`'rawtherapee'`/`'darktable'`), but `heck`'s camelCase transform
+/// treats "RawTherapee"/"DarkTable" as two English words and would derive
+/// `"rawTherapee"`/`"darkTable"` instead - a silent wire-format mismatch
+/// that broke saving either converter as the active one (`save_applications_config`
+/// failed to deserialize the frontend's lowercase string, and the frontend's
+/// `.catch(() => {})` on every `saveApplicationsConfig` call swallowed the
+/// error, so the choice looked fine in the running session but never
+/// actually reached disk - a restart always reverted to whatever was last
+/// saved). `Art` needed no pin since "art" already has no case-boundary to
+/// transform.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum RawConverterKind {
     Art,
+    #[serde(rename = "rawtherapee")]
     RawTherapee,
+    #[serde(rename = "darktable")]
     DarkTable,
 }
 
@@ -331,15 +345,15 @@ pub struct ApplicationsConfig {
     pub art: RawConverterConfig,
     #[serde(default)]
     pub rawtherapee: RawConverterConfig,
-    /// Persisted the same as the other two so the user's Preferences entry
-    /// survives switching the active converter back and forth, but not yet
-    /// read by any working roundtrip command (`ApplicationsConfig::active_raw_cli`
-    /// errors for `RawConverterKind::DarkTable`) - darktable's processing
-    /// history lives inside the same `.xmp` sidecar `paths.rs` already
-    /// reads/writes for rating/description, which needs its own
-    /// surgical-merge support before a CLI round trip can invoke it safely
-    /// (see `paths::find_processing_sidecar`'s doc comment). Tracked as
-    /// planned scope in `requirements.md` §1.6/§2.4.
+    /// Persisted the same as the other two, and read by a working roundtrip
+    /// command like they are. darktable's processing history lives inside
+    /// the same `.xmp` sidecar `paths.rs` already reads/writes for
+    /// rating/description, unlike ART's `.arp`/RawTherapee's `.pp3` - so
+    /// unlike those two, "does this asset have edits to roundtrip" is
+    /// answered by `paths::find_darktable_history_sidecar` (a surgical read
+    /// of that shared file's darktable `history` stack via
+    /// `xmp::has_darktable_history`) rather than a plain sidecar-exists
+    /// check. See `requirements.md` §1.6/§2.4.
     #[serde(default)]
     pub darktable: RawConverterConfig,
     /// Path to the `exiftool` binary - same shape as each `RawConverterConfig::cli_path`
@@ -378,7 +392,11 @@ impl ApplicationsConfig {
                 }
             }
             Some(RawConverterKind::DarkTable) => {
-                Err("DarkTable CLI round trip isn't implemented yet — choose ART or RawTherapee in Preferences → Applications".into())
+                if self.darktable.cli_path.trim().is_empty() {
+                    Err("No darktable-cli path configured — set one in Preferences → Applications".into())
+                } else {
+                    Ok((RawConverterKind::DarkTable, self.darktable.cli_path.as_str()))
+                }
             }
         }
     }
@@ -506,4 +524,33 @@ pub fn save(app: &AppHandle, cfg: &AppConfig) -> Result<(), String> {
     }
     let raw = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
     fs::write(&path, raw).map_err(|e| format!("Could not write config.json: {e}"))
+}
+
+#[cfg(test)]
+mod raw_converter_kind_wire_format_tests {
+    use super::RawConverterKind;
+
+    /// Locks in the exact wire format the frontend's `RawConverterKind`
+    /// type (`lib/api.ts`) actually sends/expects - plain lowercase, not
+    /// `rename_all = "camelCase"`'s derived `"rawTherapee"`/`"darkTable"`.
+    /// A prior mismatch here meant picking RawTherapee/DarkTable as the
+    /// active converter looked fine in the running session (pure React
+    /// state) but silently failed to persist: `save_applications_config`
+    /// couldn't deserialize the frontend's lowercase string, and the
+    /// frontend's `saveApplicationsConfig(...).catch(() => {})` swallowed
+    /// the resulting error, so a restart always reverted to whatever was
+    /// last actually saved.
+    #[test]
+    fn serializes_as_the_frontends_lowercase_strings() {
+        assert_eq!(serde_json::to_string(&RawConverterKind::Art).unwrap(), "\"art\"");
+        assert_eq!(serde_json::to_string(&RawConverterKind::RawTherapee).unwrap(), "\"rawtherapee\"");
+        assert_eq!(serde_json::to_string(&RawConverterKind::DarkTable).unwrap(), "\"darktable\"");
+    }
+
+    #[test]
+    fn deserializes_the_frontends_lowercase_strings() {
+        assert_eq!(serde_json::from_str::<RawConverterKind>("\"art\"").unwrap(), RawConverterKind::Art);
+        assert_eq!(serde_json::from_str::<RawConverterKind>("\"rawtherapee\"").unwrap(), RawConverterKind::RawTherapee);
+        assert_eq!(serde_json::from_str::<RawConverterKind>("\"darktable\"").unwrap(), RawConverterKind::DarkTable);
+    }
 }

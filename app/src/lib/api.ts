@@ -50,8 +50,7 @@ export interface AppChoice {
 // Which RAW converter's CLI drives "Tweak RAW Roundtrip"/"Headless RAW
 // Roundtrip" - mirrors config.rs's RawConverterKind. `null` (on
 // ApplicationsConfig.activeRawConverter) means the plain launch-only editor
-// flow (no CLI round trip active). `darktable` can be selected and its own
-// path persisted like the other two, but has no working CLI invocation yet -
+// flow (no CLI round trip active). All three have a working CLI invocation -
 // see lib/applications.tsx's derived `rawRoundTripEnabled`.
 export type RawConverterKind = 'art' | 'rawtherapee' | 'darktable';
 
@@ -75,9 +74,11 @@ export interface ApplicationsConfig {
   activeRawConverter: RawConverterKind | null;
   art: RawConverterConfig;
   rawtherapee: RawConverterConfig;
-  // Persisted the same as the other two so switching the active converter
-  // back and forth in Preferences doesn't lose it, but not yet wired to a
-  // working roundtrip.
+  // Persisted the same as the other two, and wired to a working roundtrip
+  // like they are - its edits live inside the same .xmp sidecar used for
+  // rating/description rather than a dedicated file, so detecting them takes
+  // a surgical read of that file's darktable history stack (see paths.rs's
+  // find_darktable_history_sidecar).
   darktable: RawConverterConfig;
   // Path to the `exiftool` binary - same shape as each RawConverterConfig's
   // cliPath. Required by the Export to Folder/Share to Flickr dialogs' "Keep
@@ -205,6 +206,11 @@ export interface AssetSummary {
   // independent of `unsyncedMetadata` (a processing sidecar can exist with
   // no metadata gap, and vice versa).
   hasProcessingSidecar?: boolean;
+  // Client-only annotation, overlaid the same way and from the same scan as
+  // hasProcessingSidecar above (a sibling, not a replacement) - which tools
+  // specifically, so Copy Image Processing can remember at copy time which
+  // ones it's about to capture (see clipboard.tsx's CopiedProcessingSource.tools).
+  processingSidecarTools?: RawConverterKind[];
 }
 
 export interface StackInfo {
@@ -630,6 +636,11 @@ export interface MetadataSyncResult {
   rating: number | null;
   description: string | null;
   hasProcessingSidecar: boolean;
+  // Which tools specifically (a sibling of hasProcessingSidecar above, not a
+  // replacement) - used only by Copy Image Processing to remember at copy
+  // time which tools' settings it's about to capture, for the paste confirm
+  // dialog's wording. See clipboard.tsx's CopiedProcessingSource.tools.
+  processingSidecarTools: RawConverterKind[];
 }
 
 // Read-only, best-effort - resolves silently to an empty/partial result if
@@ -643,12 +654,13 @@ export function checkSidecarMetadata(queries: MetadataSyncQuery[]): Promise<Meta
 }
 
 // Enqueues Paste Image Processing onto the backend's background
-// ProcessingQueue and returns immediately with the assigned job ids (one per
-// target, same order/shape as updateAssetMetadata). Rejects synchronously
+// ProcessingQueue and returns immediately with the assigned job ids - one per
+// (target, tool) pair, so the count is targets.length * (however many tools
+// the source has settings from), not one per target. Rejects synchronously
 // for a structural reason (read-only mode, over the batch cap, or the
-// source has no processing sidecar at all) before anything is queued; a
-// per-job copy failure discovered later surfaces via
-// getProcessingQueueStatus polling instead.
+// source has nothing at all to paste) before anything is queued; a per-job
+// failure discovered later (e.g. one tool's merge fails while another
+// succeeds) surfaces via getProcessingQueueStatus polling instead.
 export function pasteImageProcessing(sourceOriginalPath: string, targets: MetadataEditTarget[]): Promise<number[]> {
   return invoke('paste_image_processing', { sourceOriginalPath, targets });
 }
@@ -656,15 +668,21 @@ export function pasteImageProcessing(sourceOriginalPath: string, targets: Metada
 export type ProcessingJobStatus = 'pending' | 'copying' | 'done' | 'failed';
 
 // Mirrors processing_queue.rs's ProcessingJob - one row of Paste Image
-// Processing's advisory activity panel.
+// Processing's advisory activity panel, now one per (target, tool) pair.
 export interface ProcessingJob {
   jobId: number;
   targetAssetId: string;
+  tool: RawConverterKind;
   status: ProcessingJobStatus;
   createdAtMs: number;
   finishedAtMs: number | null;
   error: string | null;
 }
+
+// Shared by the RAW Roundtrip and Paste Image Processing sections of
+// ActivityPanel.tsx (both now have per-job RawConverterKind labels) and by
+// the paste confirm-dialog text in PhotosBrowser/FoldersBrowser/Viewer.
+export const RAW_CONVERTER_LABEL: Record<RawConverterKind, string> = { art: 'ART', rawtherapee: 'RawTherapee', darktable: 'DarkTable' };
 
 export interface ProcessingQueueStatus {
   jobs: ProcessingJob[];

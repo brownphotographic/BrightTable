@@ -45,6 +45,23 @@ pub fn read_description(text: &str) -> Option<String> {
     Some(unescape_xml(raw))
 }
 
+/// Whether this `.xmp` text carries a darktable develop-history stack - the
+/// signal `paths::find_darktable_history_sidecar` uses to decide "does this
+/// asset have darktable edits to roundtrip" instead of a plain
+/// `.exists()` check, since darktable stores its history *inside* the same
+/// `.xmp` file `read_rating`/`read_description`/`patch_or_create` already
+/// own for rating/description rather than a dedicated sidecar the way ART's
+/// `.arp`/RawTherapee's `.pp3` do. darktable writes this as a
+/// `darktable:history_end="N"` attribute on `rdf:Description` alongside a
+/// `<darktable:history>` sequence element holding the actual stack - a plain
+/// substring check on either is enough for a yes/no presence answer (no need
+/// to parse the stack itself, unlike a real read/patch). Read-only: never
+/// touches the file, so it can't interfere with `patch_or_create`'s
+/// rating/description-only writes.
+pub fn has_darktable_history(text: &str) -> bool {
+    text.contains("darktable:history")
+}
+
 fn find_between<'a>(text: &'a str, start: &str, end: &str) -> Option<&'a str> {
     let after = &text[text.find(start)? + start.len()..];
     Some(&after[..after.find(end)?])
@@ -166,6 +183,242 @@ fn find_tag_close(text: &str, tag_start: usize) -> (usize, bool) {
     (text.len(), false)
 }
 
+/// The darktable XMP namespace URI, declared as `xmlns:darktable="..."` on
+/// `rdf:Description` in every real darktable-written `.xmp` - needed by
+/// `apply_darktable_island` so a target `.xmp` that has no darktable content
+/// yet (e.g. one this app itself seeded via `new_packet()` for
+/// rating/description only) still declares the prefix once darktable
+/// attributes/elements are pasted onto it, rather than leaving it
+/// undeclared. Expected value, not yet independently confirmed against a
+/// real darktable-written file - flagged pending the user's own live test,
+/// same posture as `darktable.rs`'s own module doc.
+const DARKTABLE_XMLNS: &str = "http://darktable.sf.net/xmp/1.0/";
+
+/// Everything darktable-namespaced captured off one `rdf:Description` - every
+/// `darktable:`-prefixed attribute and child element, as an opaque unit
+/// meant to travel together from a Copy/Paste Image Processing source onto a
+/// target's own `.xmp` (`extract_darktable_island`/`apply_darktable_island`/
+/// `paste_darktable_island`). Deliberately generic rather than a fixed field
+/// list (just `history`/`history_end`, say) - darktable's real XMP output
+/// isn't fully confirmed here (mask data, `iop_order`, etc. may also need to
+/// travel), so capturing "everything under the darktable: prefix" is robust
+/// to fields not yet seen in a real sample, at the cost of not knowing in
+/// advance exactly what's in here.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DarktableIsland {
+    attrs: Vec<(String, String)>,
+    elements: Vec<String>,
+}
+
+/// (name, raw value, byte span of the whole `name="value"` token including
+/// quotes) for every `darktable:`-prefixed attribute found in
+/// `text[desc_start..tag_close]` (the span `find_tag_close` returns for
+/// `rdf:Description`'s opening tag), in document order. Shared by
+/// `extract_darktable_attrs` (wants the name/value pairs) and
+/// `strip_darktable_island` (wants the spans to excise) so the tokenizing
+/// logic - quote-aware, same character-walk idiom `find_tag_close` already
+/// uses - only exists once.
+fn darktable_attr_spans(text: &str, desc_start: usize, tag_close: usize) -> Vec<(String, String, std::ops::Range<usize>)> {
+    let bytes = text.as_bytes();
+    let mut spans = Vec::new();
+    let mut i = desc_start + "<rdf:Description".len();
+    while i < tag_close {
+        while i < tag_close && (bytes[i] as char).is_whitespace() {
+            i += 1;
+        }
+        if i >= tag_close {
+            break;
+        }
+        let name_start = i;
+        while i < tag_close && bytes[i] != b'=' && !(bytes[i] as char).is_whitespace() {
+            i += 1;
+        }
+        let name_end = i;
+        if name_end == name_start {
+            // A stray '/' or similar - not a real attribute name; skip it.
+            i += 1;
+            continue;
+        }
+        while i < tag_close && (bytes[i] as char).is_whitespace() {
+            i += 1;
+        }
+        if i >= tag_close || bytes[i] != b'=' {
+            break; // malformed - no '=' where expected, bail rather than misparse
+        }
+        i += 1;
+        while i < tag_close && (bytes[i] as char).is_whitespace() {
+            i += 1;
+        }
+        if i >= tag_close || (bytes[i] != b'"' && bytes[i] != b'\'') {
+            break; // malformed - no quoted value where expected
+        }
+        let quote = bytes[i];
+        i += 1;
+        let value_start = i;
+        while i < tag_close && bytes[i] != quote {
+            i += 1;
+        }
+        let value_end = i;
+        let token_end = (value_end + 1).min(tag_close);
+        let name = &text[name_start..name_end];
+        if name.starts_with("darktable:") {
+            spans.push((name.to_string(), text[value_start..value_end].to_string(), name_start..token_end));
+        }
+        i = token_end;
+    }
+    spans
+}
+
+fn extract_darktable_attrs(text: &str, desc_start: usize, tag_close: usize) -> Vec<(String, String)> {
+    darktable_attr_spans(text, desc_start, tag_close).into_iter().map(|(name, value, _)| (name, value)).collect()
+}
+
+/// Byte spans of every direct-child `<darktable:...>` element within
+/// `text[body_start..body_end]` (the space between `rdf:Description`'s
+/// opening tag and its `</rdf:Description>`), in document order. Each
+/// element's own extent is found via `find_tag_close` (self-closing) or the
+/// first matching `</name>` (open/close - darktable's own fields don't nest
+/// a same-named tag inside itself, same assumption `read_description`
+/// already makes for `dc:description`). Stops at the first element it can't
+/// cleanly bound (malformed input) rather than guessing - whatever was found
+/// before that point is still returned.
+fn darktable_element_spans(text: &str, body_start: usize, body_end: usize) -> Vec<std::ops::Range<usize>> {
+    let mut spans = Vec::new();
+    let mut i = body_start;
+    while i < body_end {
+        let Some(rel) = text[i..body_end].find("<darktable:") else { break };
+        let start = i + rel;
+        let name_start = start + 1;
+        let Some(name_end_off) = text[name_start..].find(|c: char| c.is_whitespace() || c == '>' || c == '/') else { break };
+        let name_end = name_start + name_end_off;
+        let tag_name = &text[name_start..name_end];
+        let (close, self_closing) = find_tag_close(text, start);
+        let element_end = if self_closing {
+            close + 2
+        } else {
+            let close_tag = format!("</{tag_name}>");
+            match text[close + 1..].find(&close_tag) {
+                Some(rel2) => close + 1 + rel2 + close_tag.len(),
+                None => break,
+            }
+        };
+        spans.push(start..element_end);
+        i = element_end;
+    }
+    spans
+}
+
+fn extract_darktable_elements(text: &str, body_start: usize, body_end: usize) -> Vec<String> {
+    darktable_element_spans(text, body_start, body_end).into_iter().map(|r| text[r].to_string()).collect()
+}
+
+/// Captures `text`'s darktable island (see `DarktableIsland`'s own doc
+/// comment) - `None` if `text` has no `rdf:Description` at all, or nothing
+/// darktable-namespaced on it. Callers should already have confirmed
+/// presence via `has_darktable_history` before relying on `Some` here (e.g.
+/// `paths::find_darktable_history_sidecar`), but this stays a plain `Option`
+/// rather than assuming that always holds - the source file could have
+/// changed between that check and this actually running.
+pub fn extract_darktable_island(text: &str) -> Option<DarktableIsland> {
+    let desc_start = text.find("<rdf:Description")?;
+    let (tag_close, self_closing) = find_tag_close(text, desc_start);
+    let attrs = extract_darktable_attrs(text, desc_start, tag_close);
+    let elements = if self_closing {
+        Vec::new()
+    } else {
+        let body_start = tag_close + 1;
+        let body_end = text[body_start..].find("</rdf:Description>").map(|i| body_start + i).unwrap_or(text.len());
+        extract_darktable_elements(text, body_start, body_end)
+    };
+    if attrs.is_empty() && elements.is_empty() { None } else { Some(DarktableIsland { attrs, elements }) }
+}
+
+/// Removes every `darktable:`-prefixed attribute/element `text`'s
+/// `rdf:Description` already has, leaving everything else - rating,
+/// description, any other tool's data, an existing `xmlns:darktable`
+/// declaration - untouched. The first half of `apply_darktable_island`'s
+/// "replace, don't accumulate" contract: a target that already had its own
+/// darktable history must end up with only the *pasted* history, not both
+/// stacked together.
+fn strip_darktable_island(text: &str) -> String {
+    let Some(desc_start) = text.find("<rdf:Description") else {
+        return text.to_string();
+    };
+    let (tag_close, self_closing) = find_tag_close(text, desc_start);
+
+    let mut result = text.to_string();
+    for (_, _, span) in darktable_attr_spans(text, desc_start, tag_close).into_iter().rev() {
+        result.replace_range(span, "");
+    }
+    if self_closing {
+        return result;
+    }
+
+    // Attribute removal only ever shortens text strictly before the body, so
+    // re-resolving the tag close against `result` is required before
+    // scanning for element spans (their offsets shifted), but `desc_start`
+    // itself is unaffected (it's before any attribute span too).
+    let (new_tag_close, _) = find_tag_close(&result, desc_start);
+    let body_start = new_tag_close + 1;
+    let body_end = result[body_start..].find("</rdf:Description>").map(|i| body_start + i).unwrap_or(result.len());
+    for span in darktable_element_spans(&result, body_start, body_end).into_iter().rev() {
+        result.replace_range(span, "");
+    }
+    result
+}
+
+/// Replaces whatever darktable content `text`'s `rdf:Description` already
+/// has with `island`'s (strip-then-insert, via `strip_darktable_island`),
+/// adding an `xmlns:darktable` declaration first if none exists yet. Mirrors
+/// `patch_description_field`'s self-closing-tag-to-open/close conversion
+/// when there are elements to insert but the tag currently has no body.
+pub fn apply_darktable_island(text: &str, island: &DarktableIsland) -> String {
+    let stripped = strip_darktable_island(text);
+    let Some(desc_start) = stripped.find("<rdf:Description") else {
+        return stripped;
+    };
+    let (tag_close, self_closing) = find_tag_close(&stripped, desc_start);
+
+    let mut attrs_str = String::new();
+    if !stripped.contains("xmlns:darktable=") {
+        attrs_str.push_str(&format!(" xmlns:darktable=\"{DARKTABLE_XMLNS}\""));
+    }
+    for (name, value) in &island.attrs {
+        attrs_str.push_str(&format!(" {name}=\"{value}\""));
+    }
+    let elements_str: String = island.elements.concat();
+
+    if self_closing {
+        if elements_str.is_empty() {
+            format!("{}{}{}", &stripped[..tag_close], attrs_str, &stripped[tag_close..])
+        } else {
+            format!("{}{}>{}</rdf:Description>{}", &stripped[..tag_close], attrs_str, elements_str, &stripped[tag_close + 2..])
+        }
+    } else {
+        let with_attrs = format!("{}{}{}", &stripped[..tag_close], attrs_str, &stripped[tag_close..]);
+        let insert_at = tag_close + attrs_str.len() + 1;
+        format!("{}{}{}", &with_attrs[..insert_at], elements_str, &with_attrs[insert_at..])
+    }
+}
+
+/// The orchestrating entry point `processing_queue.rs`'s worker calls for a
+/// `ProcessingSource::DarkTable` job - mirrors `patch_or_create`'s
+/// read-patch-write-atomic shape, just scoped to darktable's own field set
+/// instead of rating/description. `source_text` is the *source* asset's
+/// already-read `.xmp` content; `dest_path` is the *target*'s `.xmp` write
+/// path (`paths::xmp_write_path`), read fresh here and seeded via
+/// `new_packet()` if it doesn't exist yet - same "read whatever's there, or
+/// start from a fresh packet" contract `patch_or_create` already has. Errors
+/// if `source_text` no longer has anything darktable-namespaced to paste
+/// (the source could have changed between `find_darktable_history_sidecar`
+/// confirming presence and this actually running).
+pub fn paste_darktable_island(source_text: &str, dest_path: &Path) -> Result<(), String> {
+    let island = extract_darktable_island(source_text).ok_or("Source has no darktable history to paste")?;
+    let dest_text = fs::read_to_string(dest_path).unwrap_or_else(|_| new_packet());
+    let patched = apply_darktable_island(&dest_text, &island);
+    write_atomic(dest_path, &patched)
+}
+
 /// Replaces an existing `xmp:Rating` (attribute or element form) in place,
 /// or - if neither form is present - inserts a new `xmp:Rating="N"`
 /// attribute onto the `rdf:Description` opening tag. Returns `text`
@@ -263,10 +516,176 @@ mod tests {
     }
 
     #[test]
+    fn detects_darktable_history_presence() {
+        assert!(has_darktable_history(r#"<rdf:Description darktable:history_end="3"><darktable:history/></rdf:Description>"#));
+        assert!(has_darktable_history(r#"<rdf:Description darktable:history_end="0"/>"#));
+        assert!(!has_darktable_history(r#"<rdf:Description xmp:Rating="3"/>"#));
+        assert!(!has_darktable_history("no history here"));
+    }
+
+    #[test]
     fn reads_and_unescapes_description() {
         let xmp = r#"<dc:description><rdf:Alt><rdf:li xml:lang="x-default">Mom &amp; Dad&apos;s trip</rdf:li></rdf:Alt></dc:description>"#;
         assert_eq!(read_description(xmp), Some("Mom & Dad's trip".into()));
         assert_eq!(read_description("no description block"), None);
+    }
+
+    // Synthetic (not yet a real sample - flagged in DarktableIsland's own
+    // doc comment) darktable-shaped .xmp: several darktable:*-prefixed
+    // attributes, an open/close darktable:history element with nested
+    // rdf:Seq/rdf:li content, a self-closing darktable:mask_history element,
+    // and non-darktable data (xmp:Rating, dc:description, tiff:Make) that
+    // must survive every extract/strip/apply pass byte-for-byte untouched.
+    const SYNTHETIC_DARKTABLE_XMP: &str = r#"<rdf:Description rdf:about=""
+   xmlns:darktable="http://darktable.sf.net/xmp/1.0/"
+   xmlns:tiff="http://ns.adobe.com/tiff/1.0/"
+   tiff:Make="Leica Camera AG"
+   xmp:Rating="4"
+   darktable:xmp_version="2"
+   darktable:raw_params="0"
+   darktable:auto_presets_applied="1"
+   darktable:history_end="3">
+  <darktable:history>
+   <rdf:Seq>
+    <rdf:li darktable:num="0" darktable:operation="exposure" darktable:enabled="1"/>
+   </rdf:Seq>
+  </darktable:history>
+  <darktable:mask_history/>
+  <dc:description><rdf:Alt><rdf:li xml:lang="x-default">A caption</rdf:li></rdf:Alt></dc:description>
+ </rdf:Description>"#;
+
+    #[test]
+    fn extract_darktable_island_captures_all_attrs_and_elements() {
+        let island = extract_darktable_island(SYNTHETIC_DARKTABLE_XMP).expect("fixture has darktable content");
+        assert_eq!(
+            island.attrs,
+            vec![
+                ("darktable:xmp_version".to_string(), "2".to_string()),
+                ("darktable:raw_params".to_string(), "0".to_string()),
+                ("darktable:auto_presets_applied".to_string(), "1".to_string()),
+                ("darktable:history_end".to_string(), "3".to_string()),
+            ]
+        );
+        assert_eq!(island.elements.len(), 2, "{island:?}");
+        assert!(island.elements[0].starts_with("<darktable:history>"));
+        assert!(island.elements[0].contains("darktable:operation=\"exposure\""));
+        assert!(island.elements[0].ends_with("</darktable:history>"));
+        assert_eq!(island.elements[1], "<darktable:mask_history/>");
+    }
+
+    #[test]
+    fn extract_darktable_island_none_when_nothing_darktable_namespaced() {
+        assert_eq!(extract_darktable_island(r#"<rdf:Description xmp:Rating="3"/>"#), None);
+        assert_eq!(extract_darktable_island("no rdf:Description at all"), None);
+    }
+
+    #[test]
+    fn extract_darktable_island_handles_self_closing_description() {
+        let island = extract_darktable_island(r#"<rdf:Description darktable:history_end="0"/>"#).unwrap();
+        assert_eq!(island.attrs, vec![("darktable:history_end".to_string(), "0".to_string())]);
+        assert!(island.elements.is_empty());
+    }
+
+    #[test]
+    fn strip_darktable_island_removes_darktable_content_and_keeps_everything_else() {
+        let stripped = strip_darktable_island(SYNTHETIC_DARKTABLE_XMP);
+        assert_eq!(extract_darktable_island(&stripped), None, "{stripped}");
+        assert!(stripped.contains(r#"tiff:Make="Leica Camera AG""#));
+        assert!(stripped.contains(r#"xmp:Rating="4""#));
+        assert!(stripped.contains("A caption"));
+        assert!(!stripped.contains("darktable:history_end"));
+        assert!(!stripped.contains("<darktable:history>"));
+        assert!(!stripped.contains("<darktable:mask_history/>"));
+    }
+
+    #[test]
+    fn apply_darktable_island_inserts_onto_a_target_with_no_prior_darktable_content() {
+        let island = extract_darktable_island(SYNTHETIC_DARKTABLE_XMP).unwrap();
+        let target = r#"<rdf:Description rdf:about="" xmp:Rating="2"><dc:description><rdf:Alt><rdf:li xml:lang="x-default">target's own caption</rdf:li></rdf:Alt></dc:description></rdf:Description>"#;
+
+        let applied = apply_darktable_island(target, &island);
+
+        // The target's own rating/description survive untouched.
+        assert_eq!(read_rating(&applied), Some(2));
+        assert_eq!(read_description(&applied), Some("target's own caption".into()));
+        // The namespace was declared since the target had none.
+        assert!(applied.contains("xmlns:darktable=\"http://darktable.sf.net/xmp/1.0/\""));
+        // The pasted island round-trips out again.
+        let reextracted = extract_darktable_island(&applied).unwrap();
+        assert_eq!(reextracted, island);
+    }
+
+    #[test]
+    fn apply_darktable_island_replaces_rather_than_accumulates_on_a_target_with_its_own_history() {
+        let island = extract_darktable_island(SYNTHETIC_DARKTABLE_XMP).unwrap();
+        let target_with_its_own_history =
+            r#"<rdf:Description rdf:about="" xmlns:darktable="http://darktable.sf.net/xmp/1.0/" darktable:history_end="99"><darktable:history><rdf:Seq><rdf:li darktable:num="0" darktable:operation="STALE"/></rdf:Seq></darktable:history></rdf:Description>"#;
+
+        let applied = apply_darktable_island(target_with_its_own_history, &island);
+
+        assert!(!applied.contains("STALE"), "{applied}");
+        assert!(!applied.contains("history_end=\"99\""), "{applied}");
+        let reextracted = extract_darktable_island(&applied).unwrap();
+        assert_eq!(reextracted, island);
+        // Exactly one xmlns:darktable declaration, not a duplicate.
+        assert_eq!(applied.matches("xmlns:darktable=").count(), 1, "{applied}");
+    }
+
+    #[test]
+    fn apply_darktable_island_converts_a_self_closing_target_description() {
+        let island = extract_darktable_island(SYNTHETIC_DARKTABLE_XMP).unwrap();
+        let target = r#"<rdf:Description rdf:about="" xmp:Rating="5"/>"#;
+
+        let applied = apply_darktable_island(target, &island);
+
+        assert_eq!(read_rating(&applied), Some(5));
+        assert_eq!(extract_darktable_island(&applied), Some(island));
+    }
+
+    #[test]
+    fn paste_darktable_island_round_trips_through_real_files() {
+        let dir = std::env::temp_dir().join(format!("brighttable-test-xmp-dt-paste-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let dest = dir.join("target.xmp");
+        fs::write(&dest, r#"<rdf:Description rdf:about="" xmp:Rating="3"/>"#).unwrap();
+
+        paste_darktable_island(SYNTHETIC_DARKTABLE_XMP, &dest).unwrap();
+
+        let out = fs::read_to_string(&dest).unwrap();
+        assert_eq!(read_rating(&out), Some(3), "target's own rating must survive: {out}");
+        let island = extract_darktable_island(SYNTHETIC_DARKTABLE_XMP).unwrap();
+        assert_eq!(extract_darktable_island(&out), Some(island));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn paste_darktable_island_creates_a_brand_new_file_when_dest_does_not_exist() {
+        let dir = std::env::temp_dir().join(format!("brighttable-test-xmp-dt-new-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("brand-new.xmp");
+        let _ = fs::remove_file(&dest);
+
+        paste_darktable_island(SYNTHETIC_DARKTABLE_XMP, &dest).unwrap();
+
+        let out = fs::read_to_string(&dest).unwrap();
+        let island = extract_darktable_island(SYNTHETIC_DARKTABLE_XMP).unwrap();
+        assert_eq!(extract_darktable_island(&out), Some(island));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn paste_darktable_island_errors_when_source_has_nothing_to_paste() {
+        let dir = std::env::temp_dir().join(format!("brighttable-test-xmp-dt-empty-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("target.xmp");
+
+        let result = paste_darktable_island(r#"<rdf:Description xmp:Rating="1"/>"#, &dest);
+        assert!(result.is_err());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn temp_path(name: &str) -> std::path::PathBuf {

@@ -1,11 +1,13 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import {
+  checkSidecarMetadata,
   evictThumbCacheForAsset,
   getStack,
   launchRawCliRoundTrip,
   launchEditor,
   openVideoExternally,
   pasteImageProcessing,
+  RAW_CONVERTER_LABEL,
   regenerateAssetThumbnail,
   revealInFileManager,
   rotateAsset,
@@ -440,7 +442,14 @@ const Viewer = forwardRef<ViewerHandle, {
   // automatically since both read/write the one shared ClipboardProvider.
   const handleCopyImageProcessing = useCallback(() => {
     if (!shown.originalPath || !shown.hasProcessingSidecar) return;
-    setCopiedProcessingSource({ assetId: shown.id, originalPath: shown.originalPath, fileName: shown.fileName });
+    const originalPath = shown.originalPath;
+    const { id, fileName, rating, description } = shown;
+    setCopiedProcessingSource({ assetId: id, originalPath, fileName, tools: shown.processingSidecarTools ?? [] });
+    checkSidecarMetadata([{ assetId: id, originalPath, currentRating: rating, currentDescription: description }])
+      .then(([result]) => {
+        if (result) setCopiedProcessingSource({ assetId: id, originalPath, fileName, tools: result.processingSidecarTools });
+      })
+      .catch(() => {});
   }, [shown, setCopiedProcessingSource]);
 
   const handleCopyMetadata = useCallback(() => {
@@ -1288,7 +1297,9 @@ const Viewer = forwardRef<ViewerHandle, {
       {confirmPasteProcessing && (
         <ConfirmDialog
           title="Paste image processing?"
-          message={`Paste image processing onto "${shown.fileName}"? This replaces any existing RawTherapee/ART edits on it.`}
+          message={`Paste image processing onto "${shown.fileName}"? This replaces any existing ${
+            copiedProcessingSource?.tools.map((t) => RAW_CONVERTER_LABEL[t]).join('/') || 'RAW-editor'
+          } edits on it.`}
           confirmLabel="Paste"
           onConfirm={confirmPasteImageProcessingAction}
           onClose={() => setConfirmPasteProcessing(false)}

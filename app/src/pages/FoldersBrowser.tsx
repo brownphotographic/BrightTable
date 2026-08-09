@@ -13,6 +13,7 @@ import {
   launchEditor,
   listStacks,
   pasteImageProcessing,
+  RAW_CONVERTER_LABEL,
   revealInFileManager,
   setStackPick,
   updateAssetMetadata,
@@ -763,7 +764,13 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   const handleCopyImageProcessing = useCallback(
     (asset: AssetSummary) => {
       if (!asset.originalPath || !asset.hasProcessingSidecar) return;
-      setCopiedProcessingSource({ assetId: asset.id, originalPath: asset.originalPath, fileName: asset.fileName });
+      const originalPath = asset.originalPath;
+      setCopiedProcessingSource({ assetId: asset.id, originalPath, fileName: asset.fileName, tools: asset.processingSidecarTools ?? [] });
+      checkSidecarMetadata([{ assetId: asset.id, originalPath, currentRating: asset.rating, currentDescription: asset.description }])
+        .then(([result]) => {
+          if (result) setCopiedProcessingSource({ assetId: asset.id, originalPath, fileName: asset.fileName, tools: result.processingSidecarTools });
+        })
+        .catch(() => {});
     },
     [setCopiedProcessingSource],
   );
@@ -1588,7 +1595,9 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       {pasteProcessingTargets && (
         <ConfirmDialog
           title="Paste image processing?"
-          message={`Paste image processing onto ${pasteProcessingTargets.length} photo${pasteProcessingTargets.length === 1 ? '' : 's'}? This replaces any existing RawTherapee/ART edits on each one.`}
+          message={`Paste image processing onto ${pasteProcessingTargets.length} photo${pasteProcessingTargets.length === 1 ? '' : 's'}? This replaces any existing ${
+            copiedProcessingSource?.tools.map((t) => RAW_CONVERTER_LABEL[t]).join('/') || 'RAW-editor'
+          } edits on each one.`}
           confirmLabel="Paste"
           onConfirm={confirmPasteImageProcessing}
           onClose={() => setPasteProcessingTargets(null)}

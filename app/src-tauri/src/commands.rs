@@ -319,17 +319,22 @@ pub fn clear_completed_edit_jobs(state: State<AppState>) {
     state.edit_queue.clear_completed();
 }
 
-/// Enqueues **Paste Image Processing** - copying `source_original_path`'s
-/// RAW-editor develop-adjustment sidecar (ART `.arp` or RawTherapee `.pp3`,
-/// see `paths::find_processing_sidecar`) wholesale onto every target.
-/// Distinct from `update_asset_metadata`/**Paste Metadata**: this touches no
-/// Immich field at all, only local sidecar files, via the separate
-/// `ProcessingQueue` (`processing_queue.rs`) rather than `EditQueue`.
+/// Enqueues **Paste Image Processing** - applying every tool's
+/// develop-adjustment settings `source_original_path` has (ART `.arp`,
+/// RawTherapee `.pp3`, and/or darktable's `.xmp`-embedded history, see
+/// `paths::find_all_processing_sources`) onto every target, "one for each"
+/// tool the source actually has settings from. Distinct from
+/// `update_asset_metadata`/**Paste Metadata**: this touches no Immich field
+/// at all, only local sidecar/`.xmp` files, via the separate
+/// `ProcessingQueue` (`processing_queue.rs`) rather than `EditQueue` (though
+/// the two now share a lock for the darktable case - see `AssetLocks`).
 ///
 /// Same `read_only`/`max_writes_per_batch` gate as every other write, plus
-/// one more check specific to this command: the source must actually have a
-/// processing sidecar, checked synchronously up front so a source with
-/// nothing to copy is a real error, not N queued jobs doomed to fail.
+/// one more check specific to this command: the source must actually have
+/// *something* to paste, checked synchronously up front so a source with
+/// nothing at all is a real error, not N queued jobs doomed to fail. The
+/// returned job id count is `targets.len() * sources.len()`, not
+/// `targets.len()` - one job per (target, tool) pair.
 #[tauri::command]
 pub fn paste_image_processing(
     state: State<AppState>,
@@ -351,9 +356,11 @@ pub fn paste_image_processing(
     }
     let source_local_path = paths::resolve_local_path(&source_original_path, &cfg)
         .ok_or("Couldn't resolve a local path for the source asset")?;
-    let (source_path, source_kind, source_form) = paths::find_processing_sidecar(&source_local_path)
-        .ok_or("No RAW-editor processing sidecar (.arp/.pp3) found for the source asset")?;
-    Ok(state.processing_queue.enqueue(&cfg, source_path, source_kind, source_form, &targets))
+    let sources = paths::find_all_processing_sources(&source_local_path);
+    if sources.is_empty() {
+        return Err("No RAW-editor processing sidecar or darktable history found for the source asset".into());
+    }
+    Ok(state.processing_queue.enqueue(&cfg, &sources, &targets))
 }
 
 /// Poll target for the processing queue's advisory activity panel, same
@@ -515,7 +522,7 @@ pub async fn launch_raw_cli_round_trip(
         let Some(handle) = io_guard::guarded_spawn_blocking(&state.io_guard, move || {
             let (raw_path, export_path) =
                 resolve_round_trip_export_path(&original_path, &file_name_for_scan, &file_extension_for_scan, &cfg_for_scan, &suffix_for_scan)?;
-            let has_sidecar = paths::find_processing_sidecar(&raw_path).is_some();
+            let has_sidecar = paths::has_round_trip_sidecar(tool, &raw_path);
             Ok::<_, String>((raw_path, export_path, has_sidecar))
         }) else {
             return Err("Skipped: system is about to suspend, try again after it wakes".to_string());
@@ -753,15 +760,16 @@ pub struct ArtRoundTripTarget {
 /// synchronously" shape) - a target that can't be resolved fails the whole
 /// call rather than silently dropping just that one asset, so the confirm
 /// dialog's count always matches what's actually queued. Also resolves each
-/// target's own `has_sidecar` here (one more `find_processing_sidecar` stat
-/// alongside the path resolution, same blocking closure) so `art_queue::run`
-/// can pick `-d -S` (`SidecarCliMode::DefaultThenSidecarOverride`) for a
-/// target that has one and plain `-d` (`SidecarCliMode::DefaultOnly`) for one
-/// that doesn't - confirmed live for ART that `-S` actually errors ("no
-/// sidecar procparams found") rather than falling back when there's no
-/// sidecar to layer, so leaving every target on `-d -S` unconditionally would
-/// fail exactly the assets the no-sidecar prompt's "export with default
-/// profile" choice was supposed to rescue.
+/// target's own `has_sidecar` here (one more `paths::has_round_trip_sidecar`
+/// check, tool-aware per `active_raw_converter`, alongside the path
+/// resolution, same blocking closure) so `art_queue::run` can pick `-d -S`
+/// (`SidecarCliMode::DefaultThenSidecarOverride`) for a target that has one
+/// and plain `-d` (`SidecarCliMode::DefaultOnly`) for one that doesn't -
+/// confirmed live for ART that `-S` actually errors ("no sidecar procparams
+/// found") rather than falling back when there's no sidecar to layer, so
+/// leaving every target on `-d -S` unconditionally would fail exactly the
+/// assets the no-sidecar prompt's "export with default profile" choice was
+/// supposed to rescue.
 #[tauri::command]
 pub async fn batch_raw_cli_round_trip(state: State<'_, AppState>, targets: Vec<ArtRoundTripTarget>) -> Result<Vec<u64>, String> {
     let (cfg, applications, suffix_pattern) = {
@@ -793,7 +801,7 @@ pub async fn batch_raw_cli_round_trip(state: State<'_, AppState>, targets: Vec<A
                 // own `has_sidecar` check - lets `art_queue::run` pick `-d -S`
                 // vs. plain `-d` per target (see `QueuedArtWork::has_sidecar`'s
                 // doc comment for why that distinction actually matters).
-                let has_sidecar = paths::find_processing_sidecar(&raw_path).is_some();
+                let has_sidecar = paths::has_round_trip_sidecar(tool, &raw_path);
                 resolved.push((t.id.clone(), raw_path, export_path, has_sidecar));
             }
             Ok(())
@@ -1564,14 +1572,24 @@ pub struct MetadataSyncResult {
     pub rating: Option<i32>,
     pub description: Option<String>,
     /// Whether this asset currently has an ART/RawTherapee processing
-    /// sidecar (`.arp`/`.pp3`) on disk - piggybacked onto this same
-    /// already-running per-bucket scan so **Copy Image Processing** can be
-    /// enabled/disabled without a separate round trip per tile. Independent
-    /// of `rating`/`description`: a result can carry `true` here with both
-    /// of those `None` (metadata already in sync, but a processing sidecar
-    /// still exists) - the frontend must not conflate this with the
-    /// unsynced-metadata badge.
+    /// sidecar (`.arp`/`.pp3`) *or* darktable `.xmp`-embedded history on disk
+    /// - piggybacked onto this same already-running per-bucket scan so **Copy
+    /// Image Processing** can be enabled/disabled without a separate round
+    /// trip per tile. Independent of `rating`/`description`: a result can
+    /// carry `true` here with both of those `None` (metadata already in
+    /// sync, but a processing sidecar still exists) - the frontend must not
+    /// conflate this with the unsynced-metadata badge. Kept as a plain
+    /// boolean (rather than folded into `processing_sidecar_tools` below)
+    /// since most of its many call sites only ever need "does anything
+    /// exist," not which tool.
     pub has_processing_sidecar: bool,
+    /// Which tools specifically (`ProcessingSource::tool` for every entry
+    /// `paths::find_all_processing_sources` finds) - a sibling of
+    /// `has_processing_sidecar` above rather than a replacement, added only
+    /// for **Copy Image Processing** to remember at copy time which tools'
+    /// settings it's about to capture (for the paste confirm dialog's
+    /// wording) - see `lib/clipboard.tsx`'s `CopiedProcessingSource.tools`.
+    pub processing_sidecar_tools: Vec<RawConverterKind>,
 }
 
 /// Read-only, best-effort batch check - "no sidecar/embedded metadata" is
@@ -1581,10 +1599,11 @@ pub struct MetadataSyncResult {
 /// short-circuits with a real error, to avoid doing N pointless resolve
 /// attempts per bucket fetch when this feature isn't set up yet.
 ///
-/// Also reports `has_processing_sidecar` per asset (see `MetadataSyncResult`)
-/// so **Copy Image Processing**'s enablement can piggyback on this same scan
-/// instead of a separate per-tile round trip - unrelated to the rating/
-/// description sync this command otherwise exists for.
+/// Also reports `processing_sidecar_tools` per asset (see
+/// `MetadataSyncResult`) so **Copy Image Processing**'s enablement can
+/// piggyback on this same scan instead of a separate per-tile round trip -
+/// unrelated to the rating/description sync this command otherwise exists
+/// for.
 ///
 /// The sidecar/embedded value wins, per field, whenever it differs from
 /// whatever Immich currently has for that field - including when Immich has
@@ -1622,12 +1641,15 @@ pub async fn check_sidecar_metadata(
                 let current_description = q.current_description.filter(|s| !s.trim().is_empty());
                 let rating = detected.rating.filter(|r| Some(*r) != q.current_rating);
                 let description = detected.description.filter(|d| Some(d) != current_description.as_ref());
-                let has_processing_sidecar = paths::find_processing_sidecar(&local).is_some();
+                let processing_sidecar_tools: Vec<RawConverterKind> =
+                    paths::find_all_processing_sources(&local).iter().map(|s| s.tool()).collect();
+                let has_processing_sidecar = !processing_sidecar_tools.is_empty();
                 (rating.is_some() || description.is_some() || has_processing_sidecar).then_some(MetadataSyncResult {
                     asset_id: q.asset_id,
                     rating,
                     description,
                     has_processing_sidecar,
+                    processing_sidecar_tools,
                 })
             })
             .collect::<Vec<_>>()

@@ -7,22 +7,29 @@
 //! `rawtherapee-cli` testing turns up its own failure mode worth working
 //! around.
 //!
-//! **Flag semantics below are carried over from ART's own confirmed argv
-//! (`art::build_art_cli_args`) on the assumption that RawTherapee-cli, as the
-//! project ART forked its CLI from, accepts the same `-o`/`-j<n>`/`-Y`/`-s`/
-//! `-d -S`/`-d`/`-c` grammar - this has NOT yet been confirmed against a real
-//! `rawtherapee-cli -h`/version dump the way `art.rs`'s own module doc
-//! comment documents for ART 1.26.7.** Do this before relying on it for real:
-//! ART's own `-s` behavior (warns + falls back to neutral values on a
-//! missing sidecar) is already known to differ from RawTherapee's documented
-//! `-s` (falls back to the default profile instead), so flag *presence* may
-//! match while flag *behavior* doesn't - `SidecarCliMode`'s mapping here may
-//! need tool-specific adjustment once verified live. `--progress`/`-V` are
-//! deliberately omitted (unlike ART's argv) since RawTherapee-cli's own
-//! progress-reporting convention, if any, isn't confirmed either - until
-//! that's checked, RawTherapee round-trip jobs simply won't get live
-//! percentage updates (`cli_process::run_cli_with_progress`'s `on_progress`
-//! just never fires, which is a silent no-op, not an error).
+//! **Flag grammar and mode semantics are now confirmed live** against a real
+//! `rawtherapee-cli -h` usage dump and real conversion runs (RawTherapee
+//! 5.12, August 2026) - `-o`, `-j<n>` (no space; default `92` matches
+//! `JPEG_QUALITY`), `-Y`, `-s`, `-d -S`, `-d`, and `-c` (must be last) all
+//! exist exactly as assumed, carried over from ART's own confirmed argv.
+//! Mode behavior is a byte-for-byte match with ART-cli's own confirmed
+//! asymmetry (see `art.rs`'s module doc): `-s` alone on a missing sidecar
+//! prints `Warning: sidecar file requested but not found for: <path>` and
+//! still exits **0** using neutral values, while `-d -S` on a missing
+//! sidecar exits non-zero with `Error: no sidecar procparams found for:
+//! <path>`. (An earlier version of this doc comment assumed RawTherapee's
+//! documented `-s` fell back to the *default* profile instead of neutral
+//! values on a missing sidecar, diverging from ART - live testing showed
+//! that assumption was simply wrong, not a real tool difference.) Since
+//! `SidecarCliMode`'s dispatch is already generic - `art_queue::mode_for_sidecar`
+//! never picks `DefaultThenSidecarOverride` without a confirmed sidecar, and
+//! `commands::launch_raw_cli_round_trip` pre-checks before ever using
+//! `ApplySidecar` - both tools were already safe against this asymmetry with
+//! no RawTherapee-specific code needed. `--progress`/`-V` are deliberately
+//! omitted (unlike ART's argv): the real usage dump has no equivalent flag,
+//! so RawTherapee round-trip jobs simply get no live percentage updates
+//! (`cli_process::run_cli_with_progress`'s `on_progress` just never fires,
+//! which is a confirmed silent no-op, not an error).
 
 use std::path::Path;
 

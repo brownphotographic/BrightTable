@@ -7,6 +7,7 @@ import { useExportQueue } from '../lib/exportQueue';
 import {
   cancelRawCliJob,
   cancelExportJob,
+  RAW_CONVERTER_LABEL,
   thumbnailSrc,
   type ArtJob,
   type ArtJobStatus,
@@ -17,8 +18,47 @@ import {
   type ImportJob,
   type ImportJobStatus,
   type ProcessingJobStatus,
-  type RawConverterKind,
 } from '../lib/api';
+
+// Same "quiet placeholder beats the browser's broken-image glyph" idiom as
+// AssetThumb.tsx's grid/filmstrip thumbnails, adapted for this panel's fixed
+// 40x40 row thumbnails (no absolute-positioned thumbhash blur layer needed
+// here - these rows are transient session history, not scroll-heavy grid
+// tiles). A 404 here is expected, not a bug: this panel's job history is a
+// plain in-memory session log with no asset-lifecycle awareness, so an id
+// from an edit/round-trip/export queued earlier in the session can easily
+// outlive the asset itself (trashed/deleted since) - Immich then correctly
+// 404s its thumbnail forever, not just transiently, so this has no retry
+// affordance (unlike AssetThumb's ⟳, which is for a thumbnail still being
+// generated and worth asking for again).
+function RowThumb({ assetId }: { assetId: string }) {
+  const [failed, setFailed] = useState(false);
+  return failed ? (
+    <div
+      style={{
+        width: 40,
+        height: 40,
+        borderRadius: 6,
+        flexShrink: 0,
+        background: '#333',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'var(--text-dimmer)',
+        fontSize: 16,
+      }}
+    >
+      ⌀
+    </div>
+  ) : (
+    <img
+      src={thumbnailSrc(assetId)}
+      alt=""
+      onError={() => setFailed(true)}
+      style={{ width: 40, height: 40, borderRadius: 6, objectFit: 'cover', flexShrink: 0, background: '#333' }}
+    />
+  );
+}
 
 function kindLabel(job: EditJob): string {
   const parts: string[] = [];
@@ -79,10 +119,6 @@ function artStatusPill(status: ArtJobStatus): { label: string; color: string; bg
       return { label: 'Failed', color: '#ff8080', bg: 'rgba(224,27,36,0.2)' };
   }
 }
-
-// Display label for each job's `tool` field - lets a row read "ART" vs
-// "RawTherapee" now that both share this same board/section.
-const RAW_CONVERTER_LABEL: Record<RawConverterKind, string> = { art: 'ART', rawtherapee: 'RawTherapee', darktable: 'DarkTable' };
 
 // `art.rs::classify_exit`'s fixed wording for a RAW file whose embedded
 // metadata makes ART-cli's bundled Exiv2 crash outright (confirmed live
@@ -271,11 +307,7 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
               const pill = statusPill(job.status);
               return (
                 <div key={job.jobId} style={rowStyle}>
-                  <img
-                    src={thumbnailSrc(job.assetId)}
-                    alt=""
-                    style={{ width: 40, height: 40, borderRadius: 6, objectFit: 'cover', flexShrink: 0, background: '#333' }}
-                  />
+                  <RowThumb assetId={job.assetId} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={rowTitle}>{kindLabel(job)}</div>
                     {job.error && <div style={rowError}>{job.error}</div>}
@@ -346,13 +378,10 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
               const pill = processingStatusPill(job.status);
               return (
                 <div key={job.jobId} style={rowStyle}>
-                  <img
-                    src={thumbnailSrc(job.targetAssetId)}
-                    alt=""
-                    style={{ width: 40, height: 40, borderRadius: 6, objectFit: 'cover', flexShrink: 0, background: '#333' }}
-                  />
+                  <RowThumb assetId={job.targetAssetId} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={rowTitle}>Paste Image Processing</div>
+                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 1 }}>{RAW_CONVERTER_LABEL[job.tool]}</div>
                     {job.error && <div style={rowError}>{job.error}</div>}
                   </div>
                   <StatusPill pill={pill} />
@@ -431,11 +460,7 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
                     ) : (
                       <div style={{ width: 13, flexShrink: 0 }} />
                     )}
-                    <img
-                      src={thumbnailSrc(job.assetId)}
-                      alt=""
-                      style={{ width: 40, height: 40, borderRadius: 6, objectFit: 'cover', flexShrink: 0, background: '#333' }}
-                    />
+                    <RowThumb assetId={job.assetId} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={rowTitle}>{job.exportFileName ?? 'RAW Roundtrip'}</div>
                       <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 1 }}>{RAW_CONVERTER_LABEL[job.tool]}</div>
@@ -470,11 +495,7 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
               const cancellable = isCancellableExportJob(job);
               return (
                 <div key={job.jobId} style={rowStyle}>
-                  <img
-                    src={thumbnailSrc(job.assetId)}
-                    alt=""
-                    style={{ width: 40, height: 40, borderRadius: 6, objectFit: 'cover', flexShrink: 0, background: '#333' }}
-                  />
+                  <RowThumb assetId={job.assetId} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={rowTitle}>{job.exportFileName ?? (job.target === 'flickr' ? 'Share to Flickr' : 'Export to Folder')}</div>
                     <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 1 }}>

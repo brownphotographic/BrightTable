@@ -6,10 +6,11 @@ import type { AppChoice, RawConverterKind } from '../lib/api';
 
 // One entry per RAW converter's own settings block below - label, the
 // binary this build actually shells out to, the file-browse dialog title,
-// and whether it has a working CLI round trip yet (darktable doesn't - its
+// and whether it has a working CLI round trip yet. All three do: darktable's
 // processing history lives inside the same .xmp sidecar already used for
-// rating/description, which needs its own surgical-merge support first; see
-// requirements.md §1.6/§2.4).
+// rating/description, so its roundtrip detects edits via a surgical read of
+// that file's darktable history stack rather than a plain sidecar-exists
+// check (see requirements.md §1.6/§2.4).
 const TOOL_META: Record<RawConverterKind, { label: string; binary: string; browseTitle: string; implemented: boolean; docsUrl: string }> = {
   art: {
     label: 'ART',
@@ -29,7 +30,7 @@ const TOOL_META: Record<RawConverterKind, { label: string; binary: string; brows
     label: 'DarkTable',
     binary: 'darktable-cli',
     browseTitle: 'Choose the darktable-cli binary',
-    implemented: false,
+    implemented: true,
     docsUrl: 'https://www.darktable.org/',
   },
 };
@@ -218,7 +219,11 @@ export default function PreferencesApplications() {
                   </div>
                   {config.app && <div style={execText}>{config.app.exec}</div>}
                   {config.app && (
-                    <ExtraArgsRow choice={config.app} onCommit={(extraArgs) => setToolApp(tool, { ...config.app!, extraArgs })} />
+                    <ExtraArgsRow
+                      choice={config.app}
+                      onCommit={(extraArgs) => setToolApp(tool, { ...config.app!, extraArgs })}
+                      placeholder={tool === 'art' ? 'e.g. -s (Simple editor mode)' : undefined}
+                    />
                   )}
                 </div>
                 <button onClick={() => setPickerTarget(tool)} style={btnSecondary}>
@@ -297,8 +302,21 @@ function InfoTooltip({ text }: { text: string }) {
 
 // Local draft state so every keystroke doesn't trigger a save - only commits
 // (via useApplications' setExternalEditor/setToolApp, which persist
-// immediately) on blur.
-function ExtraArgsRow({ choice, onCommit }: { choice: AppChoice; onCommit: (extraArgs: string) => void }) {
+// immediately) on blur. `placeholder` is caller-supplied and optional -
+// deliberately left unset (rather than some "(none)"/"not supported" filler)
+// for every app except ART: placeholder text sitting inside an already-empty
+// input reads as an instruction ("type this"), which is exactly backwards
+// for a field that should just stay empty. ART's own GUI is the only one of
+// these apps where `-s` (Simple editor mode) is a real, useful example worth
+// showing. RawTherapee's GUI binary shares its argument grammar with
+// `rawtherapee-cli` and has no such flag - a generic "-s" placeholder here
+// previously led straight to a real bug (confirmed live): pasting `-s` into
+// RawTherapee's Desktop App entry makes the GUI print its usage text and
+// exit instantly instead of opening, which `apps::launch_app_and_wait` (any
+// exit counts as "done") then silently treats as "the user finished
+// editing" - the round trip proceeds straight to the CLI conversion with no
+// visible editor window ever appearing.
+function ExtraArgsRow({ choice, onCommit, placeholder }: { choice: AppChoice; onCommit: (extraArgs: string) => void; placeholder?: string }) {
   const [value, setValue] = useState(choice.extraArgs);
 
   useEffect(() => setValue(choice.extraArgs), [choice.exec, choice.extraArgs]);
@@ -312,7 +330,7 @@ function ExtraArgsRow({ choice, onCommit }: { choice: AppChoice; onCommit: (extr
         onBlur={() => {
           if (value !== choice.extraArgs) onCommit(value);
         }}
-        placeholder="e.g. -s"
+        placeholder={placeholder}
         style={argsInput}
       />
     </div>

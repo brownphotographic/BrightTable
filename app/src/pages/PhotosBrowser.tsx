@@ -14,6 +14,7 @@ import {
   launchEditor,
   listStacks,
   pasteImageProcessing,
+  RAW_CONVERTER_LABEL,
   revealInFileManager,
   setStackPick,
   updateAssetMetadata,
@@ -855,10 +856,25 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     [unsyncedMetadata, commitEdit],
   );
 
+  // Fetches which tools' settings the source actually has fresh, right at
+  // copy time, rather than trusting whatever `processingSidecarAssets`
+  // happened to cache when the bucket last loaded (that cache is a plain
+  // boolean gate, not a tool list, and can lag behind the real disk state -
+  // see the comment on `processingSidecarAssets` itself). Only used for the
+  // paste confirm dialog's wording (`copiedProcessingSource.tools`) - the
+  // actual paste re-resolves everything fresh again on the backend
+  // regardless, so a stale/failed fetch here just means a slightly less
+  // specific dialog message, never an incorrect paste.
   const handleCopyImageProcessing = useCallback(
     (asset: AssetSummary) => {
       if (!asset.originalPath || !asset.hasProcessingSidecar) return;
-      setCopiedProcessingSource({ assetId: asset.id, originalPath: asset.originalPath, fileName: asset.fileName });
+      const originalPath = asset.originalPath;
+      setCopiedProcessingSource({ assetId: asset.id, originalPath, fileName: asset.fileName, tools: asset.processingSidecarTools ?? [] });
+      checkSidecarMetadata([{ assetId: asset.id, originalPath, currentRating: asset.rating, currentDescription: asset.description }])
+        .then(([result]) => {
+          if (result) setCopiedProcessingSource({ assetId: asset.id, originalPath, fileName: asset.fileName, tools: result.processingSidecarTools });
+        })
+        .catch(() => {});
     },
     [setCopiedProcessingSource],
   );
@@ -1659,7 +1675,9 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       {pasteProcessingTargets && (
         <ConfirmDialog
           title="Paste image processing?"
-          message={`Paste image processing onto ${pasteProcessingTargets.length} photo${pasteProcessingTargets.length === 1 ? '' : 's'}? This replaces any existing RawTherapee/ART edits on each one.`}
+          message={`Paste image processing onto ${pasteProcessingTargets.length} photo${pasteProcessingTargets.length === 1 ? '' : 's'}? This replaces any existing ${
+            copiedProcessingSource?.tools.map((t) => RAW_CONVERTER_LABEL[t]).join('/') || 'RAW-editor'
+          } edits on each one.`}
           confirmLabel="Paste"
           onConfirm={confirmPasteImageProcessing}
           onClose={() => setPasteProcessingTargets(null)}

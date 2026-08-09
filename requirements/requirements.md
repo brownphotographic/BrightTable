@@ -144,25 +144,31 @@
   revisited.
 - ✅ RAW-editor round-trip, in the launch-only sense that decision left behind (§7.21).
 - ✅ **RAW CLI round trip** (§7.25 built this for ART; §7.30 generalized it to also cover
-  RawTherapee) — a deeper, deterministic alternative to the launch-only round trip above,
-  active only when a converter is selected in Preferences → Applications and its CLI path is
-  configured. **Variant 1 ("Tweak RAW Roundtrip")** still opens the editor's GUI and waits for
-  the user to edit/save/close it (same as the plain launch-only flow), but then runs the
-  converter's own CLI against the sidecar it just wrote to produce the export — no manual
-  "export" step inside the editor's own UI. **Variant 2 ("Headless RAW Roundtrip")** skips the
-  GUI entirely: batch-exports N selected RAW assets' own sidecars (or the converter's default
-  profile, for ones with none) straight through its CLI in the background, with visible
-  per-asset progress and cancellation. Both variants feed the same Immich-side ingestion the
-  generic round trip's file watcher already used (thumbnail regen, capture-date fix,
-  rating/favorite/description carryover, auto-stack with the RAW original).
-- ⬜ **DarkTable CLI round trip** — planned but not implemented (§7.30). DarkTable can be
-  selected in Preferences → Applications and its `darktable-cli` path saved like the other
-  two, but doing so leaves the roundtrip buttons on the plain launch-only flow rather than
-  enabling them: unlike ART's `.arp`/RawTherapee's `.pp3`, darktable's processing history
-  lives inside the same `.xmp` sidecar this app already reads/writes for rating/description
-  (§2.4), so detecting "does this asset have darktable edits to apply" needs a surgical
-  `.xmp`-history read rather than the plain sidecar-file-exists check `paths::find_processing_sidecar`
-  already does for the other two — not yet built.
+  RawTherapee and DarkTable) — a deeper, deterministic alternative to the launch-only round
+  trip above, active only when a converter is selected in Preferences → Applications and its
+  CLI path is configured. **Variant 1 ("Tweak RAW Roundtrip")** still opens the editor's GUI
+  and waits for the user to edit/save/close it (same as the plain launch-only flow), but then
+  runs the converter's own CLI against the sidecar it just wrote to produce the export — no
+  manual "export" step inside the editor's own UI. **Variant 2 ("Headless RAW Roundtrip")**
+  skips the GUI entirely: batch-exports N selected RAW assets' own sidecars (or the
+  converter's default profile, for ones with none) straight through its CLI in the background,
+  with visible per-asset progress and cancellation. Both variants feed the same Immich-side
+  ingestion the generic round trip's file watcher already used (thumbnail regen, capture-date
+  fix, rating/favorite/description carryover, auto-stack with the RAW original).
+- ✅ **DarkTable CLI round trip** (§7.30) — the third converter now has a real `darktable-cli`
+  invocation (`darktable.rs`), same as ART/RawTherapee. Its argv is positional
+  (`<input> [<xmp>] <output>`) rather than ART/RawTherapee's `-o`/`-c` flag style, and unlike
+  their dedicated `.arp`/`.pp3` sidecars, darktable's processing history lives inside the same
+  `.xmp` sidecar this app already reads/writes for rating/description (§2.4) — so "does this
+  asset have darktable edits to apply" is answered by a surgical `.xmp`-history read
+  (`paths::find_darktable_history_sidecar` / `xmp::has_darktable_history`) instead of the plain
+  sidecar-file-exists check `paths::find_processing_sidecar` does for the other two. Two
+  assumptions remain unconfirmed pending the user's own live test with real RAW assets and
+  DarkTable: whether `darktable-cli` overwrites the empty placeholder file
+  `export_naming::next_export_path` pre-claims for the export (no documented equivalent to
+  ART/RawTherapee's `-Y`), and that it emits no progress-percentage stdout stream the way
+  ART/RawTherapee's zenity-style convention does (so `on_progress` is expected to just never
+  fire, same as it already doesn't for RawTherapee).
 
 ### 1.7 Sharing & export
 > **Prototype only — none of this exists in the real app.** No Sharing preferences content,
@@ -232,11 +238,14 @@
 - ✅ `.arp` (ART) and `.pp3` (RawTherapee) processing-sidecar detection
   (`paths::find_processing_sidecar`) drives both tools' CLI round trip (§1.6/§7.25/§7.30) —
   real for both append- and replaced-extension forms.
-- ⬜ Sidecar storage (XMP), read/write, ExifTool-backed arbitrary fields — still planned,
-  matching the prototype's own status here. Darktable's `.xmp`-embedded processing history
-  specifically remains unread/unwritten for CLI-round-trip purposes (§1.6) — it shares the
-  same file this app already patches for rating/description, which needs a surgical merge
-  rather than the plain whole-sidecar handling ART/RawTherapee get.
+- ✅ Darktable's `.xmp`-embedded processing history is now read for CLI-round-trip purposes
+  (§1.6) via `paths::find_darktable_history_sidecar`/`xmp::has_darktable_history` — a surgical
+  presence check (`darktable:history`/`darktable:history_end`) of the same `.xmp` file
+  `xmp.rs`'s `read_rating`/`read_description`/`patch_or_create` already own, rather than a
+  plain whole-sidecar-exists check the way ART/RawTherapee get. Read-only: never writes to or
+  otherwise disturbs that file's rating/description fields.
+- ⬜ Sidecar storage (XMP) read/write beyond rating/description/darktable-history-detection,
+  ExifTool-backed arbitrary fields — still planned, matching the prototype's own status here.
 
 ### 2.5 External applications
 - ✅ Detect/launch native, Flatpak, Snap apps; custom executable (also covers AppImage,
@@ -255,9 +264,8 @@
   selector (segmented control: None/ART/RawTherapee/DarkTable) is the single switch that
   decides which sub-tab's app is "the RAW Editor" for the Viewer/selection-bar buttons, and
   additionally turns on the RAW CLI round trip (§1.6) when that same tool's CLI path is also
-  configured — only ART and RawTherapee actually enable the CLI round trip today (DarkTable
-  has no working CLI invocation yet, §1.6), but all three can hold a configured app for the
-  plain launch-only case.
+  configured — all three converters now enable the CLI round trip once their own CLI path is
+  set (§1.6).
 - ✅ **Show in File Manager** (§7.25) — reveals, and where the desktop supports it
   selects/highlights, an asset's local file in the OS file manager. Not app-picker-related,
   but grouped here as another direct OS-integration touchpoint alongside editor launch.
@@ -2151,15 +2159,16 @@
   Albums'/People's "count of items in this collection" convention for the sidebar row, not
   the deliberately-omitted per-tag photo count above).
 
-### 7.30 Multi-tool RAW roundtrip: RawTherapee (real) + DarkTable (scaffold, August 2026)
+### 7.30 Multi-tool RAW roundtrip: RawTherapee + DarkTable (both real, August 2026)
 > §7.25's ART CLI round trip was written ART-specific throughout — module names (`art.rs`,
 > `art_queue.rs`), the config field (`art_cli_path`), the frontend derived flag
 > (`artRoundTripEnabled`). This round generalizes that to also roundtrip through
 > **RawTherapee-cli** (ART's parent project — full working implementation, both variants, at
-> parity with ART) and documents **darktable-cli** as planned scope with code-level
-> placeholders (config field + Preferences panel that persists a path) but no working CLI
-> invocation, since darktable's processing history lives inside the same `.xmp` sidecar this
-> app already reads/writes for rating/description (§2.4) rather than a separate file.
+> parity with ART) and, in a later pass the same round, **darktable-cli** too — its processing
+> history lives inside the same `.xmp` sidecar this app already reads/writes for
+> rating/description (§2.4) rather than a separate file, so it needed its own surgical
+> `.xmp`-history-detection logic (`xmp::has_darktable_history`/`paths::find_darktable_history_sidecar`)
+> instead of reusing `find_processing_sidecar`'s plain exists-check the way RawTherapee did.
 - ✅ **`cli_process.rs`** (new) — the generic child-process spawn/stream/cancel driver
   extracted out of what was `art.rs`'s own `run_art_cli_with_progress` (it never actually
   depended on ART specifically — takes the binary path as a plain `&str`), plus a generic
@@ -2232,9 +2241,9 @@
   RawTherapee — `find_processing_sidecar` already resolved `.pp3` via `ProcessingKind::Pp3`,
   and export-filename generation was already tool-agnostic.
 - ✅ **Frontend** — `lib/applications.tsx`'s derived `artRoundTripEnabled` replaced with
-  `rawRoundTripEnabled` (true only when `activeRawConverter` is `'art'`/`'rawtherapee'` and
-  that tool's own path is non-empty — `'darktable'` never enables it), plus new
-  `activeRawConverter`/per-tool path state and setters. `lib/api.ts`'s five ART-named command
+  `rawRoundTripEnabled` (true whenever `activeRawConverter` is set to any of the three
+  converters and that tool's own path is non-empty), plus new `activeRawConverter`/per-tool
+  path state and setters. `lib/api.ts`'s five ART-named command
   wrappers renamed to match the backend; `ArtJob` gained a `tool: RawConverterKind` field.
   Mechanical rename of `artRoundTripEnabled`/`launchArtRoundTrip`/`batchArtRoundTrip` call
   sites across `Viewer.tsx`, `PhotosBrowser.tsx`, `FoldersBrowser.tsx`. `ActivityPanel.tsx`'s
@@ -2251,22 +2260,47 @@
   three tools' apps and paths and freely switch the active selector between them without
   re-entering anything, matching real multi-tool testing workflow. The top "Applications"
   panel now holds only External Editor (unrelated to RAW conversion). DarkTable's sub-tab
-  persists both the same way but carries an inline note that CLI roundtrip isn't implemented
-  yet.
-- ⬜ **DarkTable CLI round trip itself** — not implemented, scope deliberately deferred this
-  round (§1.6/§2.4). `ApplicationsConfig::active_raw_cli()` refuses to hand out a path for
-  `RawConverterKind::DarkTable`, and `art_queue::run_round_trip_cli`'s `DarkTable` match arm
-  is unreachable in practice as a result — both exist only to keep their respective matches
-  exhaustive against a future real implementation, not as a reachable code path today. The
-  real blocker to build next: darktable-cli takes an explicit `.xmp` sidecar path as an
-  argument (no `-s`/`-S`-style "look for one automatically" flag the way ART/RawTherapee do),
-  and that `.xmp` is the *same file* `xmp.rs` already patches for rating/description — so
-  "does this asset have darktable edits to roundtrip" needs a surgical read of the `.xmp`'s
-  darktable `history` stack, not the plain sidecar-file-exists check
-  `paths::find_processing_sidecar` does for `.arp`/`.pp3`.
-- ⚠️ **Not yet manually verified against real installs** — `cargo test`/`tsc`/`cargo build`
-  all pass (232 backend unit tests, including new `rawtherapee.rs` argv/spawn tests mirroring
-  `art.rs`'s own), but this hasn't yet been run live against a real `rawtherapee-cli` binary
-  and a real RAW asset the way §7.25's ART work was — the flag-semantics caveat above is the
-  main open question a real run would settle. The user plans to test all three converters
-  personally.
+  persists the same way as the other two and, now that its CLI round trip is real, no longer
+  carries an inline "not implemented" note.
+- ✅ **DarkTable CLI round trip implemented** (`darktable.rs`, new module, same round). Its
+  argv is positional (`<input> [<xmp>] <output>`) rather than ART/RawTherapee's `-o`/`-c` flag
+  style, and — since `darktable-cli` has no `-d -S`-equivalent "apply defaults, then layer a
+  sidecar over them" flag — `art_queue::run_round_trip_cli`'s `DarkTable` arm collapses
+  `SidecarCliMode::ApplySidecar`/`DefaultThenSidecarOverride` down to the same behavior ("pass
+  the resolved xmp path"), only `DefaultOnly` omits it. `paths::find_darktable_history_sidecar`
+  (new) resolves that path: it checks both `.xmp` naming forms `find_processing_sidecar`
+  already knows about, but — unlike a bare exists-check — actually reads each candidate and
+  confirms `xmp::has_darktable_history` (new: a presence check for a
+  `darktable:history`/`darktable:history_end` element) before treating it as "this asset has
+  edits to roundtrip," so a `.xmp` written only for rating/description doesn't false-positive.
+  A new `paths::has_round_trip_sidecar(tool, original)` dispatch replaces the two direct
+  `find_processing_sidecar(...).is_some()` calls in `commands.rs` (Variant 1 and Variant 2)
+  with a tool-aware check. `ApplicationsConfig::active_raw_cli()`'s `DarkTable` arm now returns
+  a real `Ok` (same empty-path-check shape as ART/RawTherapee) instead of a hardcoded error.
+  Two things the supplied `darktable-cli` docs don't resolve, flagged pending the user's own
+  live test with real RAW assets and DarkTable (same posture RawTherapee's flag grammar
+  carried before its own confirmation pass, below): whether `darktable-cli` overwrites the
+  empty placeholder file `export_naming::next_export_path` always pre-claims for the export
+  (no documented equivalent to `-Y`), and that it emits no progress-percentage stdout stream
+  (so `on_progress` is expected to just never fire, same confirmed no-op RawTherapee already
+  has).
+- ✅ **RawTherapee-cli flag semantics verified live** (August 2026, RawTherapee 5.12 via
+  `dnf`, binary at `/usr/bin/rawtherapee-cli`) — a real `rawtherapee-cli -h` usage dump
+  confirmed the full assumed grammar (`-o`, `-j<n>` no-space with default `92`, `-Y`, `-s`,
+  `-d -S`, `-d`, `-c` last) exists exactly as `rawtherapee.rs` builds it, and no
+  `--progress`/`-V`-equivalent flag exists (so no live percentage updates is confirmed
+  correct behavior, not an unconfirmed gap). Three real conversion runs against a throwaway
+  test image reproduced ART-cli's own confirmed asymmetry byte-for-byte: `-s` alone with no
+  sidecar warns (`sidecar file requested but not found for: ...`) and still exits **0** using
+  neutral values; `-d -S` with no sidecar exits non-zero (`Error: no sidecar procparams found
+  for: ...`); `-s` with a real `.pp3` present merges it and exits 0. This *disproves* the
+  prior module-doc assumption that RawTherapee's `-s` diverges from ART's by falling back to
+  the default profile instead of neutral values on a missing sidecar — live testing shows
+  they behave identically. No code changes were needed: `art_queue::mode_for_sidecar` already
+  never pairs `-S` with a missing sidecar, and `commands::launch_raw_cli_round_trip` already
+  pre-checks before ever using `ApplySidecar`, so both tools were already safe against this
+  asymmetry. `rawtherapee.rs`'s module doc comment rewritten to record these live-confirmed
+  findings in place of the disproven assumption. Not yet tested: an actual RAW file (only a
+  synthetic PNG was available in this sandbox — RawTherapee's non-raw processing path was
+  exercised, not its raw demosaic path) and RAM usage under `MAX_CONCURRENT_RAW_CLI_JOBS`
+  concurrency. The user plans to test with real RAW assets and DarkTable personally.

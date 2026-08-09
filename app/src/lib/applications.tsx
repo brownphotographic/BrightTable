@@ -29,10 +29,9 @@ interface ApplicationsContextValue {
   // Whether the RAW CLI round trip is configured and actually usable - the
   // single signal that switches "Tweak RAW Roundtrip"/adds "Headless RAW
   // Roundtrip" over to the CLI-driven flow (see the feature plan's decision
-  // on this). True only when activeRawConverter is 'art' or 'rawtherapee'
-  // (darktable has no working CLI invocation yet) and that tool's own
-  // cliPath is non-empty. Derived rather than stored separately so it can
-  // never drift from the underlying config.
+  // on this). True whenever activeRawConverter is set to any of the three
+  // converters and that tool's own cliPath is non-empty. Derived rather than
+  // stored separately so it can never drift from the underlying config.
   rawRoundTripEnabled: boolean;
   // Whether exiftool is configured - required by the export dialogs' "Keep
   // all metadata"/"Remove GPS only" options. Derived, same idiom as
@@ -98,7 +97,7 @@ export function ApplicationsProvider({ children }: { children: ReactNode }) {
   const activeTool = applications.activeRawConverter ? applications[applications.activeRawConverter] : null;
   const activeRawEditorApp = activeTool?.app ?? null;
   const rawRoundTripEnabled =
-    (applications.activeRawConverter === 'art' || applications.activeRawConverter === 'rawtherapee') &&
+    (applications.activeRawConverter === 'art' || applications.activeRawConverter === 'rawtherapee' || applications.activeRawConverter === 'darktable') &&
     (activeTool?.cliPath.trim().length ?? 0) > 0;
   const exiftoolConfigured = applications.exiftoolPath.trim().length > 0;
 

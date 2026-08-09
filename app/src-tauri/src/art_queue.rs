@@ -30,6 +30,8 @@ use tokio::sync::{mpsc, watch, OwnedSemaphorePermit, Semaphore};
 use crate::art;
 use crate::cli_process::{self, SidecarCliMode};
 use crate::config::RawConverterKind;
+use crate::darktable;
+use crate::paths;
 use crate::rawtherapee;
 use crate::state::AppState;
 
@@ -354,12 +356,16 @@ pub(crate) fn mode_for_sidecar(has_sidecar: bool) -> SidecarCliMode {
 
 /// Dispatches one round-trip export to the right converter module - the one
 /// place both `run` (Variant 2's worker, below) and `commands.rs`'s Variant 1
-/// handlers pick between `art`/`rawtherapee` so the two can't drift into
-/// different behavior for the same `RawConverterKind`. `DarkTable` has no
-/// working CLI invocation yet (see `ApplicationsConfig::active_raw_cli`,
-/// which already refuses to hand out a `DarkTable` path in the first place -
-/// this arm only exists so the match stays exhaustive against future
-/// converters, not as a reachable path today).
+/// handlers pick between `art`/`rawtherapee`/`darktable` so the three can't
+/// drift into different behavior for the same `RawConverterKind`. DarkTable's
+/// mode mapping differs from the other two: `darktable-cli` has no `-d -S`-
+/// style "apply defaults, then layer a sidecar over them" flag, so both
+/// `ApplySidecar` and `DefaultThenSidecarOverride` just mean "pass the
+/// resolved xmp path" here - only `DefaultOnly` omits it. The xmp path itself
+/// is resolved fresh here (via `paths::find_darktable_history_sidecar`)
+/// rather than threaded through as a parameter, since ART/RawTherapee's CLI
+/// grammar has no equivalent argument to carry it in - see `darktable.rs`'s
+/// own module doc for why darktable's argv needs this at all.
 pub(crate) async fn run_round_trip_cli<F>(
     tool: RawConverterKind,
     cli_path: &str,
@@ -376,7 +382,13 @@ where
     match tool {
         RawConverterKind::Art => art::run_art_cli_with_metadata_fallback(cli_path, exiftool_path, raw_path, export_path, mode, on_progress, cancel).await,
         RawConverterKind::RawTherapee => rawtherapee::run_rawtherapee_cli(cli_path, raw_path, export_path, mode, on_progress, cancel).await,
-        RawConverterKind::DarkTable => Err("DarkTable CLI round trip isn't implemented yet".to_string()),
+        RawConverterKind::DarkTable => {
+            let xmp_path = match mode {
+                SidecarCliMode::DefaultOnly => None,
+                _ => paths::find_darktable_history_sidecar(raw_path),
+            };
+            darktable::run_darktable_cli(cli_path, raw_path, export_path, xmp_path.as_deref(), on_progress, cancel).await
+        }
     }
 }
 
