@@ -16,7 +16,7 @@ Immature:
 
 - _Ature = inspired by Apple Aperture - a great, easy to use photo management tool known for its great user experience. For those that used it in version 1.0 you will remember how buggy it was too.
 
-- Immature = Imature / Amateur - i.e. this is an experiment from a non software developer (but professional tech product manager). The name implies a warning.
+- Immature = Immature / Amateur - i.e. this is an experiment from an amateur. The name implies a warning.
 
 **What does it do?**
 
@@ -32,7 +32,7 @@ Immature:
 
 - This tool was created by me, for me. I am giving it to the community to allow others who are interested to use it, fork it and maintain their own copy.
 
-- Use at your own risk! You are responsible for using this tool.
+- Use at your own risk! You are responsible for using this tool. Read the code and understand what it does before using it. Test it on a sandbox first.
 
 - You must be technically savvy! I am purposefully going to give as least instruction as possible on how to install and use it. If you can code, use gen AI tools, and run Immich, use opensource RAW editing tools you may find value in this. If you don't I suggest heading in a different direction and use Shotwell, ART, RawTherapee, Darktable or RapidRAW. Those projects are supported by expert developers and well tested. This project is an experiment only.
 
