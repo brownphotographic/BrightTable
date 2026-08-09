@@ -299,7 +299,7 @@ mod tests {
 
     #[tokio::test]
     async fn launch_app_and_wait_succeeds_on_clean_exit_including_nonzero() {
-        let dir = std::env::temp_dir().join(format!("immature-test-apps-wait-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-apps-wait-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let script = dir.join("fake-editor.sh");
         fs::write(&script, "#!/bin/sh\nexit 7\n").unwrap();
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn parses_name_exec_and_classifies_native() {
-        let dir = std::env::temp_dir().join(format!("immature-test-apps-native-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-apps-native-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = write_desktop_entry(
             &dir,
@@ -351,7 +351,7 @@ mod tests {
 
     #[test]
     fn skips_no_display_entries() {
-        let dir = std::env::temp_dir().join(format!("immature-test-apps-nodisplay-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-apps-nodisplay-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = write_desktop_entry(
             &dir,
@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn ignores_keys_outside_desktop_entry_section() {
-        let dir = std::env::temp_dir().join(format!("immature-test-apps-section-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-apps-section-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = write_desktop_entry(
             &dir,

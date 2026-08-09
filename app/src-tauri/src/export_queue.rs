@@ -570,7 +570,7 @@ async fn convert_raw_to_jpeg(art_cli_path: &str, exiftool_path: &str, art_queue:
     let raw_path_owned = raw_path.to_path_buf();
     let has_sidecar = tokio::task::spawn_blocking(move || paths::find_processing_sidecar(&raw_path_owned).is_some()).await.map_err(|e| e.to_string())?;
     let mode = art_queue::mode_for_sidecar(has_sidecar);
-    let temp_path = std::env::temp_dir().join(format!("immature-export-raw-{job_id}.jpg"));
+    let temp_path = std::env::temp_dir().join(format!("brighttable-export-raw-{job_id}.jpg"));
 
     let _permit = art_queue.acquire_permit().await;
     // Re-checked here (not just wherever the caller last checked it) since
@@ -630,7 +630,7 @@ async fn apply_metadata_policy(
     }
 
     let (_, target_ext) = split_base_ext(filename);
-    let target_temp = std::env::temp_dir().join(format!("immature-export-meta-{job_id}.{target_ext}"));
+    let target_temp = std::env::temp_dir().join(format!("brighttable-export-meta-{job_id}.{target_ext}"));
     tokio::fs::write(&target_temp, &bytes).await.map_err(|e| format!("Could not write temp file for metadata: {e}"))?;
 
     // A `Jpeg`-format rendition has no metadata of its own to edit yet (see
@@ -641,7 +641,7 @@ async fn apply_metadata_policy(
     let source_temp = if !is_original_format && matches!(policy, MetadataPolicy::Keep | MetadataPolicy::RemoveGps) {
         let (source_bytes, source_filename) = fetch_true_original(immich, library_cfg, asset_id, original_path, file_name).await?;
         let (_, source_ext) = split_base_ext(&source_filename);
-        let p = std::env::temp_dir().join(format!("immature-export-meta-src-{job_id}.{source_ext}"));
+        let p = std::env::temp_dir().join(format!("brighttable-export-meta-src-{job_id}.{source_ext}"));
         tokio::fs::write(&p, &source_bytes).await.map_err(|e| format!("Could not write temp source file for metadata: {e}"))?;
         Some(p)
     } else {
@@ -900,7 +900,7 @@ mod tests {
 
     #[test]
     fn next_available_path_starts_bare_then_numbers_on_collision() {
-        let dir = std::env::temp_dir().join(format!("immature-test-export-queue-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-export-queue-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let first = next_available_path(&dir, "IMG_1", "jpg").unwrap();
         assert_eq!(first, dir.join("IMG_1.jpg"));

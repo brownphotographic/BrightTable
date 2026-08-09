@@ -7,7 +7,7 @@ use crate::{embedded, xmp};
 /// Resolves an asset's server-side `original_path` (e.g.
 /// "library/admin/2024/09/IMG_1234.CR2" for an External Library asset, or
 /// "upload/library/admin/2024/09/IMG_1.jpg" for one uploaded directly via
-/// phone/web) to the real local filesystem path ImmAture can read/write, by
+/// phone/web) to the real local filesystem path BrightTable can read/write, by
 /// substituting whichever of the two configured server-root prefixes
 /// matches: the External Library mapping (`immich_root`/`local_root`)
 /// first, then the Immich-internal-upload mapping
@@ -58,7 +58,7 @@ pub fn xmp_sidecar_path(original: &Path) -> PathBuf {
 /// originals share a basename with different extensions (e.g. a camera's
 /// `.DNG` + its embedded `.JPG` both present as separate Immich assets) -
 /// both would resolve to the same replaced-extension sidecar, which is an
-/// inherent limit of this naming convention, not something ImmAture can
+/// inherent limit of this naming convention, not something BrightTable can
 /// disambiguate either.
 pub fn xmp_sidecar_path_replaced(original: &Path) -> PathBuf {
     original.with_extension("xmp")
@@ -177,7 +177,7 @@ pub fn find_processing_sidecar(original: &Path) -> Option<(PathBuf, ProcessingKi
 /// Which `.xmp` path a write should target: whichever naming convention
 /// already has a file on disk (append-form checked first, same precedence
 /// `read_asset_metadata` uses), or the append-form default if neither exists
-/// yet - matching digiKam/darktable's own convention for a file ImmAture is
+/// yet - matching digiKam/darktable's own convention for a file BrightTable is
 /// authoring itself.
 pub fn xmp_write_path(original: &Path) -> PathBuf {
     let append_form = xmp_sidecar_path(original);
@@ -194,7 +194,7 @@ pub fn xmp_write_path(original: &Path) -> PathBuf {
 /// RawTherapee stores its own star rating as `Rank=N` inside the `.pp3`
 /// sidecar's `[General]` section, separately from any `.xmp` - whether a
 /// given RT install *also* writes/syncs an `.xmp` copy depends on its own
-/// metadata-sync setting, which ImmAture has no way to know, so both sources
+/// metadata-sync setting, which BrightTable has no way to know, so both sources
 /// are checked (see `read_asset_metadata` below). Range is `-1..=5`: `-1` is
 /// RT's own "rejected" marker, which now maps directly onto Immich's
 /// `rating: -1`. Section-scoped (only reads `Rank=` while inside `[General]`)
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn reads_pp3_rank_including_rejected() {
-        let dir = std::env::temp_dir().join(format!("immature-test-pp3-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-pp3-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
 
         let pp3 = dir.join("img.CR2.pp3");
@@ -372,7 +372,7 @@ mod tests {
 
     #[test]
     fn reads_pp3_iptc_caption_scoped_to_section() {
-        let dir = std::env::temp_dir().join(format!("immature-test-pp3-iptc-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-pp3-iptc-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
 
         let pp3 = dir.join("img.CR2.pp3");
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn asset_metadata_precedence_xmp_then_pp3() {
-        let dir = std::env::temp_dir().join(format!("immature-test-meta-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-meta-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
 
         let original = dir.join("img.CR2");
@@ -415,7 +415,7 @@ mod tests {
 
     #[test]
     fn asset_metadata_pick_label_rejected_without_explicit_rating() {
-        let dir = std::env::temp_dir().join(format!("immature-test-meta-pick-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-meta-pick-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
 
         let original = dir.join("img.CR2");
@@ -433,7 +433,7 @@ mod tests {
     // conventions were checked.
     #[test]
     fn xmp_write_path_prefers_whichever_form_exists() {
-        let dir = std::env::temp_dir().join(format!("immature-test-write-path-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-write-path-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
 
         let original = dir.join("neither-exists.DNG");
@@ -453,7 +453,7 @@ mod tests {
 
     #[test]
     fn find_processing_sidecar_none_when_neither_exists() {
-        let dir = std::env::temp_dir().join(format!("immature-test-proc-none-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-proc-none-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
 
         let original = dir.join("img.CR2");
@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn find_processing_sidecar_finds_pp3_when_only_pp3_exists() {
-        let dir = std::env::temp_dir().join(format!("immature-test-proc-pp3-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-proc-pp3-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
 
         let original = dir.join("img.CR2");
@@ -479,7 +479,7 @@ mod tests {
 
     #[test]
     fn find_processing_sidecar_prefers_arp_when_both_exist() {
-        let dir = std::env::temp_dir().join(format!("immature-test-proc-both-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-proc-both-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
 
         let original = dir.join("img.CR2");
@@ -495,7 +495,7 @@ mod tests {
 
     #[test]
     fn find_processing_sidecar_finds_replaced_extension_form() {
-        let dir = std::env::temp_dir().join(format!("immature-test-proc-replaced-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-proc-replaced-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
 
         // ART is confirmed to replace the extension outright for its `.xmp`
@@ -514,7 +514,7 @@ mod tests {
 
     #[test]
     fn find_processing_sidecar_prefers_the_more_recently_modified_form() {
-        let dir = std::env::temp_dir().join(format!("immature-test-proc-recency-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-proc-recency-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
 
         // Simulates a paste landing an append-form `.arp` (old, fixed
@@ -537,7 +537,7 @@ mod tests {
 
     #[test]
     fn sidecar_path_with_form_mirrors_the_source_forms_naming() {
-        let dir = std::env::temp_dir().join(format!("immature-test-proc-mirror-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-proc-mirror-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
 
         let target = dir.join("target.CR2");
@@ -559,7 +559,7 @@ mod tests {
 
     #[test]
     fn asset_metadata_finds_extension_replaced_xmp() {
-        let dir = std::env::temp_dir().join(format!("immature-test-meta-art-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-meta-art-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
 
         let original = dir.join("20260103_14-56-24.DNG");

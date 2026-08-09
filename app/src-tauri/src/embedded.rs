@@ -1,7 +1,7 @@
 // Locates metadata embedded directly inside a JPEG/TIFF's own bytes (as
 // opposed to a separate sidecar file) - digiKam and similar tools write
 // straight into these formats when they can, rather than creating a `.xmp`.
-// RAW files are out of scope here: every tool in ImmAture's supported list
+// RAW files are out of scope here: every tool in BrightTable's supported list
 // uses a sidecar for RAW regardless, since none of them safely rewrite a
 // proprietary RAW container in place. Extracted text is handed off to
 // `xmp.rs`'s field parsers, which don't care whether it came from a sidecar
@@ -240,7 +240,7 @@ mod tests {
     }
 
     fn write_temp(name: &str, bytes: &[u8]) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("immature-test-embedded-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-embedded-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join(name);
         fs::write(&path, bytes).unwrap();

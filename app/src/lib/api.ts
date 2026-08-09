@@ -249,7 +249,7 @@ export interface PersonDetail {
 }
 
 // Payload of the 'round-trip-file-detected' Tauri event (see round_trip.rs)
-// - emitted whenever a new, non-junk file settles into a folder ImmAture is
+// - emitted whenever a new, non-junk file settles into a folder BrightTable is
 // watching for round-trip output. `candidates` lists every asset currently
 // registered as pending in that folder (usually just one); it's up to the
 // listener to decide via matchesVersionSuffix (smartStack.ts) whether any of
@@ -493,7 +493,7 @@ export function rotateAsset(originalPath: string | null, clockwise: boolean): Pr
   return invoke('rotate_asset', { originalPath, clockwise });
 }
 
-// Evicts one asset's cached thumbnails from ImmAture's own on-disk cache -
+// Evicts one asset's cached thumbnails from BrightTable's own on-disk cache -
 // call right after a successful rotateAsset() so a stale pre-rotation
 // thumbnail isn't served back out while Immich's own regen is still
 // catching up.
@@ -553,7 +553,7 @@ export function renamePerson(personId: string, name: string): Promise<void> {
 export interface TagSummary {
   id: string;
   // The tag's full hierarchical path (Immich's `value`, e.g.
-  // "Nature/Flowers" for a nested tag) - ImmAture treats tags as one flat,
+  // "Nature/Flowers" for a nested tag) - BrightTable treats tags as one flat,
   // alphabetically-sorted list rather than a tree, so this is what's shown
   // everywhere a tag name appears.
   name: string;

@@ -90,7 +90,7 @@ const [npmItems, cargoItems] = await Promise.all([getNpmLicenses(), getCargoLice
 
 const doc = `# Third-Party Licenses
 
-ImmAture is distributed under the MIT License (see \`LICENSE\`). It is built on
+BrightTable is distributed under the MIT License (see \`LICENSE\`). It is built on
 the open-source packages listed below, each under its own license. This file
 lists the package name, version, SPDX license identifier, and source
 repository for every direct and transitive dependency, generated from

@@ -46,11 +46,11 @@ export interface PeopleBrowserHandle {
 
 // Real Immich people (GET /people, GET /people/{id}, PUT /people/{id}) - the
 // people themselves come entirely from Immich's own server-side face
-// recognition; ImmAture only lists/renames them and browses their photos,
+// recognition; BrightTable only lists/renames them and browses their photos,
 // same trimmed-down relationship to Photos/Folders' full feature set that
 // AlbumsBrowser.tsx has (no Stacks, Smart Stack, ART round trip, or Copy/
 // Paste Image Processing/Metadata here). Unlike Albums, there's no create/
-// delete here (a person isn't a container ImmAture owns) and no "remove this
+// delete here (a person isn't a container BrightTable owns) and no "remove this
 // asset from this person" action (that's a face-recognition correction, out
 // of scope) - Delete therefore means Move to Trash here, the same as Photos/
 // Folders, rather than AlbumsBrowser's special-cased "remove from album".

@@ -79,7 +79,7 @@ export default function TitleBar({ activeTab, onOpenActivity }: { activeTab: str
           alt=""
           style={{ width: 18, height: 18, borderRadius: 5, display: 'block' }}
         />
-        <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}>ImmAture</span>
+        <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}>BrightTable</span>
         <span
           style={{
             fontSize: 12.5,

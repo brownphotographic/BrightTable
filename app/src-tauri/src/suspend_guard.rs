@@ -1,6 +1,6 @@
 //! Linux-only: cooperates with systemd-logind's suspend flow via the
 //! "sleep" delay inhibitor + `PrepareForSleep` signal (the same idiom
-//! NetworkManager and gnome-keyring use) so ImmAture gets a few seconds'
+//! NetworkManager and gnome-keyring use) so BrightTable gets a few seconds'
 //! warning before the machine actually suspends. During that window it
 //! stops *starting* new `spawn_blocking` calls that touch the
 //! (possibly-NFS-backed) originals/sidecar mount, via `io_guard::IoGuard`,
@@ -13,7 +13,7 @@
 //! already blocked inside the kernel in `D` state by the time this signal
 //! fires - nothing in userspace can. The actual guarantee against a hung
 //! suspend is the systemd-sleep `pre` hook
-//! (`/etc/systemd/system-sleep/immature-nfs-unmount`), which force-unmounts
+//! (`/etc/systemd/system-sleep/brighttable-nfs-unmount`), which force-unmounts
 //! the `hard` NFS mount before suspend, actively aborting any in-flight RPC
 //! so the blocked thread returns an error and `freeze_processes()` can
 //! complete. See requirements.md 7.19.
@@ -93,7 +93,7 @@ async fn acquire_inhibitor(proxy: &LoginManagerProxy<'_>) -> Option<OwnedFd> {
     match proxy
         .inhibit(
             "sleep",
-            "ImmAture",
+            "BrightTable",
             "Finish in-flight sidecar/thumbnail I/O before suspend",
             "delay",
         )

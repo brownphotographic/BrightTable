@@ -85,7 +85,7 @@ mod tests {
     use std::fs;
 
     fn tmp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("immature-test-hash-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-hash-{name}-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
     }

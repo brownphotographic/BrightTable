@@ -221,7 +221,7 @@ mod tests {
         // so this just guards against the obvious regression: a file
         // smaller than `EXIF_PREFIX_BYTES` must not panic or hang (`take`
         // stops at real EOF same as any other reader).
-        let dir = std::env::temp_dir().join(format!("immature-test-capture-time-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-capture-time-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("tiny.jpg");
         std::fs::write(&path, b"not actually a jpeg, just tiny").unwrap();

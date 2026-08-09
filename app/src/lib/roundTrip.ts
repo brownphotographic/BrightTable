@@ -42,7 +42,7 @@ async function regenerateThumbnailWithRetry(assetId: string): Promise<boolean> {
 // ~2 minutes total - confirmed live that Immich's own library scan/indexing
 // of a fresh multi-MB JPEG can genuinely take well over the previous ~22s
 // budget (found live: an ART CLI round trip export that took several minutes
-// to write finished successfully on disk, but ImmAture gave up looking for
+// to write finished successfully on disk, but BrightTable gave up looking for
 // it in Immich before the scan had caught up, so nothing showed up in the
 // grid with no error at all). Still bounded, not indefinite, since this is
 // silent for the generic (non-ART) round trip's own background listener -

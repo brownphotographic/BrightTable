@@ -12,7 +12,7 @@ const RawOverridesContext = createContext<RawOverridesContextValue | null>(null)
 // pattern - which asset ids the user has manually flagged as "actually RAW"
 // despite an unrecognized extension (currently only relevant for .tif/.tiff,
 // see AssetTile/Edit menu's "Toggle Canon RAW"). Immich has no concept of
-// this, so it lives entirely in ImmAture's own config.json.
+// this, so it lives entirely in BrightTable's own config.json.
 export function RawOverridesProvider({ children }: { children: ReactNode }) {
   const [overrideIds, setOverrideIds] = useState<Set<string>>(new Set());
 

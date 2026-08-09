@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn resolve_stem_returns_base_stem_when_free() {
-        let dir = std::env::temp_dir().join(format!("immature-test-naming-free-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-naming-free-{}", std::process::id()));
         stdfs::create_dir_all(&dir).unwrap();
         let mut used = HashSet::new();
         let mut cache = StemCache::new();
@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn resolve_stem_suffixes_on_disk_collision_regardless_of_extension() {
-        let dir = std::env::temp_dir().join(format!("immature-test-naming-disk-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-naming-disk-{}", std::process::id()));
         stdfs::create_dir_all(&dir).unwrap();
         stdfs::write(dir.join("20260621_08-23-13.CR3"), b"").unwrap();
         let mut used = HashSet::new();
@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn resolve_stem_suffixes_on_in_batch_collision_and_increments() {
-        let dir = std::env::temp_dir().join(format!("immature-test-naming-batch-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-naming-batch-{}", std::process::id()));
         stdfs::create_dir_all(&dir).unwrap();
         let mut used = HashSet::new();
         let mut cache = StemCache::new();
@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn resolve_stem_does_not_cross_contaminate_different_dest_dirs() {
-        let base = std::env::temp_dir().join(format!("immature-test-naming-cross-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("brighttable-test-naming-cross-{}", std::process::id()));
         let dir_a = base.join("a");
         let dir_b = base.join("b");
         stdfs::create_dir_all(&dir_a).unwrap();
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn resolve_stem_reuses_the_cached_listing_instead_of_rereading_the_directory() {
-        let dir = std::env::temp_dir().join(format!("immature-test-naming-cache-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-naming-cache-{}", std::process::id()));
         stdfs::create_dir_all(&dir).unwrap();
         let mut used = HashSet::new();
         let mut cache = StemCache::new();

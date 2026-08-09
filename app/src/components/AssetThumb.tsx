@@ -19,7 +19,7 @@ export default function AssetThumbImage({
   const imgVersion = useImageVersion(asset.id);
   // Set by the Viewer's rotate action once the exiftool write is confirmed
   // (markRotatePending) - Immich's own thumbnail regen job it also kicks off
-  // has no completion signal ImmAture can observe, so rather than guess with
+  // has no completion signal BrightTable can observe, so rather than guess with
   // a timer this tile just surfaces a manual "pull the rotated version" badge
   // instead, same reasoning as the main preview's "Refresh from Server"
   // button (see Viewer.tsx's handleRefreshFromServer doc comment).

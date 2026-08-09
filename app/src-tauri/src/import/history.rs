@@ -25,7 +25,7 @@ pub struct ImportRecord {
     /// The original camera-assigned filename (e.g. `L1000563.DNG`) - just
     /// `source_path`'s last component, duplicated out here so anything
     /// wanting the "camera name → renamed-on-import name" pair (an audit
-    /// trail: "what did ImmAture rename this shot to?") doesn't need to
+    /// trail: "what did BrightTable rename this shot to?") doesn't need to
     /// re-parse a full path. This is *not* the dedupe key - a reformatted
     /// or swapped SD card can legitimately reuse this exact name for a
     /// completely different photo later, which is exactly the case the
@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn save_then_load_round_trips() {
-        let dir = std::env::temp_dir().join(format!("immature-test-import-history-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-import-history-{}", std::process::id()));
         let path = dir.join("import_history.json");
         let mut history = ImportHistory::default();
         history.record("abc", 100, dummy_record("/lib/2026/img.CR3"));
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn load_of_missing_file_is_an_empty_history() {
-        let missing = std::env::temp_dir().join("immature-test-import-history-missing.json");
+        let missing = std::env::temp_dir().join("brighttable-test-import-history-missing.json");
         let _ = fs::remove_file(&missing);
         assert_eq!(ImportHistory::load(&missing).len(), 0);
     }

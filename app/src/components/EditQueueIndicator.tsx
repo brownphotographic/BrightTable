@@ -41,7 +41,7 @@ export default function EditQueueIndicator({ onClick }: { onClick: () => void })
             borderRadius: '50%',
             border: '1.5px solid currentColor',
             borderTopColor: 'transparent',
-            animation: 'immature-spin 0.8s linear infinite',
+            animation: 'brighttable-spin 0.8s linear infinite',
           }}
         />
       )}

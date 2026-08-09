@@ -48,7 +48,7 @@ input {
   color: #fff;
 }
 
-@keyframes immature-spin {
+@keyframes brighttable-spin {
   to {
     transform: rotate(360deg);
   }

@@ -457,7 +457,7 @@ const Viewer = forwardRef<ViewerHandle, {
   // that's confirmed on disk: bumps this asset's local cache-bust version
   // (so every thumbnailSrc() call for it - main stage, filmstrip, grid -
   // stops resolving to the pre-rotation bytes still sitting in the
-  // webview's own HTTP cache), evicts ImmAture's own on-disk thumb_cache
+  // webview's own HTTP cache), evicts BrightTable's own on-disk thumb_cache
   // entry for it, and nudges Immich to regenerate its own preview/thumbnail
   // renditions. The latter two are both best-effort/fire-and-forget: the
   // orientation write on disk is what actually matters, and is already

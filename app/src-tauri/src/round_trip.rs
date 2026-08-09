@@ -279,7 +279,7 @@ mod tests {
     use super::*;
 
     fn tmp_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("immature-test-roundtrip-{label}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-roundtrip-{label}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

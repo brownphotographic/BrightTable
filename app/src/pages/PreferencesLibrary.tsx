@@ -78,7 +78,7 @@ export default function PreferencesLibrary() {
       setVersionWarning(
         res.serverVersionSupported
           ? null
-          : `Immich ${res.serverVersion} is older than the lowest version ImmAture has been tested against (2.7.5) — some features may not work correctly.`,
+          : `Immich ${res.serverVersion} is older than the lowest version BrightTable has been tested against (2.7.5) — some features may not work correctly.`,
       );
       refreshSharedStatus();
     } catch (e) {
@@ -223,7 +223,7 @@ export default function PreferencesLibrary() {
 
       <div style={{ fontSize: 14, fontWeight: 700, margin: '26px 4px 8px' }}>Originals on Disk</div>
       <div style={{ fontSize: 12.5, color: 'var(--text-dimmer)', margin: '0 4px 13px', lineHeight: 1.5 }}>
-        RAW editors open files from the filesystem, not from Immich. Point ImmAture at the
+        RAW editors open files from the filesystem, not from Immich. Point BrightTable at the
         same shares Immich indexes so it can hand the editor a real path. Immich reports a
         different path prefix depending on how an asset got in — an External Library asset
         keeps its real folder path, while one uploaded directly (phone app or browser) lives

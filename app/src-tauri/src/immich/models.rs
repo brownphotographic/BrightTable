@@ -19,7 +19,7 @@ pub struct ServerVersion {
 /// to connect below it - just the honest boundary of what's actually been
 /// tested, surfaced as a warning in Preferences -> Library rather than
 /// silently leaving the user to wonder why something behaves oddly.
-pub const MIN_TESTED_SERVER_VERSION: (u32, u32, u32) = (2, 7, 5);
+pub const MIN_TESTED_SERVER_VERSION: (u32, u32, u32) = (3, 1, 0);
 
 impl ServerVersion {
     pub fn display(&self) -> String {
@@ -451,7 +451,7 @@ pub struct PersonDetail {
 /// `updatedAt`, unused here. `value` (not `name`) is used as the display
 /// name throughout this app - for a nested tag `value` is the full
 /// hierarchical path (e.g. "Nature/Flowers") while `name` is just the leaf
-/// ("Flowers"), and ImmAture deliberately treats tags as one flat,
+/// ("Flowers"), and BrightTable deliberately treats tags as one flat,
 /// alphabetically-sorted list rather than building a tree UI, so the full
 /// path is what a user needs to see to tell tags apart.
 #[derive(Debug, Clone, Deserialize)]

@@ -507,7 +507,7 @@ mod tests {
     }
 
     fn new_queue() -> Arc<ImportQueue> {
-        let path = std::env::temp_dir().join(format!("immature-test-queue-history-{}-{}", std::process::id(), rand_suffix()));
+        let path = std::env::temp_dir().join(format!("brighttable-test-queue-history-{}-{}", std::process::id(), rand_suffix()));
         ImportQueue::new(path).0
     }
 
@@ -522,7 +522,7 @@ mod tests {
     #[test]
     fn enqueue_skips_already_imported_groups() {
         let queue = new_queue();
-        let dir = std::env::temp_dir().join(format!("immature-test-queue-skip-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-queue-skip-{}", std::process::id()));
         let groups =
             vec![group("skip-me", vec![file("/sd/a.CR3", "CR3", "h1")], true), group("copy-me", vec![file("/sd/b.CR3", "CR3", "h2")], false)];
 
@@ -537,7 +537,7 @@ mod tests {
     #[test]
     fn enqueue_keeps_raw_and_jpeg_pair_on_the_same_stem() {
         let queue = new_queue();
-        let dir = std::env::temp_dir().join(format!("immature-test-queue-pair-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-queue-pair-{}", std::process::id()));
         let groups = vec![group(
             "IMG_0001",
             vec![file("/sd/IMG_0001.CR3", "CR3", "raw-hash"), file("/sd/IMG_0001.JPG", "JPG", "jpeg-hash")],
@@ -558,7 +558,7 @@ mod tests {
     #[test]
     fn enqueue_nests_year_month_folders_when_requested() {
         let queue = new_queue();
-        let dir = std::env::temp_dir().join(format!("immature-test-queue-yearmonth-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-queue-yearmonth-{}", std::process::id()));
         let groups = vec![group("IMG_0002", vec![file("/sd/IMG_0002.JPG", "JPG", "h3")], false)];
 
         queue.enqueue(&dir, FolderDepth::YearMonth, &groups);
@@ -600,7 +600,7 @@ mod tests {
 
     #[test]
     fn copy_one_copies_content_and_cleans_up_temp_file() {
-        let dir = std::env::temp_dir().join(format!("immature-test-copyone-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-copyone-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let src = dir.join("src.bin");
         let dest = dir.join("dest.bin");
@@ -624,7 +624,7 @@ mod tests {
 
     #[test]
     fn copy_one_fails_and_cleans_up_on_size_mismatch() {
-        let dir = std::env::temp_dir().join(format!("immature-test-copyone-mismatch-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-copyone-mismatch-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let src = dir.join("src.bin");
         let dest = dir.join("dest.bin");
@@ -655,7 +655,7 @@ mod tests {
         // file (which fails at `File::open`, before any temp file exists),
         // this lets the temp file actually get created first, reproducing
         // the scenario that used to leak one.
-        let dir = std::env::temp_dir().join(format!("immature-test-copyone-rawfail-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-copyone-rawfail-{}", std::process::id()));
         let source_dir = dir.join("not-a-real-file");
         fs::create_dir_all(&source_dir).unwrap();
         let dest = dir.join("dest.bin");

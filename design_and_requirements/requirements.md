@@ -1,4 +1,4 @@
-# ImmAture — Requirements
+# BrightTable — Requirements
 
 > A desktop Digital Asset Management (DAM) client for an **Immich** server, focused on
 > culling, rating, stacking, and round-tripping RAW files to external editors.
@@ -365,7 +365,7 @@
 > ✅ done · 🟡 in progress · ⬜ not started
 
 **App name**
-- ✅ Look through the UI and change the name of the app to ImmAture
+- ✅ Look through the UI and change the name of the app to BrightTable
   - (Supersedes the earlier "ImView" decision in §4.1.)
 
 **Thumbnail / Photos view**
@@ -1043,7 +1043,7 @@
     field(s) have a gap), a context-menu "Sync Metadata from Sidecar" item (single asset), a
     SelectionBar "Sync N Items" button (current selection), and an Edit-menu "Sync Metadata
     from Sidecar" item (every currently-loaded gap, not just the selection).
-  - Tags/keywords have no Immich-side home (no Tags UI exists in ImmAture yet, §3) — never read
+  - Tags/keywords have no Immich-side home (no Tags UI exists in BrightTable yet, §3) — never read
     for sync purposes, and digiKam tag-sync remains an explicitly deferred stretch idea.
 - ✅ 7 unit tests in `paths.rs` (prefix substitution for both mappings, sibling-prefix
   rejection, unconfigured/unmatched → `None`, both xmp:Rating forms, pp3 `Rank=` scoped to
@@ -1051,10 +1051,10 @@
   passing, alongside `tsc --noEmit`/`oxlint`/`cargo check` all clean.
 - ✅ **Stage B — write-mirror: `.xmp` patch/create on every rating/description edit.**
   Root-caused live against the user's real Immich server: `PUT /assets/{id}` with a `rating`
-  returns `200 OK` for External Library assets (ImmAture's core use case) without the value
+  returns `200 OK` for External Library assets (BrightTable's core use case) without the value
   ever actually persisting (confirmed via direct write-then-reread against a disposable test
   asset; `isFavorite` and non-external-library `rating` both persist correctly with the same
-  call). So a rating/description edit made inside ImmAture is no longer trusted to have
+  call). So a rating/description edit made inside BrightTable is no longer trusted to have
   "stuck" just because Immich's PUT returned success — it's also written directly into the
   asset's own `.xmp` sidecar, which is the mechanism actually relied on to persist it.
   - New `xmp::patch_or_create(path, rating, description)` — patches an existing attribute or
@@ -1075,7 +1075,7 @@
   - After a successful sidecar write, best-effort `POST /assets/jobs {name: "refresh-metadata"}`
     nudges Immich to re-read the file promptly instead of waiting on its own periodic
     sidecar-scan queue (fire-and-forget — doesn't affect whether the edit itself succeeded).
-- ✅ **Reject (-1) rating control.** Previously ImmAture could only *detect* a `-1`/rejected
+- ✅ **Reject (-1) rating control.** Previously BrightTable could only *detect* a `-1`/rejected
   rating from a sidecar, with no way to set one itself. Added `reject` shortcut (default `9`,
   matching digiKam's own binding) plus a small reject icon (`RejectIcon` in `MetadataRows.tsx`)
   next to the star row in `AssetTile.tsx`, `MetadataRows.tsx`, and `SelectionBar.tsx` — clicking
@@ -1114,12 +1114,12 @@
 > the bug. The user chose to keep the NFS mount's `hard` option (data integrity on writes matters
 > more than suspend convenience), so the fix is two complementary pieces:
 - ✅ **Part A — the actual guarantee: a systemd-sleep force-unmount hook**, external to this repo,
-  at `/etc/systemd/system-sleep/immature-nfs-unmount`. Force-unmounts (`umount -f`, not lazy `-l`)
+  at `/etc/systemd/system-sleep/brighttable-nfs-unmount`. Force-unmounts (`umount -f`, not lazy `-l`)
   the NFS mount on the `pre` sleep hook, which actively aborts any in-flight NFS RPC and returns
   an error to the blocked thread — the only thing that can un-stick a thread already parked in
   `D` state; nothing in userspace short of this can. The mount's existing `x-systemd.automount`
   fstab option transparently reconnects on next access after resume, so no explicit remount step
-  is needed. Logs via `logger -t immature-nfs-unmount` for diagnosability.
+  is needed. Logs via `logger -t brighttable-nfs-unmount` for diagnosability.
 - ✅ **Part B — a complementary reduction, not sufficient alone: Linux-only delay-inhibitor
   subsystem** (`app/src-tauri/src/io_guard.rs` portable + `suspend_guard.rs` Linux-only, gated
   `#[cfg(target_os = "linux")]` and kept out of the non-Linux dependency graph via a
@@ -1148,10 +1148,10 @@
     `PrepareForSleep` is a sender-filtered signal, not a callable method, and can't be simulated
     via `busctl call`/`busctl emit` from an unprivileged process (confirmed both fail/are ignored
     while designing this).
-- ✅ Sleep hook installed at `/etc/systemd/system-sleep/immature-nfs-unmount` (`root:root`,
+- ✅ Sleep hook installed at `/etc/systemd/system-sleep/brighttable-nfs-unmount` (`root:root`,
   `0755`), confirmed by the user.
 - ✅ Inhibitor acquisition/release verified end-to-end against the real running app and the
-  user's live `systemd-logind` (`ImmAture`/`sleep`/`delay` appeared in `systemd-inhibit --list`
+  user's live `systemd-logind` (`BrightTable`/`sleep`/`delay` appeared in `systemd-inhibit --list`
   and `ListInhibitors`, matching the running PID; killing the process released it immediately —
   RAII drop behavior confirmed).
 - ⬜ Not yet verified against one real suspend/resume cycle (both `PrepareForSleep(true)` and
@@ -1259,7 +1259,7 @@
   `paths::resolve_local_path()` from §7.18 Stage 0, then calls `apps::launch_app`).
   **Deliberately skips the read-only/max-writes-per-batch safety net** that gates every other
   mutating command — launching a third-party process writes nothing to Immich and doesn't touch
-  the file itself; whatever that external app later does to the file is outside ImmAture's own
+  the file itself; whatever that external app later does to the file is outside BrightTable's own
   write path. A judgment call, not a silent assumption.
 - ✅ **Config** (`config.rs`): `ApplicationsConfig { raw_editor: Option<AppChoice>,
   external_editor: Option<AppChoice> }` on `AppConfig`, following the existing
@@ -1465,9 +1465,9 @@
   than re-reading) — `cargo test` (91/91), `cargo clippy` (no new warnings) both clean.
 - ✅ **Robustness pass against a confirmed slow/flaky real link (real, not hypothetical)**: live
   diagnosis this session found the user's actual NFS destination sustains only **~432 kB/s**
-  for synchronous writes (measured directly with `dd oflag=direct,sync`, bypassing ImmAture
+  for synchronous writes (measured directly with `dd oflag=direct,sync`, bypassing BrightTable
   entirely - a `sync`-mounted NFS4 share over a ~100ms-latency Tailscale link with no fast write
-  log on the far end's ZFS pool). Confirmed not an ImmAture bug (same speed via plain `dd`), but
+  log on the far end's ZFS pool). Confirmed not an BrightTable bug (same speed via plain `dd`), but
   it exposed three real robustness gaps in the import queue, all fixed:
   1. **Flat total-time copy timeout → idle-based timeout.** The original `COPY_TIMEOUT` (10
      minutes flat) would have wrongly killed a large, genuinely-still-advancing file at this
@@ -1546,7 +1546,7 @@
 ### 7.24 Copy/Paste Image Processing & Copy/Paste Metadata (real)
 > User request: split the prototype's single "Copy Settings / Paste Settings" concept
 > (§1.5, §4.2) into **two independent functions** instead — one for a RAW asset's
-> develop-adjustment sidecar, one for the DB/XMP fields ImmAture already edits. §7.18's own
+> develop-adjustment sidecar, one for the DB/XMP fields BrightTable already edits. §7.18's own
 > intro had already flagged this exact split ("wholesale sidecar copy vs. this feature's
 > targeted field patch") before either function had a name.
 - ✅ **Copy/Paste Metadata needed almost no new backend code** — it reuses
@@ -1716,7 +1716,7 @@
 > Processing (a wholesale sidecar *file* copy). This is a third, deeper way to get a RAW file
 > through ART specifically: instead of just launching ART's GUI and trusting the user to
 > export manually (§7.21) or copying an existing `.arp`/`.pp3` from one asset onto another
-> (§7.24), ImmAture now invokes `ART-cli` itself to *produce* the export deterministically.
+> (§7.24), BrightTable now invokes `ART-cli` itself to *produce* the export deterministically.
 > Landed across three commits (`6f07b15` "first version of single and batch roundtrip",
 > `576e449` "roundtrip fixes", `64b8907` "fixes to roundtrip", 2026-07-16 through 2026-07-18)
 > plus a further round of **uncommitted, in-progress work** as of this update (cancellation,
@@ -1776,11 +1776,11 @@
   - 🐛 **Real crash found and attributed, confirmed live**: `ART-cli` links a bundled Exiv2
     that can `std::terminate` (an uncaught C++ exception, not a normal error return) reading a
     specific RAW file's embedded metadata — reproduced against a real **Leica M10-R DNG**,
-    identically with a plain manual `ART-cli` invocation and no ImmAture involvement at all
+    identically with a plain manual `ART-cli` invocation and no BrightTable involvement at all
     (same crash with no sidecar present; the file reads cleanly under a separate, newer system
     Exiv2, ruling out disk/network corruption). `classify_exit` now attributes this stderr
     pattern explicitly to "ART-cli crashed reading this RAW file's metadata (an ART/Exiv2 bug
-    or format incompatibility, not an ImmAture issue)" rather than surfacing the bare,
+    or format incompatibility, not an BrightTable issue)" rather than surfacing the bare,
     unattributed C++ exception text.
   - ✅ Cancellation threaded through `run_art_cli_with_progress` via a `tokio::select!` over
     both stdout and a `watch::Receiver<bool>`, so a mid-run cancel takes effect immediately
@@ -1896,7 +1896,7 @@
     export's ingestion runs.
   - 🐛 **Real bug found and fixed, live**: the original ~22s polling budget was too short — a
     real ART CLI round-trip export that took several minutes to write finished successfully on
-    disk, but ImmAture gave up looking for it in Immich before the library scan had caught up,
+    disk, but BrightTable gave up looking for it in Immich before the library scan had caught up,
     so nothing appeared in the grid with no visible error at all. Raised to a ~2-minute budget
     (40 attempts × 3s).
   - 🐛 Confirmed live: a freshly `scanImmichLibrary`-discovered asset (every round-trip export)
@@ -2095,7 +2095,7 @@
   the shared `AssetTile`). Scoped down the same way Albums is (§7.26) — no Stacks, Smart
   Stack, ART round trip, or Copy/Paste Image Processing/Metadata — plus one further cut
   specific to People: there's no "remove this asset from this person" action anywhere (that
-  would be a face-recognition correction, out of scope for ImmAture to edit), so unlike
+  would be a face-recognition correction, out of scope for BrightTable to edit), so unlike
   Albums' own Delete-means-**Remove from Album** convention, People's Delete key and
   selection-bar destructive action mean **Move to Trash**, the same as Photos/Folders.
 - ✅ **Scope deliberately limited this round**: list/browse/rename only. **Hide/unhide** and
@@ -2121,10 +2121,10 @@
   rename-tag endpoint at all, unlike Albums/People. So this feature has no Rename action;
   color is only ever set once, at creation time.
 - ✅ **Flat list, not a tree**: Immich tags can be hierarchical (`parentId`, with `value`
-  being the full `"Parent/Child"` path and `name` just the leaf). ImmAture deliberately
+  being the full `"Parent/Child"` path and `name` just the leaf). BrightTable deliberately
   treats tags as one flat, alphabetically-sorted list using `value` (exposed to the frontend
   as `TagSummary.name`/`TagDetail.name`) as the display name — no tree UI, and every tag
-  ImmAture creates is top-level (no parent picker) this round. A user's explicit scope call.
+  BrightTable creates is top-level (no parent picker) this round. A user's explicit scope call.
 - ✅ **No per-tag photo counts in the list view**: Immich's `TagResponseDto` carries no
   per-tag asset count (unlike Albums' `assetCount`), and unlike People there's no cheap
   `/tags/{id}/statistics` endpoint to fan out either — the only way to get a count is a full

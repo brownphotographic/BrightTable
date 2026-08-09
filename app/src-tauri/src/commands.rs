@@ -120,7 +120,7 @@ pub fn list_installed_apps() -> Vec<AppChoice> {
 /// every other mutating command in this file, this deliberately skips the
 /// read-only/max-writes-per-batch gate: it spawns a third-party process and
 /// touches no Immich data and no file itself - whatever that external app
-/// later does to the file is outside ImmAture's own write path.
+/// later does to the file is outside BrightTable's own write path.
 ///
 /// `original_asset_id`/`original_file_name` are only used to register a
 /// round-trip watch on the asset's folder (see `round_trip.rs`) - when
@@ -998,7 +998,7 @@ pub async fn rotate_asset(
     crate::rotate::rotate_in_place(&exiftool_path, &local_path, clockwise).await
 }
 
-/// Evicts every cached rendition of one asset from ImmAture's own on-disk
+/// Evicts every cached rendition of one asset from BrightTable's own on-disk
 /// thumbnail cache (see `thumb_cache.rs`) - called by the frontend right
 /// after `rotate_asset` succeeds, so a stale pre-rotation thumbnail isn't
 /// served back out of this cache while Immich's own server-side thumbnail
@@ -2047,7 +2047,7 @@ pub async fn print_test_pattern(options: print::PrintOptions) -> Result<(), Stri
 /// then clean up regardless of whether submission succeeded.
 async fn submit_composited_print(composited: Vec<u8>, id_for_tempfile: &str, options: &print::PrintOptions) -> Result<(), String> {
     let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
-    let temp_path = std::env::temp_dir().join(format!("immature-print-{id_for_tempfile}-{ts}.pdf"));
+    let temp_path = std::env::temp_dir().join(format!("brighttable-print-{id_for_tempfile}-{ts}.pdf"));
     let write_path = temp_path.clone();
     tokio::task::spawn_blocking(move || std::fs::write(&write_path, &composited))
         .await

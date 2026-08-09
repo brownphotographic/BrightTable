@@ -124,14 +124,14 @@ fn classify_exit(status: std::process::ExitStatus, stderr_bytes: &[u8]) -> Resul
         // uncaught C++ exception, not a normal error return) while reading a
         // specific RAW file's embedded metadata - confirmed live against a
         // real Leica M10-R DNG that a plain manual `ART-cli` invocation
-        // crashes on identically, with no ImmAture involvement at all (same
+        // crashes on identically, with no BrightTable involvement at all (same
         // crash with no sidecar present, and the file reads cleanly under a
         // separate, newer system Exiv2 - so it's not disk/network corruption
         // either). Framed explicitly as ART-cli's own crash rather than
-        // leaving the bare C++ exception text looking like an ImmAture bug.
+        // leaving the bare C++ exception text looking like an BrightTable bug.
         if stderr.contains("terminate called after throwing an instance of") {
             return Err(format!(
-                "ART-cli crashed reading this RAW file's metadata (an ART/Exiv2 bug or format incompatibility, not an ImmAture issue) — {stderr}"
+                "ART-cli crashed reading this RAW file's metadata (an ART/Exiv2 bug or format incompatibility, not an BrightTable issue) — {stderr}"
             ));
         }
         // Real source, confirmed live: `-S` (Variant 2's
@@ -390,7 +390,7 @@ where
         None => (MINIMAL_METADATA_OFF_PROFILE.to_string(), true),
     };
     let temp_path = std::env::temp_dir().join(format!(
-        "immature-art-metadata-fallback-{}-{}.arp",
+        "brighttable-art-metadata-fallback-{}-{}.arp",
         std::process::id(),
         raw_path.file_name().and_then(|n| n.to_str()).unwrap_or("export")
     ));
@@ -506,7 +506,7 @@ mod tests {
     }
 
     fn tmp_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("immature-test-art-{label}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-art-{label}-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -590,7 +590,7 @@ mod tests {
     /// Confirmed live: a real Leica M10-R DNG makes a plain manual `ART-cli`
     /// invocation abort with exactly this "terminate called..." text - an
     /// uncaught C++ exception in ART's bundled Exiv2, reproducible with no
-    /// ImmAture involvement at all. This should read as ART-cli's own crash,
+    /// BrightTable involvement at all. This should read as ART-cli's own crash,
     /// not a bare, unattributed C++ exception dump.
     #[tokio::test]
     async fn run_art_cli_with_progress_attributes_exiv2_terminate_crashes_to_art_cli() {

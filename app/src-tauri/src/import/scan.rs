@@ -149,7 +149,7 @@ mod tests {
     use std::fs;
 
     fn tmp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("immature-test-scan-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-scan-{name}-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn errors_on_missing_source_directory() {
-        let missing = std::env::temp_dir().join("immature-test-scan-does-not-exist");
+        let missing = std::env::temp_dir().join("brighttable-test-scan-does-not-exist");
         let _ = fs::remove_dir_all(&missing);
         assert!(scan_source(&missing).is_err());
     }

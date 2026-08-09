@@ -31,6 +31,23 @@ mod xmp;
 use state::AppState;
 use tauri::{Emitter, Manager};
 
+/// Renames `old` to `new` in place, but only if `new` doesn't already exist
+/// and `old` does - a no-op once the migration has happened once, and a
+/// no-op for fresh installs that never had `old` in the first place.
+/// Best-effort: a failed rename (e.g. cross-device) is logged and otherwise
+/// ignored rather than treated as fatal, since worst case is a fresh
+/// `new` gets created later with no history rather than the app failing to
+/// start.
+fn migrate_legacy_dir(old: &std::path::Path, new: &std::path::Path, what: &str) {
+    if new.exists() || !old.exists() {
+        return;
+    }
+    match std::fs::rename(old, new) {
+        Ok(()) => log::info!("migrated legacy {what} dir {old:?} -> {new:?}"),
+        Err(e) => log::warn!("failed to migrate legacy {what} dir {old:?} -> {new:?}: {e}"),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -44,12 +61,26 @@ pub fn run() {
                         .build(),
                 )?;
             }
+            // One-time migration from the app's former identity ("ImmAture",
+            // identifier `com.immature.desktop`) to "BrightTable" - renames
+            // the old OS app-config dir in place if the new one doesn't
+            // exist yet, so upgrading users keep their config.json instead
+            // of silently falling back to defaults.
+            if let (Ok(new_config_dir), Ok(base_config_dir)) =
+                (app.path().app_config_dir(), app.path().config_dir())
+            {
+                migrate_legacy_dir(
+                    &base_config_dir.join("com.immature.desktop"),
+                    &new_config_dir,
+                    "app-config",
+                );
+            }
             let cfg = config::load(app.handle());
             let (edit_queue, edit_queue_rx) = edit_queue::EditQueue::new();
             // Lives under the External Library's own local mount (a hidden
-            // `.immature` subdir), not the OS app-config dir - the whole
+            // `.brighttable` subdir), not the OS app-config dir - the whole
             // point of the dedupe cache is "have I already imported this
-            // file", and for anyone running ImmAture from more than one
+            // file", and for anyone running BrightTable from more than one
             // computer against the same shared library (NFS/SMB), that
             // question only has one right answer if every machine reads and
             // writes the same file. An app-config-dir-local cache silently
@@ -63,7 +94,16 @@ pub fn run() {
                     .unwrap_or_else(|_| std::path::PathBuf::from("."))
                     .join("import_history.json")
             } else {
-                std::path::PathBuf::from(cfg.library.local_root.trim()).join(".immature").join("import_history.json")
+                let library_root = std::path::PathBuf::from(cfg.library.local_root.trim());
+                // Same migration as the app-config dir above, but for the
+                // dedupe cache that lives on the shared library mount under
+                // the old `.immature` name.
+                migrate_legacy_dir(
+                    &library_root.join(".immature"),
+                    &library_root.join(".brighttable"),
+                    "library dedupe-cache",
+                );
+                library_root.join(".brighttable").join("import_history.json")
             };
             let (import_queue, import_queue_rx) = import::ImportQueue::new(history_path);
             let max_concurrent_import_jobs = cfg.import.max_concurrent_jobs;

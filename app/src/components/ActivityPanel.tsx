@@ -86,7 +86,7 @@ const RAW_CONVERTER_LABEL: Record<RawConverterKind, string> = { art: 'ART', rawt
 
 // `art.rs::classify_exit`'s fixed wording for a RAW file whose embedded
 // metadata makes ART-cli's bundled Exiv2 crash outright (confirmed live
-// against a real Leica M10-R DNG, reproducible with no ImmAture involvement
+// against a real Leica M10-R DNG, reproducible with no BrightTable involvement
 // at all) - unlike a timeout or a transient NFS hiccup, retrying this exact
 // file will fail identically every time, so it reads as "won't export"
 // rather than a generic red "Failed" the user might reasonably retry.

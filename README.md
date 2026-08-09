@@ -1,74 +1,62 @@
-<img src="screenshots/icon.png" width="96" height="96" alt="ImmAture icon" />
+<img src="screenshots/icon.png" width="96" height="96" alt="BrightTable icon" />
 
-# ImmAture
+# BrightTable
 
 **An LLM coded project. Human generated requirements and testing.**
 
-I designed this for myself because I dislike the user experience and functionality that exists on GNU/Linux for managing and editing photos. For me, it fills the gap between DAM and raw editing. There are some great tools out there already like RawTherapee/ART, Digikam, RapidRAW, Digikam, Shotwell. But to me, none of them had exactly the user experience and workflow that I really wanted. So after a couple of years of threatening myself to build my own tool: I did. 
+I designed this for myself because I dislike the user experience and functionality that exists on GNU/Linux for managing and editing photos. For me, this gap it fills the gap between DAM and raw editing and honestly an experience I have been pining for since the great Apple Aperture bit the dust a decade ago. There are some great tools out there already like RawTherapee/ART, Digikam, RapidRAW, Digikam, Shotwell. But to me, none of them had exactly the user experience and workflow that I really wanted. So after a couple of years of threatening myself to build my own tool: I did. 
 
-If you decide to use, please read the warnings below.
-
-**What's in the name?**
-
-Immature: 
-
-- Imm_ = uses Immich as the back end
-
-- _Ature = inspired by Apple Aperture - a great, easy to use photo management tool known for its great user experience. For those that used it in version 1.0 you will remember how buggy it was too.
-
-- Immature = Immature / Amateur - i.e. this is an experiment from an amateur. The name implies a warning.
+If you decide to use this, please read the warnings below.
 
 **What does it do?**
 
-- Uses Immich and the Immich API as a self hosted asset manager backend
+- The library: Uses Immich and the Immich API as a self hosted asset manager backend
 
-- Uses open source RAW editors for photo processing e.g. ART, RawTherapee. 
+- Processing: Uses open source RAW editors for photo processing e.g. ART, RawTherapee. 
 
-- A front end app that uses the above, and creates a (I think) great user experience for managing and editing your photos.
+- The light table (this app): A front end app that uses the above, and creates a (I think) great user experience for  editing your photos.
 
-- GNU/Linux only application
+- GNU/Linux only application. Sorry Windows/Mac users. Actually, not sorry - life is way better on Linux, so come join the fun.
 
 **Warning!**
 
-- This tool was created by me, for me. I am giving it to the community to allow others who are interested to use it, fork it and maintain their own copy.
+- This tool was created by me, for me. I am giving it to the community to allow others who are interested to use it, and accept the risks involved.
 
 - Use at your own risk! You are responsible for using this tool. Read the code and understand what it does before using it. Test it on a sandbox first.
 
-- You must be technically savvy! I am purposefully going to give as least instruction as possible on how to install and use it. If you can code, use gen AI tools, and run Immich, use opensource RAW editing tools you may find value in this. If you don't I suggest heading in a different direction and use Shotwell, ART, RawTherapee, Darktable or RapidRAW. Those projects are supported by expert developers and well tested. This project is an experiment only.
+- If you use Immich, and use the excellent opensource RAW editing tools: ART, RawTherapee, Darktable, then you will be able to use this tool. If you don't, then sorry this is not for you.
 
 - As they say, backup backup backup!  
 
-- I may or may not address bugs reported by the community. Likely not, or not fast because I have a job and this is very much a side project. I absolutely don't have the time to deep dive bugs encountered. 
+- I may or may not address bugs reported by the community. I have a full time job and this is very much a side project in exceptionally rare spare time. I absolutely don't have the time to deep dive bugs encountered. Sorry.
 
-- Features are the enemy of quality! In the interest of keeping it simple I am unlikely to respond to requests to make the tool integrate with other systems.
+- Features are the enemy of quality! In the interest of keeping it simple I am unlikely to respond to requests to make the tool integrate with other tools and systems.
 
-- Do your own testing to make sure it works in a sandboxed test environment.
-
-- Please, please - fork it! Add your own features to it, repackage it, do something completely different. Consider this a concept and take it in the direction you want it to go. 
+- Please, please - fork the code! Add your own features to it, repackage it, do something completely different, submit a pull request with a bug fix. Consider this a concept and take it in the direction you want it to go. 
 
 **Usage**
 
 Requires Node.js, Rust/Cargo, and the Tauri CLI (`cargo install tauri-cli`) installed.
 
-- Run in dev mode (hot-reloading frontend + native window): `cd Immature && cargo tauri dev`
+- Run in dev mode (hot-reloading frontend + native window): `cd BrightTable && cargo tauri dev`
 
-- Build a distributable AppImage: `cd Immature && npm run build:appimage`
+- Build a distributable AppImage: `cd BrightTable && npm run build:appimage`
 
-  Output lands at `Immature/src-tauri/target/release/bundle/appimage/ImmAture_<version>_amd64.AppImage`.
+  Output lands at `BrightTable/src-tauri/target/release/bundle/appimage/BrightTable_<version>_amd64.AppImage`.
 
   Note: on some distros with very new glibc/binutils, the bundled `linuxdeploy` tool's `strip` binary can't parse newer libraries and fails the build — `build:appimage` already sets `NO_STRIP=1` to work around this.
 
-  Each run of `build:appimage` auto-bumps the patch version in `src-tauri/Cargo.toml` first (e.g. `0.1.0` → `0.1.1`) — that's the single source of truth for the app version; `tauri.conf.json` and the AppImage filename both inherit it. Nothing is committed automatically — commit the version bump yourself (`git add Immature/src-tauri/Cargo.toml Immature/src-tauri/Cargo.lock`) if/when you want it in history. Bump major/minor by hand by editing the `version` line in `Cargo.toml` directly.
+  Each run of `build:appimage` auto-bumps the patch version in `src-tauri/Cargo.toml` first (e.g. `0.1.0` → `0.1.1`) — that's the single source of truth for the app version; `tauri.conf.json` and the AppImage filename both inherit it. Nothing is committed automatically — commit the version bump yourself (`git add BrightTable/src-tauri/Cargo.toml BrightTable/src-tauri/Cargo.lock`) if/when you want it in history. Bump major/minor by hand by editing the `version` line in `Cargo.toml` directly.
 
   If you tested this build against a specific Immich server version, set `TESTED_IMMICH_VERSION` so the version bump also updates the About dialog's compatibility line, e.g. `TESTED_IMMICH_VERSION=3.0.1 npm run build:appimage`. Still update [COMPATIBILITY.md](COMPATIBILITY.md) by hand — that isn't automated.
 
-- Seeing `Permission denied` errors when ImmAture writes metadata over NFS (e.g. Immich + Unraid)? See [Troubleshooting: NFS Permission Errors](#troubleshooting-nfs-permission-errors-immich--unraid) below.
+- Seeing `Permission denied` errors when BrightTable writes metadata over NFS (e.g. Immich + Unraid)? See [Troubleshooting: NFS Permission Errors](#troubleshooting-nfs-permission-errors-immich--unraid) below.
 
-- Not sure if your Immich server version is supported? See [COMPATIBILITY.md](COMPATIBILITY.md) for which Immich version each ImmAture release has actually been tested against.
+- Not sure if your Immich server version is supported? See [COMPATIBILITY.md](COMPATIBILITY.md) for which Immich version each BrightTable release has actually been tested against.
 
 ## Troubleshooting: NFS Permission Errors (Immich + Unraid)
 
-**Symptom:** ImmAture throws a permission error writing metadata (ratings, tags, etc.) to photos — either in an **external library** mounted into Immich, or in **Immich's own managed upload library** — even though the Docker mount shows `rw`, the Immich container runs as root, and the folder looks writable when checked directly on the Unraid host.
+**Symptom:** BrightTable throws a permission error writing metadata (ratings, tags, etc.) to photos — either in an **external library** mounted into Immich, or in **Immich's own managed upload library** — even though the Docker mount shows `rw`, the Immich container runs as root, and the folder looks writable when checked directly on the Unraid host.
 
 **Root cause** (two variants, both boiling down to a UID/GID mismatch over NFS):
 

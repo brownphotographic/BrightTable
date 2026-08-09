@@ -3,11 +3,11 @@ import { getVersion } from '@tauri-apps/api/app';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import appIcon from '../assets/app-icon.png';
 
-const REPO_URL = 'https://github.com/brownphotographic/ImmAture';
+const REPO_URL = 'https://github.com/brownphotographic/BrightTable';
 // Kept in sync by hand with COMPATIBILITY.md's row for the current app
 // version (and MIN_TESTED_SERVER_VERSION in immich/models.rs for the floor)
 // - there's no runtime channel to read either from the frontend.
-const TESTED_SERVER_VERSIONS = '2.7.5 (floor) – 3.0.1 (confirmed)';
+const TESTED_SERVER_VERSIONS = '3.1.0 (floor and confirmed)';
 
 export default function AboutDialog({ onClose }: { onClose: () => void }) {
   const [appVersion, setAppVersion] = useState<string | null>(null);
@@ -46,7 +46,7 @@ export default function AboutDialog({ onClose }: { onClose: () => void }) {
         }}
       >
         <img src={appIcon} alt="" style={{ width: 56, height: 56, borderRadius: 14 }} />
-        <div style={{ marginTop: 10, fontSize: 17, fontWeight: 700 }}>ImmAture</div>
+        <div style={{ marginTop: 10, fontSize: 17, fontWeight: 700 }}>BrightTable</div>
         <div style={{ marginTop: 4, fontSize: 12.5, color: 'rgba(255,255,255,0.55)' }}>
           {appVersion ? `Version ${appVersion}` : 'Version —'}
         </div>

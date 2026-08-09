@@ -783,7 +783,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           // this only means Immich hasn't indexed it yet within the polling
           // budget, not that the export actually failed.
           setEnqueueError(
-            `Exported "${exportFileName}", but it hasn't shown up in Immich yet — ImmAture will keep checking in the background and stack it automatically once it does.`,
+            `Exported "${exportFileName}", but it hasn't shown up in Immich yet — BrightTable will keep checking in the background and stack it automatically once it does.`,
           );
         }
       });

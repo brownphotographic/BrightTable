@@ -130,7 +130,7 @@ mod tests {
     }
 
     fn tmp_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("immature-test-rawtherapee-{label}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-rawtherapee-{label}-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
     }

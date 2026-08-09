@@ -104,7 +104,7 @@ fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
 fn describe_io_error(action: &str, path: &Path, e: &std::io::Error) -> String {
     match e.kind() {
         std::io::ErrorKind::PermissionDenied => format!(
-            "Permission denied trying to {action} {} — ImmAture doesn't have write access to this location on the host filesystem. This is usually a filesystem/NFS permissions issue outside ImmAture; check the owning user/group of the containing folder.",
+            "Permission denied trying to {action} {} — BrightTable doesn't have write access to this location on the host filesystem. This is usually a filesystem/NFS permissions issue outside BrightTable; check the owning user/group of the containing folder.",
             path.display()
         ),
         std::io::ErrorKind::NotFound => format!(
@@ -270,7 +270,7 @@ mod tests {
     }
 
     fn temp_path(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("immature-test-xmp-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-xmp-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir.join(name)
     }
@@ -376,7 +376,7 @@ mod tests {
     fn patch_or_create_reports_actionable_message_on_permission_denied() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = std::env::temp_dir().join(format!("immature-test-xmp-perm-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-xmp-perm-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
 
@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn patch_or_create_reports_actionable_message_on_missing_directory() {
-        let dir = std::env::temp_dir().join(format!("immature-test-xmp-missing-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-xmp-missing-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
 
         let result = patch_or_create(&dir.join("sub").join("f.xmp"), Some(3), None);
@@ -513,7 +513,7 @@ mod tests {
         assert_eq!(patched, expected);
 
         // digiKam's own separate `acdsee:rating`/`MicrosoftPhoto:Rating`
-        // mirrors are untouched - only the standard `xmp:Rating` ImmAture
+        // mirrors are untouched - only the standard `xmp:Rating` BrightTable
         // reads/writes is patched.
         assert!(patched.contains(r#"acdsee:rating="3""#));
         assert!(patched.contains(r#"MicrosoftPhoto:Rating="50""#));

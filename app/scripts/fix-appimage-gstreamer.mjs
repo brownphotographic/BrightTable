@@ -34,7 +34,7 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const bundleDir = join(scriptDir, "..", "src-tauri", "target", "release", "bundle", "appimage");
-const appDir = join(bundleDir, "ImmAture.AppDir");
+const appDir = join(bundleDir, "BrightTable.AppDir");
 const hookPath = join(appDir, "apprun-hooks", "linuxdeploy-plugin-gtk.sh");
 
 if (!existsSync(hookPath)) {
@@ -62,7 +62,7 @@ const cargoToml = readFileSync(join(scriptDir, "..", "src-tauri", "Cargo.toml"),
 const version = cargoToml.match(/^version = "(\d+\.\d+\.\d+)"/m)?.[1];
 if (!version) throw new Error("Could not read version from Cargo.toml");
 
-const outputPath = join(bundleDir, `ImmAture_${version}_amd64.AppImage`);
+const outputPath = join(bundleDir, `BrightTable_${version}_amd64.AppImage`);
 const plugin = join(homedir(), ".cache", "tauri", "linuxdeploy-plugin-appimage.AppImage");
 if (!existsSync(plugin)) {
   throw new Error(`Expected linuxdeploy plugin not found: ${plugin} - has the appimage build run at least once on this machine?`);

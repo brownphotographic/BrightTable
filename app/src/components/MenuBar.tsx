@@ -282,7 +282,7 @@ export default function MenuBar({
       <TopMenu label="Help" isOpen={open === 'help'} onClick={() => toggle('help')} onEnter={() => hoverTo('help')}>
         <MenuItem label="Keyboard Shortcuts" shortcut="?" onClick={close} />
         <MenuItem
-          label="About ImmAture"
+          label="About BrightTable"
           onClick={() => {
             close();
             onOpenAbout();

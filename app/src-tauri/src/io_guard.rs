@@ -3,7 +3,7 @@
 //! reads and writes) and track how many such calls are currently running.
 //!
 //! On Linux this is driven by `suspend_guard` (systemd-logind's sleep
-//! inhibitor) so ImmAture can stop starting new NFS-touching work right
+//! inhibitor) so BrightTable can stop starting new NFS-touching work right
 //! before a suspend and give in-flight work a bounded chance to finish. On
 //! every other platform nothing ever calls `set_paused(true)`, so this is a
 //! permanently-inert no-op there - this file itself has no
@@ -25,7 +25,7 @@
 //! concurrently to leave ~85 OS threads simultaneously blocked in the
 //! kernel on the NFS mount (`rpc_wait_bit_killable`/`d_alloc_parallel`),
 //! degrading that mount's latency for minutes at a time for every other
-//! caller, ImmAture or not. Unlike `paused`/`inflight` above, this is a
+//! caller, BrightTable or not. Unlike `paused`/`inflight` above, this is a
 //! real admission-control cap, not just a suspend-time signal.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

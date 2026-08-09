@@ -7,7 +7,7 @@ import { evictThumbCacheForAsset } from './api';
 // query param so the webview's own HTTP cache doesn't keep serving pre-edit
 // bytes for the same URL (see thumbnailSrc's doc comment in lib/api.ts).
 // Purely in-memory/session-scoped - a fresh launch has nothing to bust,
-// which is fine since ImmAture's own on-disk thumb_cache is evicted
+// which is fine since BrightTable's own on-disk thumb_cache is evicted
 // server-side by the same action (see evictThumbCacheForAsset), so a cold
 // cache miss re-fetches fresh bytes regardless.
 const versions = new Map<string, number>();
@@ -40,7 +40,7 @@ export function useImageVersion(assetId: string): number {
 
 // Which asset ids have a rotate queued server-side (Immich's own
 // regenerate-thumbnail job - see commands::regenerate_asset_thumbnail) whose
-// completion ImmAture has no way to observe. Drives the "Refresh from
+// completion BrightTable has no way to observe. Drives the "Refresh from
 // server" affordance on the Viewer's main preview and on AssetThumbImage
 // (grid/filmstrip) - see their doc comments for why a manual, repeatable
 // refresh replaced the old auto cache-bust-on-rotate + fixed timer, which
@@ -68,7 +68,7 @@ export function useRotatePending(assetId: string): boolean {
 }
 
 // The actual "Refresh from server" action: pulls fresh bytes by bumping the
-// cache-busting version (see thumbnailSrc) and evicting ImmAture's own
+// cache-busting version (see thumbnailSrc) and evicting BrightTable's own
 // on-disk thumb_cache entry, then clears the pending flag. User-triggered
 // only, and safe to click more than once - if Immich's regen job hasn't
 // landed yet the refetched bytes will still look pre-rotation, and the user

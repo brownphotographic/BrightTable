@@ -405,7 +405,7 @@ impl ImmichClient {
     }
 
     /// POST /assets/jobs {name: "refresh-metadata"} - best-effort nudge after
-    /// ImmAture has written a rating/description straight into an asset's
+    /// BrightTable has written a rating/description straight into an asset's
     /// `.xmp` sidecar (see `xmp::patch_or_create`), so Immich re-reads the
     /// file and its own `exifInfo`/UI catch up promptly instead of waiting on
     /// Immich's own periodic sidecar-scan queue. Callers treat failure here
@@ -869,7 +869,7 @@ impl ImmichClient {
     /// POST /tags - `color` is only ever set here at creation time; Immich's
     /// `PUT /tags/{id}` (`updateTag`) accepts *only* `color`, not `name` -
     /// there's no rename-tag endpoint at all, so this app doesn't offer one.
-    /// `parentId` is deliberately omitted - every tag ImmAture creates is
+    /// `parentId` is deliberately omitted - every tag BrightTable creates is
     /// top-level, matching the flat-list (no tree UI) decision.
     pub async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<TagSummary, String> {
         let mut body = serde_json::Map::new();

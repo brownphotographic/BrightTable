@@ -1,6 +1,6 @@
 //! Pure filename-generation logic for the ART CLI round trip
 //! (`commands::launch_raw_cli_round_trip`/`batch_raw_cli_round_trip`) - mirrors
-//! `smartStack.ts`'s naming helpers exactly, since ImmAture itself invokes
+//! `smartStack.ts`'s naming helpers exactly, since BrightTable itself invokes
 //! `ART-cli` and controls the output filename deterministically (rather than
 //! discovering it after the fact via `round_trip.rs`'s file watcher), and the
 //! name it picks must still match Smart Stack's own Version-mode pattern
@@ -88,7 +88,7 @@ mod tests {
     use super::*;
 
     fn tmp_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("immature-test-export-naming-{label}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("brighttable-test-export-naming-{label}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

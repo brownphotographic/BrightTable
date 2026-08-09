@@ -337,7 +337,7 @@ export default function ImportDialog({
                 />
                 <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--text-dimmer)', lineHeight: 1.5 }}>
                   How many files copy at once. Lower is safer on a slow or flaky link (less contention if it
-                  drops mid-import). Applies next time you start ImmAture, not to an import already running.
+                  drops mid-import). Applies next time you start BrightTable, not to an import already running.
                 </div>
               </div>
 
@@ -517,7 +517,7 @@ const spinnerLarge: CSSProperties = {
   borderRadius: '50%',
   border: '3px solid rgba(255,255,255,0.15)',
   borderTopColor: '#9cc2f0',
-  animation: 'immature-spin 0.8s linear infinite',
+  animation: 'brighttable-spin 0.8s linear infinite',
 };
 
 const dateSelect: CSSProperties = {

@@ -177,7 +177,7 @@ export default function FlickrSetupDialog({ flickr, onClose, onConnected }: { fl
           {step === 1 && (
             <>
               <p style={helperStyle}>
-                Authorize ImmAture to access your Flickr account. This opens Flickr in your browser; after you approve, Flickr shows a short verification code to
+                Authorize BrightTable to access your Flickr account. This opens Flickr in your browser; after you approve, Flickr shows a short verification code to
                 paste on the next step.
               </p>
               <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, padding: '10px 14px', marginBottom: 16 }}>
@@ -237,7 +237,7 @@ export default function FlickrSetupDialog({ flickr, onClose, onConnected }: { fl
               </div>
               <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>Flickr connected</div>
               <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)', lineHeight: 1.6 }}>
-                ImmAture can now upload to {username || 'your Flickr account'}. Choose <b>Share to Flickr…</b> from the right-click menu to publish photos.
+                BrightTable can now upload to {username || 'your Flickr account'}. Choose <b>Share to Flickr…</b> from the right-click menu to publish photos.
               </div>
             </div>
           )}

@@ -1,9 +1,9 @@
 // Temporary kill-switches for features disabled due to a known upstream bug
-// rather than anything wrong in ImmAture itself - grep this file when
+// rather than anything wrong in BrightTable itself - grep this file when
 // investigating "why is X greyed out".
 
 // Immich (confirmed live on the user's v3.0.3, reproduced independently in
-// Immich's own web UI - not an ImmAture bug) has a known server-side bug
+// Immich's own web UI - not an BrightTable bug) has a known server-side bug
 // where tag assignment (PUT /tags/{id}/assets) reports success but doesn't
 // durably persist the tag<->asset link - see immich-app/immich#17165,
 // #14194, #23915. Checked Immich's v3.1.0 (2026-07-29) release notes: no
