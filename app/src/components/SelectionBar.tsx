@@ -144,7 +144,7 @@ export default function SelectionBar({
         </BarButton>
       )}
       <BarButton onClick={onFavorite} title={allFavorited ? 'Remove from favorites' : 'Add to favorites'}>
-        <Heart filled={allFavorited} size={13} />
+        <Heart filled={allFavorited} size={13} dimColor="rgba(255,255,255,0.3)" />
         Favorite
       </BarButton>
       {onAddToAlbum && (
@@ -305,7 +305,7 @@ function RatingGroup({ onRate }: { onRate: (rating: number) => void }) {
             title={`Rate ${v} star${v === 1 ? '' : 's'}`}
             style={{ border: 'none', background: 'none', padding: 0, cursor: 'default' }}
           >
-            <Star filled={false} size={14} />
+            <Star filled={false} size={14} dimColor="rgba(255,255,255,0.3)" />
           </button>
         ))}
       </div>
@@ -315,7 +315,7 @@ function RatingGroup({ onRate }: { onRate: (rating: number) => void }) {
         title="Reject"
         style={{ border: 'none', background: 'none', padding: 0, cursor: 'default' }}
       >
-        <RejectIcon active={false} size={14} />
+        <RejectIcon active={false} size={14} dimColor="rgba(255,255,255,0.3)" />
       </button>
     </div>
   );

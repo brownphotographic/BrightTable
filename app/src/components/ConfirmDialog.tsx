@@ -55,16 +55,16 @@ export default function ConfirmDialog({
         style={{
           width: 400,
           maxWidth: '90%',
-          background: '#242424',
+          background: 'var(--dialog-bg)',
           borderRadius: 14,
           boxShadow: '0 24px 70px rgba(0,0,0,0.65)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          border: '1px solid var(--border)',
           padding: 22,
-          color: '#fff',
+          color: 'var(--text)',
         }}
       >
         <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 10 }}>{title}</div>
-        <div style={{ fontSize: 13, lineHeight: 1.5, color: 'rgba(255,255,255,0.75)' }}>{message}</div>
+        <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--text-dim)' }}>{message}</div>
         {error && <div style={{ marginTop: 12, fontSize: 12, color: 'var(--danger)', lineHeight: 1.4 }}>{error}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
           <button onClick={onClose} disabled={busy} style={btnSecondary}>
@@ -90,9 +90,9 @@ const btnBase: CSSProperties = {
 
 const btnSecondary: CSSProperties = {
   ...btnBase,
-  border: '1px solid rgba(255,255,255,0.16)',
-  background: 'rgba(255,255,255,0.06)',
-  color: '#fff',
+  border: '1px solid var(--border-strong)',
+  background: 'var(--overlay-weak)',
+  color: 'var(--text)',
 };
 
 const btnPrimary: CSSProperties = {

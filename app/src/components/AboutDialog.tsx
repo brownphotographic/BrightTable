@@ -36,24 +36,24 @@ export default function AboutDialog({ onClose }: { onClose: () => void }) {
         style={{
           width: 380,
           maxWidth: '90%',
-          background: '#242424',
+          background: 'var(--dialog-bg)',
           borderRadius: 14,
           boxShadow: '0 24px 70px rgba(0,0,0,0.65)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          border: '1px solid var(--border)',
           padding: 24,
-          color: '#fff',
+          color: 'var(--text)',
           textAlign: 'center',
         }}
       >
         <img src={appIcon} alt="" style={{ width: 56, height: 56, borderRadius: 14 }} />
         <div style={{ marginTop: 10, fontSize: 17, fontWeight: 700 }}>BrightTable</div>
-        <div style={{ marginTop: 4, fontSize: 12.5, color: 'rgba(255,255,255,0.55)' }}>
+        <div style={{ marginTop: 4, fontSize: 12.5, color: 'var(--text-dim)' }}>
           {appVersion ? `Version ${appVersion}` : 'Version —'}
         </div>
 
-        <div style={{ height: 1, background: 'rgba(255,255,255,0.1)', margin: '18px 0' }} />
+        <div style={{ height: 1, background: 'var(--overlay-medium)', margin: '18px 0' }} />
 
-        <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.75)', lineHeight: 1.5 }}>{compatText}</div>
+        <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>{compatText}</div>
 
         <div
           onClick={() => openUrl(REPO_URL)}
@@ -62,9 +62,9 @@ export default function AboutDialog({ onClose }: { onClose: () => void }) {
           {REPO_URL.replace('https://', '')}
         </div>
 
-        <div style={{ height: 1, background: 'rgba(255,255,255,0.1)', margin: '18px 0' }} />
+        <div style={{ height: 1, background: 'var(--overlay-medium)', margin: '18px 0' }} />
 
-        <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.45)' }}>Copyright © 2026 Rob Brown · MIT License</div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)' }}>Copyright © 2026 Rob Brown · MIT License</div>
 
         <button
           onClick={onClose}
@@ -73,9 +73,9 @@ export default function AboutDialog({ onClose }: { onClose: () => void }) {
             height: 34,
             width: '100%',
             borderRadius: 9,
-            border: '1px solid rgba(255,255,255,0.16)',
-            background: 'rgba(255,255,255,0.06)',
-            color: '#fff',
+            border: '1px solid var(--border-strong)',
+            background: 'var(--overlay-weak)',
+            color: 'var(--text)',
             fontSize: 13,
             cursor: 'default',
           }}

@@ -81,10 +81,10 @@ export default function TrashBrowser({ onCount }: { onCount?: (n: number) => voi
           alignItems: 'center',
           gap: 13,
           padding: '0 12px',
-          background: '#2b2b2b',
+          background: 'var(--panel-3)',
           borderTop: '1px solid rgba(0,0,0,0.4)',
           fontSize: 11.5,
-          color: 'rgba(255,255,255,0.5)',
+          color: 'var(--text-dimmer)',
         }}
       >
         <span>{assets.length} in trash</span>
@@ -156,8 +156,8 @@ function TrashTile({
         borderRadius: 8,
         overflow: 'hidden',
         position: 'relative',
-        background: '#222',
-        boxShadow: '0 0 0 1px rgba(255,255,255,0.07)',
+        background: 'var(--surface-sunken)',
+        boxShadow: '0 0 0 1px var(--border)',
       }}
     >
       <AssetThumbImage asset={asset} />

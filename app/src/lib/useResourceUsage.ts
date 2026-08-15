@@ -8,18 +8,18 @@ const WINDOW_MS = 60_000;
 
 export interface ResourceSample {
   t: number;
-  ramPercent: number;
+  systemRamPercent: number;
   cpuPercent: number;
 }
 
 export interface ResourceHistory {
   samples: ResourceSample[];
   latest: ResourceSample | null;
-  rssBytes: number | null;
+  appRssBytes: number | null;
 }
 
 export function useResourceUsage(intervalMs = SAMPLE_INTERVAL_MS): ResourceHistory {
-  const [history, setHistory] = useState<ResourceHistory>({ samples: [], latest: null, rssBytes: null });
+  const [history, setHistory] = useState<ResourceHistory>({ samples: [], latest: null, appRssBytes: null });
   const samples = useRef<ResourceSample[]>([]);
 
   useEffect(() => {
@@ -29,9 +29,9 @@ export function useResourceUsage(intervalMs = SAMPLE_INTERVAL_MS): ResourceHisto
         .then((r) => {
           if (cancelled) return;
           const now = Date.now();
-          const sample: ResourceSample = { t: now, ramPercent: r.ramPercent, cpuPercent: r.cpuPercent };
+          const sample: ResourceSample = { t: now, systemRamPercent: r.systemRamPercent, cpuPercent: r.cpuPercent };
           samples.current = [...samples.current, sample].filter((s) => now - s.t <= WINDOW_MS);
-          setHistory({ samples: samples.current, latest: sample, rssBytes: r.rssBytes });
+          setHistory({ samples: samples.current, latest: sample, appRssBytes: r.appRssBytes });
         })
         .catch(() => {});
     };

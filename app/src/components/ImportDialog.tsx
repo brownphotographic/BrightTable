@@ -227,7 +227,7 @@ export default function ImportDialog({
         <div style={{ padding: '0 20px 20px' }}>
           {libraryReady === false ? (
             <div>
-              <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.75)', lineHeight: 1.5 }}>
+              <div style={{ fontSize: 13, color: 'var(--text-dim)', lineHeight: 1.5 }}>
                 Import needs an External Library local mount configured first, so copied files land somewhere
                 Immich can actually find them.
               </div>
@@ -252,7 +252,7 @@ export default function ImportDialog({
                     <div style={sectionLabel}>Detected removable volumes</div>
                     {volumes.map((v) => (
                       <div key={v.mountPoint} onClick={() => scan(v.mountPoint)} style={volumeRow}>
-                        <div style={{ fontSize: 13.5, color: '#fff' }}>{v.name}</div>
+                        <div style={{ fontSize: 13.5, color: 'var(--text)' }}>{v.name}</div>
                         <div style={execText}>{v.mountPoint}</div>
                       </div>
                     ))}
@@ -377,8 +377,8 @@ export default function ImportDialog({
 function SummaryRow({ label, value }: { label: string; value: number }) {
   return (
     <div style={summaryRow}>
-      <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.75)' }}>{label}</span>
-      <span style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{value}</span>
+      <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{value}</span>
     </div>
   );
 }
@@ -407,8 +407,8 @@ function Segmented<T extends string | number>({
             borderRadius: 7,
             fontSize: 12.5,
             cursor: 'default',
-            background: value === o.value ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
-            color: value === o.value ? '#fff' : 'rgba(255,255,255,0.7)',
+            background: value === o.value ? 'var(--accent)' : 'var(--overlay-weak)',
+            color: value === o.value ? '#fff' : 'var(--text-dim)',
           }}
         >
           {o.label}
@@ -432,14 +432,14 @@ const dialog: CSSProperties = {
   width: 460,
   maxWidth: '90%',
   maxHeight: '80%',
-  background: '#242424',
+  background: 'var(--dialog-bg)',
   borderRadius: 14,
   boxShadow: '0 24px 70px rgba(0,0,0,0.65)',
-  border: '1px solid rgba(255,255,255,0.08)',
+  border: '1px solid var(--border)',
   display: 'flex',
   flexDirection: 'column',
   overflow: 'auto',
-  color: '#fff',
+  color: 'var(--text)',
 };
 
 const header: CSSProperties = {
@@ -453,7 +453,7 @@ const closeBtn: CSSProperties = {
   width: 26,
   height: 26,
   borderRadius: '50%',
-  background: 'rgba(255,255,255,0.08)',
+  background: 'var(--overlay-medium)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
@@ -466,7 +466,7 @@ const closeLine1: CSSProperties = {
   position: 'absolute',
   width: 11,
   height: 1.6,
-  background: '#fff',
+  background: 'var(--text)',
   transform: 'rotate(45deg)',
   borderRadius: 1,
 };
@@ -486,7 +486,7 @@ const volumeRow: CSSProperties = {
   padding: '9px 12px',
   borderRadius: 8,
   cursor: 'default',
-  background: 'rgba(255,255,255,0.05)',
+  background: 'var(--overlay-weak)',
   marginBottom: 6,
 };
 
@@ -515,8 +515,8 @@ const spinnerLarge: CSSProperties = {
   height: 28,
   margin: '0 auto',
   borderRadius: '50%',
-  border: '3px solid rgba(255,255,255,0.15)',
-  borderTopColor: '#9cc2f0',
+  border: '3px solid var(--border-strong)',
+  borderTopColor: 'var(--accent-text)',
   animation: 'brighttable-spin 0.8s linear infinite',
 };
 
@@ -525,15 +525,15 @@ const dateSelect: CSSProperties = {
   padding: '0 8px',
   borderRadius: 7,
   fontSize: 12.5,
-  border: '1px solid rgba(255,255,255,0.16)',
-  background: 'rgba(255,255,255,0.06)',
-  color: '#fff',
+  border: '1px solid var(--border-strong)',
+  background: 'var(--overlay-weak)',
+  color: 'var(--text)',
   cursor: 'default',
 };
 
 const destinationBox: CSSProperties = {
   font: '500 11.5px ui-monospace,monospace',
-  color: '#9cc2f0',
+  color: 'var(--accent-text)',
   background: 'rgba(53,132,228,0.12)',
   border: '1px solid rgba(53,132,228,0.3)',
   borderRadius: 8,
@@ -553,9 +553,9 @@ const btnBase: CSSProperties = {
 
 const btnSecondary: CSSProperties = {
   ...btnBase,
-  border: '1px solid rgba(255,255,255,0.16)',
-  background: 'rgba(255,255,255,0.06)',
-  color: '#fff',
+  border: '1px solid var(--border-strong)',
+  background: 'var(--overlay-weak)',
+  color: 'var(--text)',
 };
 
 const btnPrimary: CSSProperties = {

@@ -17,13 +17,13 @@ const tabLabels: Record<string, string> = {
 function WindowButtons() {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-      <WinButton onClick={() => appWindow.minimize()} hoverBg="rgba(255,255,255,0.18)">
-        <div style={{ width: 9, height: 1.6, background: '#fff', borderRadius: 1, marginTop: 6 }} />
+      <WinButton onClick={() => appWindow.minimize()} idleBg="var(--overlay-weak)" hoverBg="var(--overlay-strong)">
+        <div style={{ width: 9, height: 1.6, background: 'var(--text)', borderRadius: 1, marginTop: 6 }} />
       </WinButton>
-      <WinButton onClick={() => appWindow.toggleMaximize()} hoverBg="rgba(255,255,255,0.18)">
-        <div style={{ width: 8, height: 8, border: '1.6px solid #fff', borderRadius: 2 }} />
+      <WinButton onClick={() => appWindow.toggleMaximize()} idleBg="var(--overlay-weak)" hoverBg="var(--overlay-strong)">
+        <div style={{ width: 8, height: 8, border: '1.6px solid var(--text)', borderRadius: 2 }} />
       </WinButton>
-      <WinButton onClick={() => appWindow.close()} hoverBg="#e01b24">
+      <WinButton onClick={() => appWindow.close()} idleBg="rgba(0,0,0,0.35)" hoverBg="#e01b24">
         <div style={{ position: 'relative', width: 11, height: 11 }}>
           <div
             style={{
@@ -67,12 +67,12 @@ export default function TitleBar({ activeTab, onOpenActivity }: { activeTab: str
         alignItems: 'center',
         gap: 10,
         padding: onLeft ? '0 12px 0 8px' : '0 8px 0 12px',
-        background: 'linear-gradient(#323232, #2e2e2e)',
-        borderBottom: '1px solid rgba(0,0,0,0.5)',
+        background: 'var(--panel-3)',
+        borderBottom: '1px solid var(--border-strong)',
       }}
     >
       {onLeft && <WindowButtons />}
-      {onLeft && <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.12)' }} />}
+      {onLeft && <div style={{ width: 1, height: 18, background: 'var(--overlay-medium)' }} />}
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0, pointerEvents: 'none' }}>
         <img
           src={appIcon}
@@ -83,7 +83,7 @@ export default function TitleBar({ activeTab, onOpenActivity }: { activeTab: str
         <span
           style={{
             fontSize: 12.5,
-            color: 'rgba(255,255,255,.42)',
+            color: 'var(--text-dimmer)',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -103,10 +103,12 @@ export default function TitleBar({ activeTab, onOpenActivity }: { activeTab: str
 
 function WinButton({
   onClick,
+  idleBg,
   hoverBg,
   children,
 }: {
   onClick: () => void;
+  idleBg: string;
   hoverBg: string;
   children: ReactNode;
 }) {
@@ -117,7 +119,7 @@ function WinButton({
         width: 24,
         height: 24,
         borderRadius: '50%',
-        background: 'rgba(255,255,255,0.09)',
+        background: idleBg,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -125,7 +127,7 @@ function WinButton({
         position: 'relative',
       }}
       onMouseEnter={(e) => (e.currentTarget.style.background = hoverBg)}
-      onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.09)')}
+      onMouseLeave={(e) => (e.currentTarget.style.background = idleBg)}
     >
       {children}
     </div>

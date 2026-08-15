@@ -36,7 +36,7 @@ export default function ActivityIndicator({ onClick }: { onClick: () => void }) 
   const syncing = pendingCount > 0;
   const failed = !syncing && failedCount > 0;
   const label = syncing ? `${pendingCount} syncing…` : failed ? `${failedCount} failed` : 'Import notice';
-  const color = syncing ? '#9cc2f0' : failed ? '#ff8080' : '#ffd699';
+  const color = syncing ? 'var(--accent-text)' : failed ? '#ff8080' : 'var(--warn)';
   const bg = syncing ? 'rgba(53,132,228,0.22)' : failed ? 'rgba(224,27,36,0.22)' : 'rgba(229,165,10,0.22)';
 
   return (

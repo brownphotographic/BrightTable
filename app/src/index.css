@@ -2,6 +2,9 @@
   --canvas: #1c1c1c;
   --panel: #303030;
   --panel-2: #262626;
+  --panel-3: #2b2b2b;
+  --dialog-bg: #242424;
+  --surface-sunken: #222222;
   --border: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.14);
   --text: #ffffff;
@@ -9,10 +12,57 @@
   --text-dimmer: rgba(255, 255, 255, 0.45);
   --accent: #3584e4;
   --accent-hover: #3987e5;
+  /* Status text (e.g. "Syncing…") sitting on a translucent accent tint -
+     light pastel blue reads fine on the dark surfaces below it. */
+  --accent-text: #9cc2f0;
   --ok: #2ec27e;
   --warn: #e5a50a;
   --danger: #e01b24;
+  --overlay-weak: rgba(255, 255, 255, 0.06);
+  --overlay-medium: rgba(255, 255, 255, 0.12);
+  --overlay-strong: rgba(255, 255, 255, 0.18);
+  --scrim: rgba(0, 0, 0, 0.5);
+  /* Background behind photos in the grid ("light table") and the full-
+     screen viewer. Defaults to --canvas; overridden by the independent
+     Photo background preference below, regardless of theme. */
+  --photo-canvas: var(--canvas);
   color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --canvas: #f4f4f4;
+  --panel: #ffffff;
+  --panel-2: #ececec;
+  --panel-3: #e4e4e4;
+  --dialog-bg: #ffffff;
+  --surface-sunken: #e2e2e2;
+  --border: rgba(0, 0, 0, 0.1);
+  --border-strong: rgba(0, 0, 0, 0.18);
+  --text: #1c1c1c;
+  --text-dim: rgba(0, 0, 0, 0.65);
+  --text-dimmer: rgba(0, 0, 0, 0.45);
+  --accent: #3584e4;
+  --accent-hover: #1c71d8;
+  --accent-text: #1a5fb4;
+  --ok: #26a269;
+  --warn: #c88800;
+  --danger: #c01c28;
+  --overlay-weak: rgba(0, 0, 0, 0.05);
+  --overlay-medium: rgba(0, 0, 0, 0.08);
+  --overlay-strong: rgba(0, 0, 0, 0.14);
+  --scrim: rgba(0, 0, 0, 0.35);
+  color-scheme: light;
+}
+
+/* Photo background preference - fixed neutral surrounds, independent of
+   theme (20% grey = 51/255 luminance, a common neutral photo-viewing
+   surround). */
+:root[data-canvas-shade='white'] {
+  --photo-canvas: #ffffff;
+}
+
+:root[data-canvas-shade='grey'] {
+  --photo-canvas: #333333;
 }
 
 * {

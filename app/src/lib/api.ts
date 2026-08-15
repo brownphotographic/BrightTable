@@ -123,6 +123,8 @@ export interface SharingConfig {
 }
 
 export type WindowControlsPosition = 'left' | 'right';
+export type ThemeMode = 'dark' | 'light';
+export type CanvasShade = 'default' | 'white' | 'grey';
 
 export interface AppConfig {
   library: LibraryConfig;
@@ -134,6 +136,8 @@ export interface AppConfig {
   rawOverrides: string[];
   sharing: SharingConfig;
   windowControlsPosition: WindowControlsPosition;
+  themeMode: ThemeMode;
+  canvasShade: CanvasShade;
 }
 
 export interface ConnectionStatus {
@@ -333,6 +337,14 @@ export function saveSmartStackSettings(settings: SmartStackSettings): Promise<Ap
 
 export function saveWindowControlsPosition(position: WindowControlsPosition): Promise<AppConfig> {
   return invoke('save_window_controls_position', { position });
+}
+
+export function saveThemeMode(mode: ThemeMode): Promise<AppConfig> {
+  return invoke('save_theme_mode', { mode });
+}
+
+export function saveCanvasShade(shade: CanvasShade): Promise<AppConfig> {
+  return invoke('save_canvas_shade', { shade });
 }
 
 export function setRawOverrides(assetIds: string[], isRaw: boolean): Promise<AppConfig> {
@@ -839,9 +851,15 @@ export function personThumbnailSrc(personId: string): string {
   return `immich-thumb://person/${personId}`;
 }
 
+// See commands::get_resource_usage's doc comment for why these are two
+// independent numbers rather than one: systemRamPercent is accurate,
+// machine-wide memory pressure (safe to show as a %); appRssBytes is this
+// app's own process-tree RSS, reported in bytes rather than as a % of
+// system RAM because summing RSS across BrightTable + its webkit2gtk
+// children double-counts memory they share, which can read like "300%".
 export interface ResourceUsage {
-  rssBytes: number;
-  ramPercent: number;
+  appRssBytes: number;
+  systemRamPercent: number;
   cpuPercent: number;
 }
 

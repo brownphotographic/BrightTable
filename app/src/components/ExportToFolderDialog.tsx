@@ -86,10 +86,10 @@ export default function ExportToFolderDialog({ assets, onClose, onExported }: { 
           width: 480,
           maxWidth: '92%',
           maxHeight: '86vh',
-          background: '#242424',
+          background: 'var(--dialog-bg)',
           borderRadius: 14,
           boxShadow: '0 24px 70px rgba(0,0,0,0.7)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          border: '1px solid var(--border)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -103,12 +103,12 @@ export default function ExportToFolderDialog({ assets, onClose, onExported }: { 
             alignItems: 'center',
             gap: 10,
             padding: '0 10px 0 18px',
-            background: '#303030',
+            background: 'var(--panel)',
             borderBottom: '1px solid rgba(0,0,0,0.4)',
           }}
         >
           <span style={{ fontSize: 14, fontWeight: 700 }}>Export to Folder</span>
-          <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)' }}>
+          <span style={{ fontSize: 12.5, color: 'var(--text-dimmer)' }}>
             · {n} photo{n === 1 ? '' : 's'} selected
           </span>
           <div style={{ flex: 1 }} />
@@ -131,7 +131,7 @@ export default function ExportToFolderDialog({ assets, onClose, onExported }: { 
             hasVideo={assets.some(isVideoAsset)}
           />
 
-          <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'rgba(255,255,255,0.45)', margin: '18px 0 8px' }}>DESTINATION</div>
+          <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'var(--text-dimmer)', margin: '18px 0 8px' }}>DESTINATION</div>
           <div style={{ display: 'flex', gap: 8 }}>
             <div
               style={{
@@ -141,10 +141,10 @@ export default function ExportToFolderDialog({ assets, onClose, onExported }: { 
                 alignItems: 'center',
                 padding: '0 12px',
                 borderRadius: 9,
-                background: 'rgba(0,0,0,0.3)',
-                border: '1px solid rgba(255,255,255,0.1)',
+                background: 'var(--surface-sunken)',
+                border: '1px solid var(--border)',
                 fontSize: 12.5,
-                color: destination ? '#fff' : 'rgba(255,255,255,0.4)',
+                color: destination ? 'var(--text)' : 'var(--text-dimmer)',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
@@ -199,7 +199,7 @@ export const closeBtnStyle: CSSProperties = {
   width: 30,
   height: 30,
   borderRadius: '50%',
-  background: 'rgba(255,255,255,0.08)',
+  background: 'var(--overlay-medium)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
@@ -209,7 +209,7 @@ export const closeBtnStyle: CSSProperties = {
 
 const btnBase: CSSProperties = { height: 38, padding: '0 18px', borderRadius: 9, fontSize: 13, cursor: 'default', border: 'none' };
 
-export const btnSecondary: CSSProperties = { ...btnBase, border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.06)', color: '#fff' };
+export const btnSecondary: CSSProperties = { ...btnBase, border: '1px solid var(--border-strong)', background: 'var(--overlay-weak)', color: 'var(--text)' };
 
 export function btnPrimary(enabled: boolean): CSSProperties {
   return { ...btnBase, padding: '0 22px', background: '#3584e4', color: '#fff', fontWeight: 700, opacity: enabled ? 1 : 0.5, pointerEvents: enabled ? 'auto' : 'none' };

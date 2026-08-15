@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { clearThumbCache, getThumbCacheInfo, type ThumbCacheStats } from '../lib/api';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useWindowControls } from '../lib/windowControls';
+import { useTheme } from '../lib/theme';
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -21,6 +22,7 @@ export default function PreferencesConfiguration() {
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState(false);
   const { position, setPosition } = useWindowControls();
+  const { themeMode, setThemeMode, canvasShade, setCanvasShade } = useTheme();
 
   useEffect(() => {
     getThumbCacheInfo()
@@ -35,7 +37,37 @@ export default function PreferencesConfiguration() {
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '24px 0' }}>
-      <div style={{ fontSize: 14, fontWeight: 700, margin: '0 4px 12px' }}>Window</div>
+      <div style={{ fontSize: 14, fontWeight: 700, margin: '0 4px 12px' }}>Appearance</div>
+      <div style={panel}>
+        <Row label="Theme">
+          <Segmented
+            value={themeMode}
+            options={[
+              { value: 'dark', label: 'Dark' },
+              { value: 'light', label: 'Light' },
+            ]}
+            onChange={setThemeMode}
+          />
+        </Row>
+        <Divider />
+        <Row label="Photo background">
+          <Segmented
+            value={canvasShade}
+            options={[
+              { value: 'white', label: 'White' },
+              { value: 'default', label: 'Default' },
+              { value: 'grey', label: 'Grey' },
+            ]}
+            onChange={setCanvasShade}
+          />
+        </Row>
+      </div>
+      <div style={helpText}>
+        Theme controls the app's overall colors. Photo background sets the surface behind photos
+        in the grid and the full-screen viewer, independent of theme.
+      </div>
+
+      <div style={{ fontSize: 14, fontWeight: 700, margin: '26px 4px 12px' }}>Window</div>
       <div style={panel}>
         <Row label="Window buttons">
           <Segmented
@@ -95,7 +127,7 @@ export default function PreferencesConfiguration() {
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', padding: '11px 16px', gap: 14 }}>
-      <span style={{ fontSize: 13.5, width: 90, flexShrink: 0, color: 'rgba(255,255,255,0.85)' }}>{label}</span>
+      <span style={{ fontSize: 13.5, width: 90, flexShrink: 0, color: 'var(--text-dim)' }}>{label}</span>
       <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end', overflow: 'hidden' }}>{children}</div>
     </div>
   );
@@ -125,8 +157,8 @@ function Segmented<T extends string>({
             borderRadius: 7,
             fontSize: 12.5,
             cursor: 'default',
-            background: value === o.value ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
-            color: value === o.value ? '#fff' : 'rgba(255,255,255,0.7)',
+            background: value === o.value ? 'var(--accent)' : 'var(--overlay-weak)',
+            color: value === o.value ? '#fff' : 'var(--text-dim)',
           }}
         >
           {o.label}
@@ -146,7 +178,7 @@ const panel: CSSProperties = {
 const pathText: CSSProperties = {
   fontSize: 12,
   font: '500 12px ui-monospace,monospace',
-  color: 'rgba(255,255,255,0.75)',
+  color: 'var(--text-dim)',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
@@ -171,6 +203,6 @@ const btnBase: CSSProperties = {
 const btnSecondary: CSSProperties = {
   ...btnBase,
   border: '1px solid var(--border-strong)',
-  background: 'rgba(255,255,255,0.06)',
-  color: '#fff',
+  background: 'var(--overlay-weak)',
+  color: 'var(--text)',
 };

@@ -92,8 +92,8 @@ export default function MenuBar({
         alignItems: 'center',
         gap: 1,
         padding: '0 6px',
-        background: '#2b2b2b',
-        borderBottom: '1px solid rgba(0,0,0,0.45)',
+        background: 'var(--panel-3)',
+        borderBottom: '1px solid var(--border-strong)',
         position: 'relative',
         zIndex: 60,
       }}
@@ -270,7 +270,7 @@ export default function MenuBar({
         <MenuItem label="Zoom In" shortcut="Ctrl++" onClick={close} />
         <MenuItem label="Zoom Out" shortcut="Ctrl+-" onClick={close} />
         <Divider />
-        <div style={{ padding: '3px 11px 5px', fontSize: 11, letterSpacing: '.04em', color: 'rgba(255,255,255,0.4)' }}>
+        <div style={{ padding: '3px 11px 5px', fontSize: 11, letterSpacing: '.04em', color: 'var(--text-dimmer)' }}>
           SORT PHOTOS BY
         </div>
         <MenuItem label="Newest first" onClick={close} />
@@ -290,7 +290,7 @@ export default function MenuBar({
         />
       </TopMenu>
 
-      <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.12)', margin: '0 6px' }} />
+      <div style={{ width: 1, height: 18, background: 'var(--overlay-medium)', margin: '0 6px' }} />
 
       <div style={{ position: 'relative' }}>
         {(() => {
@@ -307,7 +307,7 @@ export default function MenuBar({
                 border: 'none',
                 borderRadius: 7,
                 background: open === 'filter' ? '#3584e4' : hasFilters ? 'rgba(53,132,228,0.32)' : 'transparent',
-                color: '#fff',
+                color: open === 'filter' ? '#fff' : 'var(--text)',
                 fontSize: 13,
                 cursor: 'default',
               }}
@@ -351,15 +351,15 @@ export default function MenuBar({
               top: 'calc(100% + 5px)',
               left: 0,
               width: 280,
-              background: '#383838',
-              border: '1px solid rgba(255,255,255,0.10)',
+              background: 'var(--panel)',
+              border: '1px solid var(--border)',
               borderRadius: 12,
               boxShadow: '0 12px 34px rgba(0,0,0,0.6)',
               padding: 14,
               zIndex: 70,
             }}
           >
-            <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'rgba(255,255,255,0.45)', marginBottom: 8 }}>
+            <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'var(--text-dimmer)', marginBottom: 8 }}>
               MINIMUM RATING
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 15 }}>
@@ -373,7 +373,7 @@ export default function MenuBar({
                 </div>
               ))}
               <div style={{ flex: 1 }} />
-              <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>
                 {filters.minRating > 0 ? `${filters.minRating}+ stars` : 'Any rating'}
               </span>
             </div>
@@ -383,7 +383,7 @@ export default function MenuBar({
               <Switch checked={filters.favOnly} onChange={(v) => onFiltersChange({ ...filters, favOnly: v })} />
             </div>
 
-            <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'rgba(255,255,255,0.45)', marginBottom: 8 }}>
+            <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'var(--text-dimmer)', marginBottom: 8 }}>
               MEDIA TYPE
             </div>
             <div style={{ display: 'flex', gap: 5, marginBottom: 13 }}>
@@ -414,7 +414,7 @@ export default function MenuBar({
               const imageTypeDisabled = filters.mediaType === 'videos';
               return (
                 <div style={{ opacity: imageTypeDisabled ? 0.4 : 1, pointerEvents: imageTypeDisabled ? 'none' : 'auto' }}>
-                  <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'rgba(255,255,255,0.45)', marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'var(--text-dimmer)', marginBottom: 8 }}>
                     IMAGE TYPE
                   </div>
                   <div style={{ display: 'flex', gap: 5, marginBottom: 13 }}>
@@ -438,7 +438,7 @@ export default function MenuBar({
               );
             })()}
 
-            <div style={{ height: 1, background: 'rgba(255,255,255,0.1)', margin: '0 -4px 11px' }} />
+            <div style={{ height: 1, background: 'var(--border)', margin: '0 -4px 11px' }} />
             <div
               onClick={() => onFiltersChange(DEFAULT_FILTERS)}
               style={{
@@ -447,7 +447,7 @@ export default function MenuBar({
                 alignItems: 'center',
                 justifyContent: 'center',
                 borderRadius: 8,
-                background: 'rgba(255,255,255,0.06)',
+                background: 'var(--overlay-weak)',
                 fontSize: 12.5,
                 cursor: 'default',
               }}
@@ -467,8 +467,8 @@ export default function MenuBar({
           gap: 7,
           height: 24,
           padding: '0 8px 0 9px',
-          background: 'rgba(0,0,0,0.28)',
-          border: '1px solid rgba(255,255,255,0.07)',
+          background: 'var(--overlay-medium)',
+          border: '1px solid var(--border)',
           borderRadius: 7,
           width: 230,
         }}
@@ -477,7 +477,7 @@ export default function MenuBar({
           style={{
             width: 11,
             height: 11,
-            border: '1.6px solid rgba(255,255,255,0.4)',
+            border: '1.6px solid var(--text-dim)',
             borderRadius: '50%',
             position: 'relative',
             flexShrink: 0,
@@ -488,7 +488,7 @@ export default function MenuBar({
               position: 'absolute',
               width: 5,
               height: 1.6,
-              background: 'rgba(255,255,255,0.4)',
+              background: 'var(--text-dim)',
               transform: 'rotate(45deg)',
               right: -3,
               bottom: 0,
@@ -509,7 +509,7 @@ export default function MenuBar({
             border: 'none',
             outline: 'none',
             background: 'transparent',
-            color: '#fff',
+            color: 'var(--text)',
             fontSize: 12.5,
           }}
         />
@@ -517,14 +517,14 @@ export default function MenuBar({
           <div
             onClick={onClearSearch}
             title="Clear search"
-            style={{ flexShrink: 0, fontSize: 12, color: 'rgba(255,255,255,0.5)', cursor: 'default' }}
+            style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-dim)', cursor: 'default' }}
           >
             ✕
           </div>
         )}
       </div>
 
-      <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.12)', margin: '0 6px' }} />
+      <div style={{ width: 1, height: 18, background: 'var(--overlay-medium)', margin: '0 6px' }} />
 
       <div
         onClick={onToggleMetadata}
@@ -536,7 +536,7 @@ export default function MenuBar({
           padding: '0 10px',
           borderRadius: 7,
           cursor: 'default',
-          color: metaOpen ? '#fff' : 'rgba(255,255,255,0.75)',
+          color: metaOpen ? 'var(--accent-text)' : 'var(--text-dim)',
           background: metaOpen ? 'rgba(53,132,228,0.28)' : 'transparent',
           fontSize: 13,
         }}
@@ -575,8 +575,8 @@ function TopMenu({
           padding: '0 12px',
           border: 'none',
           borderRadius: 7,
-          background: isOpen ? 'rgba(255,255,255,0.12)' : 'transparent',
-          color: '#fff',
+          background: isOpen ? 'var(--overlay-medium)' : 'transparent',
+          color: 'var(--text)',
           fontSize: 13,
           cursor: 'default',
         }}
@@ -590,8 +590,8 @@ function TopMenu({
             top: 'calc(100% + 5px)',
             left: 0,
             minWidth: 236,
-            background: '#383838',
-            border: '1px solid rgba(255,255,255,0.10)',
+            background: 'var(--panel)',
+            border: '1px solid var(--border)',
             borderRadius: 11,
             boxShadow: '0 12px 34px rgba(0,0,0,0.6)',
             padding: 6,
@@ -629,7 +629,7 @@ function MenuItem({ label, shortcut, onClick }: { label: string; shortcut?: stri
 }
 
 function Divider() {
-  return <div style={{ height: 1, background: 'rgba(255,255,255,0.1)', margin: '6px 9px' }} />;
+  return <div style={{ height: 1, background: 'var(--border)', margin: '6px 9px' }} />;
 }
 
 function segStyle(active: boolean): CSSProperties {
@@ -643,8 +643,8 @@ function segStyle(active: boolean): CSSProperties {
     fontSize: 12,
     borderRadius: 7,
     cursor: 'default',
-    color: active ? '#fff' : 'rgba(255,255,255,0.7)',
-    background: active ? '#3584e4' : 'rgba(255,255,255,0.06)',
+    color: active ? '#fff' : 'var(--text-dim)',
+    background: active ? '#3584e4' : 'var(--overlay-weak)',
     // Segment labels are meant to be short - if a panel/window ever gets
     // narrow enough that one doesn't fit, degrade to an ellipsis instead of
     // silently wrapping onto a second line and breaking the fixed height.

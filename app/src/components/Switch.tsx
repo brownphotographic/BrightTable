@@ -6,7 +6,7 @@ export default function Switch({ checked, onChange }: { checked: boolean; onChan
         width: 40,
         height: 22,
         borderRadius: 11,
-        background: checked ? 'var(--accent)' : 'rgba(255,255,255,0.15)',
+        background: checked ? 'var(--accent)' : 'var(--overlay-strong)',
         cursor: 'default',
         position: 'relative',
         transition: 'background 0.15s',

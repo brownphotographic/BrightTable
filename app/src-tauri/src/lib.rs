@@ -192,6 +192,8 @@ pub fn run() {
             commands::save_shortcuts,
             commands::save_smart_stack_settings,
             commands::save_window_controls_position,
+            commands::save_theme_mode,
+            commands::save_canvas_shade,
             commands::save_applications_config,
             commands::list_installed_apps,
             commands::launch_editor,

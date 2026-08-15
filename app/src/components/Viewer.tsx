@@ -87,7 +87,7 @@ function headerButtonStyle(active: boolean) {
     borderRadius: 8,
     fontSize: 12.5,
     cursor: 'default',
-    background: active ? '#3584e4' : 'rgba(255,255,255,0.08)',
+    background: active ? '#3584e4' : 'var(--overlay-medium)',
   } as const;
 }
 
@@ -719,10 +719,10 @@ const Viewer = forwardRef<ViewerHandle, {
         position: 'fixed',
         inset: 0,
         zIndex: 200,
-        background: '#161616',
+        background: 'var(--photo-canvas)',
         display: 'flex',
         flexDirection: 'column',
-        color: '#fff',
+        color: 'var(--text)',
       }}
     >
       <div
@@ -733,8 +733,8 @@ const Viewer = forwardRef<ViewerHandle, {
           alignItems: 'center',
           gap: 10,
           padding: '0 14px',
-          borderBottom: '1px solid rgba(0,0,0,0.4)',
-          background: '#222',
+          borderBottom: '1px solid var(--border-strong)',
+          background: 'var(--panel-3)',
         }}
       >
         <div
@@ -746,7 +746,7 @@ const Viewer = forwardRef<ViewerHandle, {
             height: 30,
             padding: '0 12px 0 9px',
             borderRadius: 8,
-            background: 'rgba(255,255,255,0.07)',
+            background: 'var(--overlay-weak)',
             fontSize: 13,
             cursor: 'default',
           }}
@@ -755,8 +755,8 @@ const Viewer = forwardRef<ViewerHandle, {
             style={{
               width: 8,
               height: 8,
-              borderLeft: '1.8px solid #fff',
-              borderBottom: '1.8px solid #fff',
+              borderLeft: '1.8px solid var(--text)',
+              borderBottom: '1.8px solid var(--text)',
               transform: 'rotate(45deg)',
             }}
           />
@@ -765,9 +765,9 @@ const Viewer = forwardRef<ViewerHandle, {
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {shown.fileName}
-            {peekAsset && <span style={{ fontWeight: 400, color: 'rgba(255,255,255,0.45)' }}> · previewing stack member</span>}
+            {peekAsset && <span style={{ fontWeight: 400, color: 'var(--text-dimmer)' }}> · previewing stack member</span>}
           </div>
-          <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.45)' }}>
+          <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)' }}>
             {formatDims(shown)} · {formatSize(shown.fileSizeInByte)}
           </div>
         </div>
@@ -782,7 +782,7 @@ const Viewer = forwardRef<ViewerHandle, {
               height: 30,
               padding: '0 13px',
               borderRadius: 8,
-              background: 'rgba(255,255,255,0.08)',
+              background: 'var(--overlay-medium)',
               fontSize: 12.5,
               cursor: 'default',
             }}
@@ -840,7 +840,7 @@ const Viewer = forwardRef<ViewerHandle, {
             {rotateError}
           </div>
         )}
-        <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)', margin: '0 2px' }} />
+        <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />
         {isRawAsset(shown) && shown.hasProcessingSidecar && (
           <div onClick={handleCopyImageProcessing} style={headerButtonStyle(false)}>
             Copy Image Processing
@@ -886,7 +886,7 @@ const Viewer = forwardRef<ViewerHandle, {
             disabled so it's clear they just don't apply here. */}
         {!isVideo && (
           <>
-            <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)', margin: '0 2px' }} />
+            <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />
             <div
               style={{
                 display: 'flex',
@@ -895,7 +895,7 @@ const Viewer = forwardRef<ViewerHandle, {
                 height: 30,
                 padding: '0 4px 0 8px',
                 borderRadius: 8,
-                background: 'rgba(255,255,255,0.06)',
+                background: 'var(--overlay-weak)',
               }}
             >
               <div
@@ -937,7 +937,7 @@ const Viewer = forwardRef<ViewerHandle, {
                 {zoom}%
               </div>
             </div>
-            <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)', margin: '0 2px' }} />
+            <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />
             <div onClick={() => setLoupeOn((v) => !v)} style={headerButtonStyle(loupeOn)}>
               <div style={{ position: 'relative', width: 13, height: 13, flexShrink: 0 }}>
                 <div style={{ position: 'absolute', left: 0, top: 0, width: 9, height: 9, border: '1.7px solid currentColor', borderRadius: '50%' }} />
@@ -956,7 +956,7 @@ const Viewer = forwardRef<ViewerHandle, {
       </div>
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ flex: 1, position: 'relative', minHeight: 0, background: '#161616' }}>
+        <div style={{ flex: 1, position: 'relative', minHeight: 0, background: 'var(--photo-canvas)' }}>
           <div style={{ position: 'absolute', inset: 0, overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 28 }}>
             {/* Fixed-size stage (not sized by the images) so both layers fill the
                 available viewing area via objectFit rather than collapsing to
@@ -1004,7 +1004,7 @@ const Viewer = forwardRef<ViewerHandle, {
                         alignItems: 'center',
                         justifyContent: 'center',
                         fontSize: 13,
-                        color: 'rgba(255,255,255,0.5)',
+                        color: 'var(--text-dim)',
                       }}
                     >
                       Loading video…
@@ -1028,7 +1028,7 @@ const Viewer = forwardRef<ViewerHandle, {
                         pointerEvents: 'none',
                       }}
                     >
-                      <div style={{ maxWidth: 420, textAlign: 'center', fontSize: 13, lineHeight: 1.6, color: 'rgba(255,255,255,0.75)' }}>
+                      <div style={{ maxWidth: 420, textAlign: 'center', fontSize: 13, lineHeight: 1.6, color: 'var(--text-dim)' }}>
                         {videoErrorId.message}
                       </div>
                     </div>
@@ -1136,7 +1136,7 @@ const Viewer = forwardRef<ViewerHandle, {
                 cursor: 'default',
               }}
             >
-              <div style={{ width: 10, height: 10, borderLeft: '2px solid #fff', borderBottom: '2px solid #fff', transform: 'rotate(45deg)' }} />
+              <div style={{ width: 10, height: 10, borderLeft: '2px solid var(--text)', borderBottom: '2px solid var(--text)', transform: 'rotate(45deg)' }} />
             </div>
           )}
           {hasNext && (
@@ -1157,7 +1157,7 @@ const Viewer = forwardRef<ViewerHandle, {
                 cursor: 'default',
               }}
             >
-              <div style={{ width: 10, height: 10, borderRight: '2px solid #fff', borderTop: '2px solid #fff', transform: 'rotate(45deg)' }} />
+              <div style={{ width: 10, height: 10, borderRight: '2px solid var(--text)', borderTop: '2px solid var(--text)', transform: 'rotate(45deg)' }} />
             </div>
           )}
         </div>
@@ -1167,8 +1167,8 @@ const Viewer = forwardRef<ViewerHandle, {
             style={{
               width: 288,
               flexShrink: 0,
-              borderLeft: '1px solid rgba(0,0,0,0.4)',
-              background: '#222',
+              borderLeft: '1px solid var(--border-strong)',
+              background: 'var(--panel-3)',
               display: 'flex',
               flexDirection: 'column',
               minHeight: 0,
@@ -1183,7 +1183,7 @@ const Viewer = forwardRef<ViewerHandle, {
               // left below the metadata all the way to the bottom of the panel
               // instead of only fitting a couple of rows before scrolling.
               <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '0 18px 18px' }}>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', marginBottom: 8, flexShrink: 0 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8, flexShrink: 0 }}>
                   Stack · {stackMembers?.length ?? asset.stack!.assetCount} · click a photo to view it
                 </div>
                 {!stackMembers ? (
@@ -1206,7 +1206,7 @@ const Viewer = forwardRef<ViewerHandle, {
                             borderRadius: 8,
                             overflow: 'hidden',
                             cursor: 'default',
-                            boxShadow: isShown ? '0 0 0 2px #3584e4' : '0 0 0 1px rgba(255,255,255,0.08)',
+                            boxShadow: isShown ? '0 0 0 2px #3584e4' : '0 0 0 1px var(--border)',
                             touchAction: 'manipulation',
                           }}
                         >
@@ -1249,7 +1249,7 @@ const Viewer = forwardRef<ViewerHandle, {
                             style={{ position: 'absolute', left: 5, bottom: 5, display: 'flex', gap: 4, padding: '2px 4px', borderRadius: 5, background: 'rgba(0,0,0,0.42)' }}
                           >
                             {[1, 2, 3, 4, 5].map((v) => (
-                              <Star key={v} filled={v <= (m.rating || 0)} size={6} />
+                              <Star key={v} filled={v <= (m.rating || 0)} size={6} dimColor="rgba(255,255,255,0.3)" />
                             ))}
                           </div>
                           {m.fileExtension && (
@@ -1347,8 +1347,8 @@ function Filmstrip({
       style={{
         height: 88,
         flexShrink: 0,
-        borderTop: '1px solid rgba(0,0,0,0.4)',
-        background: '#1e1e1e',
+        borderTop: '1px solid var(--border-strong)',
+        background: 'var(--panel-3)',
         display: 'flex',
         alignItems: 'center',
         gap: 8,
@@ -1371,8 +1371,8 @@ function Filmstrip({
               borderRadius: 6,
               overflow: 'hidden',
               cursor: 'default',
-              background: '#222',
-              boxShadow: active ? '0 0 0 2px #3584e4' : '0 0 0 1px rgba(255,255,255,0.08)',
+              background: 'var(--surface-sunken)',
+              boxShadow: active ? '0 0 0 2px #3584e4' : '0 0 0 1px var(--border)',
               touchAction: 'manipulation',
             }}
           >
@@ -1388,7 +1388,7 @@ function Filmstrip({
             />
             <div style={{ position: 'absolute', left: 4, bottom: 4, display: 'flex', gap: 4, padding: '2px 4px', borderRadius: 5, background: 'rgba(0,0,0,0.42)' }}>
               {[1, 2, 3, 4, 5].map((v) => (
-                <Star key={v} filled={v <= (a.rating || 0)} size={6} />
+                <Star key={v} filled={v <= (a.rating || 0)} size={6} dimColor="rgba(255,255,255,0.3)" />
               ))}
             </div>
             {a.stack && (
@@ -1408,7 +1408,7 @@ function Filmstrip({
               >
                 <div style={{ position: 'relative', width: 9, height: 8 }}>
                   <div style={{ position: 'absolute', left: 0, top: 0, width: 6, height: 6, border: '1.1px solid #dc8add', borderRadius: 1 }} />
-                  <div style={{ position: 'absolute', left: 3, top: 2, width: 6, height: 6, border: '1.1px solid #dc8add', borderRadius: 1, background: '#222' }} />
+                  <div style={{ position: 'absolute', left: 3, top: 2, width: 6, height: 6, border: '1.1px solid #dc8add', borderRadius: 1, background: 'var(--surface-sunken)' }} />
                 </div>
               </div>
             )}

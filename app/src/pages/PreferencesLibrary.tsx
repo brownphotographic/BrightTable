@@ -144,7 +144,7 @@ export default function PreferencesLibrary() {
   if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
 
   const active = effUrl(lib);
-  const dotColor = status.kind === 'ok' ? 'var(--ok)' : status.kind === 'error' ? 'var(--danger)' : 'rgba(255,255,255,0.3)';
+  const dotColor = status.kind === 'ok' ? 'var(--ok)' : status.kind === 'error' ? 'var(--danger)' : 'var(--text-dimmer)';
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '24px 0' }}>
@@ -193,7 +193,7 @@ export default function PreferencesLibrary() {
 
       <div style={activeBar}>
         <span style={activeTag}>ACTIVE</span>
-        <span style={{ font: '500 12px ui-monospace,monospace', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <span style={{ font: '500 12px ui-monospace,monospace', color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {active.url || '(not set)'}
         </span>
         <div style={{ flex: 1 }} />
@@ -360,7 +360,7 @@ export default function PreferencesLibrary() {
 function Row({ label, children, wide }: { label: string; children: ReactNode; wide?: boolean }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', padding: '11px 16px', gap: 14 }}>
-      <span style={{ fontSize: 13.5, width: wide ? 150 : 120, flexShrink: 0, color: 'rgba(255,255,255,0.85)' }}>{label}</span>
+      <span style={{ fontSize: 13.5, width: wide ? 150 : 120, flexShrink: 0, color: 'var(--text-dim)' }}>{label}</span>
       <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>{children}</div>
     </div>
   );
@@ -390,8 +390,8 @@ function Segmented<T extends string>({
             borderRadius: 7,
             fontSize: 12.5,
             cursor: 'default',
-            background: value === o.value ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
-            color: value === o.value ? '#fff' : 'rgba(255,255,255,0.7)',
+            background: value === o.value ? 'var(--accent)' : 'var(--overlay-weak)',
+            color: value === o.value ? '#fff' : 'var(--text-dim)',
           }}
         >
           {o.label}
@@ -413,10 +413,10 @@ const inputRight: CSSProperties = {
   minWidth: 0,
   height: 32,
   padding: '0 10px',
-  background: 'rgba(0,0,0,0.3)',
-  border: '1px solid rgba(255,255,255,0.12)',
+  background: 'var(--surface-sunken)',
+  border: '1px solid var(--border-strong)',
   borderRadius: 7,
-  color: '#fff',
+  color: 'var(--text)',
   font: '500 12.5px ui-monospace,monospace',
   textAlign: 'left',
 };
@@ -434,7 +434,7 @@ const activeBar: CSSProperties = {
 
 const activeTag: CSSProperties = {
   font: '600 10px ui-monospace,monospace',
-  color: '#90bdf4',
+  color: 'var(--accent-text)',
   background: 'rgba(53,132,228,0.18)',
   padding: '2px 7px',
   borderRadius: 5,
@@ -453,8 +453,8 @@ const btnBase: CSSProperties = {
 const btnSecondary: CSSProperties = {
   ...btnBase,
   border: '1px solid var(--border-strong)',
-  background: 'rgba(255,255,255,0.06)',
-  color: '#fff',
+  background: 'var(--overlay-weak)',
+  color: 'var(--text)',
 };
 
 const btnPrimary: CSSProperties = {

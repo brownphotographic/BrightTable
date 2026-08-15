@@ -46,8 +46,8 @@ export default function ContextMenu({
         left: x,
         top: y,
         minWidth: 210,
-        background: '#383838',
-        border: '1px solid rgba(255,255,255,0.10)',
+        background: 'var(--panel)',
+        border: '1px solid var(--border)',
         borderRadius: 11,
         boxShadow: '0 12px 34px rgba(0,0,0,0.6)',
         padding: 6,
@@ -70,7 +70,7 @@ export default function ContextMenu({
             borderRadius: 7,
             fontSize: 13.5,
             cursor: 'default',
-            color: item.disabled ? 'rgba(255,255,255,0.32)' : '#fff',
+            color: item.disabled ? 'var(--text-dimmer)' : 'var(--text)',
             pointerEvents: item.disabled ? 'none' : 'auto',
           }}
           onMouseEnter={(e) => {

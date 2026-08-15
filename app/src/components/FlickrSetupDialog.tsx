@@ -103,10 +103,10 @@ export default function FlickrSetupDialog({ flickr, onClose, onConnected }: { fl
         style={{
           width: 440,
           maxWidth: '92%',
-          background: '#242424',
+          background: 'var(--dialog-bg)',
           borderRadius: 14,
           boxShadow: '0 24px 70px rgba(0,0,0,0.7)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          border: '1px solid var(--border)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -120,7 +120,7 @@ export default function FlickrSetupDialog({ flickr, onClose, onConnected }: { fl
             alignItems: 'center',
             gap: 10,
             padding: '0 10px 0 18px',
-            background: '#303030',
+            background: 'var(--panel)',
             borderBottom: '1px solid rgba(0,0,0,0.4)',
           }}
         >
@@ -146,14 +146,14 @@ export default function FlickrSetupDialog({ flickr, onClose, onConnected }: { fl
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: i <= step ? '#fff' : 'rgba(255,255,255,0.4)',
-                    background: i <= step ? '#3584e4' : 'rgba(255,255,255,0.08)',
+                    color: i <= step ? '#fff' : 'var(--text-dimmer)',
+                    background: i <= step ? '#3584e4' : 'var(--overlay-medium)',
                   }}
                 >
                   {i < step ? '✓' : i + 1}
                 </div>
-                <span style={{ fontSize: 10.5, color: i <= step ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.4)', flexShrink: 0 }}>{label}</span>
-                {i < STEP_LABELS.length - 1 && <div style={{ flex: 1, height: 1, background: i < step ? '#3584e4' : 'rgba(255,255,255,0.1)' }} />}
+                <span style={{ fontSize: 10.5, color: i <= step ? 'var(--text-dim)' : 'var(--text-dimmer)', flexShrink: 0 }}>{label}</span>
+                {i < STEP_LABELS.length - 1 && <div style={{ flex: 1, height: 1, background: i < step ? '#3584e4' : 'var(--overlay-medium)' }} />}
               </div>
             ))}
           </div>
@@ -180,9 +180,9 @@ export default function FlickrSetupDialog({ flickr, onClose, onConnected }: { fl
                 Authorize BrightTable to access your Flickr account. This opens Flickr in your browser; after you approve, Flickr shows a short verification code to
                 paste on the next step.
               </p>
-              <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, padding: '10px 14px', marginBottom: 16 }}>
-                <div style={{ fontSize: 10.5, letterSpacing: '.05em', color: 'rgba(255,255,255,0.45)', marginBottom: 6 }}>PERMISSIONS REQUESTED</div>
-                <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.85)', lineHeight: 1.7 }}>
+              <div style={{ background: 'var(--overlay-weak)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 14px', marginBottom: 16 }}>
+                <div style={{ fontSize: 10.5, letterSpacing: '.05em', color: 'var(--text-dimmer)', marginBottom: 6 }}>PERMISSIONS REQUESTED</div>
+                <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.7 }}>
                   Read your photos &amp; sets
                   <br />
                   Upload &amp; replace photos (write)
@@ -208,10 +208,10 @@ export default function FlickrSetupDialog({ flickr, onClose, onConnected }: { fl
                   textAlign: 'center',
                   letterSpacing: '.15em',
                   font: '600 16px ui-monospace,monospace',
-                  background: 'rgba(0,0,0,0.3)',
-                  border: '1px solid rgba(255,255,255,0.1)',
+                  background: 'var(--surface-sunken)',
+                  border: '1px solid var(--border)',
                   borderRadius: 9,
-                  color: '#fff',
+                  color: 'var(--text)',
                 }}
               />
             </>
@@ -236,7 +236,7 @@ export default function FlickrSetupDialog({ flickr, onClose, onConnected }: { fl
                 ✓
               </div>
               <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>Flickr connected</div>
-              <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)', lineHeight: 1.6 }}>
+              <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.6 }}>
                 BrightTable can now upload to {username || 'your Flickr account'}. Choose <b>Share to Flickr…</b> from the right-click menu to publish photos.
               </div>
             </div>
@@ -284,7 +284,7 @@ export default function FlickrSetupDialog({ flickr, onClose, onConnected }: { fl
 }
 
 function FieldLabel({ children }: { children: string }) {
-  return <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.6)', marginBottom: 5 }}>{children}</div>;
+  return <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginBottom: 5 }}>{children}</div>;
 }
 
 function TextInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
@@ -297,14 +297,14 @@ function TextInput({ value, onChange, placeholder }: { value: string; onChange: 
         width: '100%',
         height: 34,
         padding: '0 12px',
-        background: 'rgba(0,0,0,0.3)',
-        border: '1px solid rgba(255,255,255,0.1)',
+        background: 'var(--surface-sunken)',
+        border: '1px solid var(--border)',
         borderRadius: 9,
-        color: '#fff',
+        color: 'var(--text)',
         font: '500 12.5px ui-monospace,monospace',
       }}
     />
   );
 }
 
-const helperStyle: CSSProperties = { fontSize: 12.5, color: 'rgba(255,255,255,0.6)', lineHeight: 1.6, marginBottom: 16 };
+const helperStyle: CSSProperties = { fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.6, marginBottom: 16 };

@@ -113,8 +113,8 @@ export default function PreferencesApplications() {
       <div style={panel}>
         <div style={row}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.85)' }}>exiftool path</div>
-            <div style={{ fontSize: 12, marginTop: 6, color: exiftoolConfigured ? '#fff' : 'var(--text-dimmer)' }}>
+            <div style={{ fontSize: 13.5, color: 'var(--text-dim)' }}>exiftool path</div>
+            <div style={{ fontSize: 12, marginTop: 6, color: exiftoolConfigured ? 'var(--text)' : 'var(--text-dimmer)' }}>
               {exiftoolConfigured ? applications.exiftoolPath : 'Not configured'}
             </div>
           </div>
@@ -136,9 +136,9 @@ export default function PreferencesApplications() {
       <div style={panel}>
         <div style={row}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.85)' }}>External Editor</div>
+            <div style={{ fontSize: 13.5, color: 'var(--text-dim)' }}>External Editor</div>
             <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)', marginTop: 2 }}>Used for all other image formats.</div>
-            <div style={{ fontSize: 12, marginTop: 6, color: applications.externalEditor ? '#fff' : 'var(--text-dimmer)' }}>
+            <div style={{ fontSize: 12, marginTop: 6, color: applications.externalEditor ? 'var(--text)' : 'var(--text-dimmer)' }}>
               {applications.externalEditor ? applications.externalEditor.name : 'No application chosen'}
             </div>
             {applications.externalEditor && <div style={execText}>{applications.externalEditor.exec}</div>}
@@ -162,8 +162,8 @@ export default function PreferencesApplications() {
 
       <div style={{ ...panel, marginBottom: 16 }}>
         <div style={{ ...row, gap: 10, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.85)', marginRight: 4 }}>Active converter</div>
-          <div style={{ display: 'flex', gap: 3, background: 'rgba(0,0,0,0.25)', padding: 3, borderRadius: 10 }}>
+          <div style={{ fontSize: 13.5, color: 'var(--text-dim)', marginRight: 4 }}>Active converter</div>
+          <div style={{ display: 'flex', gap: 3, background: 'var(--surface-sunken)', padding: 3, borderRadius: 10 }}>
             {(['none', ...TOOL_ORDER] as const).map((opt) => {
               const active = opt === 'none' ? applications.activeRawConverter === null : applications.activeRawConverter === opt;
               return (
@@ -176,7 +176,7 @@ export default function PreferencesApplications() {
                     fontSize: 12.5,
                     cursor: 'default',
                     background: active ? '#3584e4' : 'transparent',
-                    color: active ? '#fff' : 'rgba(255,255,255,0.65)',
+                    color: active ? '#fff' : 'var(--text-dim)',
                   }}
                 >
                   {opt === 'none' ? 'None' : TOOL_META[opt].label}
@@ -197,7 +197,7 @@ export default function PreferencesApplications() {
                 href={TOOL_META[tool].docsUrl}
                 target="_blank"
                 rel="noreferrer"
-                style={{ fontSize: 13, fontWeight: 600, color: isActive ? '#fff' : 'rgba(255,255,255,0.85)' }}
+                style={{ fontSize: 13, fontWeight: 600, color: isActive ? 'var(--text)' : 'var(--text-dim)' }}
               >
                 {TOOL_META[tool].label}
               </a>
@@ -213,8 +213,8 @@ export default function PreferencesApplications() {
             <div style={{ ...panel, marginBottom: 10 }}>
               <div style={row}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.85)' }}>Desktop App</div>
-                  <div style={{ fontSize: 12, marginTop: 6, color: config.app ? '#fff' : 'var(--text-dimmer)' }}>
+                  <div style={{ fontSize: 13.5, color: 'var(--text-dim)' }}>Desktop App</div>
+                  <div style={{ fontSize: 12, marginTop: 6, color: config.app ? 'var(--text)' : 'var(--text-dimmer)' }}>
                     {config.app ? config.app.name : 'No application chosen'}
                   </div>
                   {config.app && <div style={execText}>{config.app.exec}</div>}
@@ -235,8 +235,8 @@ export default function PreferencesApplications() {
             <div style={panel}>
               <div style={row}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.85)' }}>{TOOL_META[tool].binary} path</div>
-                  <div style={{ fontSize: 12, marginTop: 6, color: config.cliPath ? '#fff' : 'var(--text-dimmer)' }}>
+                  <div style={{ fontSize: 13.5, color: 'var(--text-dim)' }}>{TOOL_META[tool].binary} path</div>
+                  <div style={{ fontSize: 12, marginTop: 6, color: config.cliPath ? 'var(--text)' : 'var(--text-dimmer)' }}>
                     {config.cliPath || 'Not configured'}
                   </div>
                 </div>
@@ -365,10 +365,10 @@ const argsInput: CSSProperties = {
   minWidth: 0,
   height: 26,
   padding: '0 8px',
-  background: 'rgba(0,0,0,0.3)',
-  border: '1px solid rgba(255,255,255,0.12)',
+  background: 'var(--surface-sunken)',
+  border: '1px solid var(--border-strong)',
   borderRadius: 6,
-  color: '#fff',
+  color: 'var(--text)',
   font: '500 11px ui-monospace,monospace',
 };
 
@@ -379,7 +379,7 @@ const btnSecondary: CSSProperties = {
   fontSize: 12.5,
   cursor: 'default',
   border: '1px solid var(--border-strong)',
-  background: 'rgba(255,255,255,0.06)',
-  color: '#fff',
+  background: 'var(--overlay-weak)',
+  color: 'var(--text)',
   flexShrink: 0,
 };

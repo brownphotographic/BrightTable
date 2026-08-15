@@ -9,13 +9,13 @@ type Metric = 'ram' | 'cpu';
 // the same UI rather than a bolted-on widget.
 const RAM_COLOR = '#e01b24';
 const CPU_COLOR = '#62a0ea';
-const DIM_TEXT = 'rgba(255,255,255,0.4)';
+const DIM_TEXT = 'var(--text-dimmer)';
 
 const SLOT_COUNT = 60; // 1 sample/s * 60s = the chart's fixed 1-minute extent
 const CHART_HEIGHT = 30;
 
 function valueOf(s: ResourceSample, metric: Metric): number {
-  return metric === 'ram' ? s.ramPercent : s.cpuPercent;
+  return metric === 'ram' ? s.systemRamPercent : s.cpuPercent;
 }
 
 function Tab({
@@ -47,14 +47,14 @@ function Tab({
           height: 7,
           borderRadius: '50%',
           flexShrink: 0,
-          background: active ? color : 'rgba(255,255,255,0.25)',
+          background: active ? color : 'var(--text-dimmer)',
         }}
       />
       <span
         style={{
           fontSize: 11,
           fontVariantNumeric: 'tabular-nums',
-          color: active ? 'rgba(255,255,255,0.85)' : DIM_TEXT,
+          color: active ? 'var(--text-dim)' : DIM_TEXT,
         }}
       >
         {label} {value != null ? `${Math.round(value)}%` : '—'}
@@ -69,7 +69,7 @@ function Tab({
 // plotted; both are sampled every tick regardless, so switching never loses
 // history.
 export default function ResourceChart() {
-  const { samples, latest, rssBytes } = useResourceUsage();
+  const { samples, latest, appRssBytes } = useResourceUsage();
   const [metric, setMetric] = useState<Metric>('ram');
 
   const toggle = () => setMetric((m) => (m === 'ram' ? 'cpu' : 'ram'));
@@ -83,15 +83,22 @@ export default function ResourceChart() {
     ...trailing,
   ];
 
+  // The RAM tab/chart plots systemRamPercent (accurate, machine-wide
+  // pressure - see commands::get_resource_usage's doc comment) rather than
+  // this app's own share of it: summing RSS across BrightTable + its
+  // webkit2gtk child processes double-counts memory they share, so an
+  // app-specific % could read like "300%" despite being a real number.
+  // appRssBytes is still shown here, just as a byte count instead of a %,
+  // for exactly that reason.
   const title =
-    rssBytes != null
-      ? `RAM: ${formatSize(rssBytes)} (${latest ? Math.round(latest.ramPercent) : 0}% of system) · CPU: ${latest ? Math.round(latest.cpuPercent) : 0}% of system`
+    appRssBytes != null
+      ? `System RAM: ${latest ? Math.round(latest.systemRamPercent) : 0}% used · BrightTable (approx.): ${formatSize(appRssBytes)} · CPU: ${latest ? Math.round(latest.cpuPercent) : 0}% of system`
       : undefined;
 
   return (
     <div style={{ padding: '6px 6px 8px' }} title={title}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 5 }}>
-        <Tab label="RAM" color={RAM_COLOR} active={metric === 'ram'} value={latest?.ramPercent ?? null} onClick={() => setMetric('ram')} />
+        <Tab label="RAM" color={RAM_COLOR} active={metric === 'ram'} value={latest?.systemRamPercent ?? null} onClick={() => setMetric('ram')} />
         <Tab label="CPU" color={CPU_COLOR} active={metric === 'cpu'} value={latest?.cpuPercent ?? null} onClick={() => setMetric('cpu')} />
       </div>
       <div
@@ -113,7 +120,7 @@ export default function ResourceChart() {
             right: 0,
             top: CHART_HEIGHT / 2,
             height: 1,
-            background: 'rgba(255,255,255,0.06)',
+            background: 'var(--overlay-weak)',
           }}
         />
         {slots.map((s, i) => {

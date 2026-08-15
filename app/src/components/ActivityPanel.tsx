@@ -40,7 +40,7 @@ function RowThumb({ assetId }: { assetId: string }) {
         height: 40,
         borderRadius: 6,
         flexShrink: 0,
-        background: '#333',
+        background: 'var(--surface-sunken)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -55,7 +55,7 @@ function RowThumb({ assetId }: { assetId: string }) {
       src={thumbnailSrc(assetId)}
       alt=""
       onError={() => setFailed(true)}
-      style={{ width: 40, height: 40, borderRadius: 6, objectFit: 'cover', flexShrink: 0, background: '#333' }}
+      style={{ width: 40, height: 40, borderRadius: 6, objectFit: 'cover', flexShrink: 0, background: 'var(--surface-sunken)' }}
     />
   );
 }
@@ -71,9 +71,9 @@ function kindLabel(job: EditJob): string {
 function statusPill(status: EditJob['status']): { label: string; color: string; bg: string } {
   switch (status) {
     case 'pending':
-      return { label: 'Queued', color: 'rgba(255,255,255,0.6)', bg: 'rgba(255,255,255,0.08)' };
+      return { label: 'Queued', color: 'var(--text-dim)', bg: 'var(--overlay-medium)' };
     case 'writing':
-      return { label: 'Syncing…', color: '#9cc2f0', bg: 'rgba(53,132,228,0.22)' };
+      return { label: 'Syncing…', color: 'var(--accent-text)', bg: 'rgba(53,132,228,0.22)' };
     case 'done':
       return { label: 'Done', color: '#8ce0ae', bg: 'rgba(46,194,126,0.18)' };
     case 'failed':
@@ -84,9 +84,9 @@ function statusPill(status: EditJob['status']): { label: string; color: string; 
 function importStatusPill(status: ImportJobStatus): { label: string; color: string; bg: string } {
   switch (status) {
     case 'pending':
-      return { label: 'Queued', color: 'rgba(255,255,255,0.6)', bg: 'rgba(255,255,255,0.08)' };
+      return { label: 'Queued', color: 'var(--text-dim)', bg: 'var(--overlay-medium)' };
     case 'copying':
-      return { label: 'Copying…', color: '#9cc2f0', bg: 'rgba(53,132,228,0.22)' };
+      return { label: 'Copying…', color: 'var(--accent-text)', bg: 'rgba(53,132,228,0.22)' };
     case 'done':
       return { label: 'Done', color: '#8ce0ae', bg: 'rgba(46,194,126,0.18)' };
     case 'failed':
@@ -97,9 +97,9 @@ function importStatusPill(status: ImportJobStatus): { label: string; color: stri
 function processingStatusPill(status: ProcessingJobStatus): { label: string; color: string; bg: string } {
   switch (status) {
     case 'pending':
-      return { label: 'Queued', color: 'rgba(255,255,255,0.6)', bg: 'rgba(255,255,255,0.08)' };
+      return { label: 'Queued', color: 'var(--text-dim)', bg: 'var(--overlay-medium)' };
     case 'copying':
-      return { label: 'Copying…', color: '#9cc2f0', bg: 'rgba(53,132,228,0.22)' };
+      return { label: 'Copying…', color: 'var(--accent-text)', bg: 'rgba(53,132,228,0.22)' };
     case 'done':
       return { label: 'Done', color: '#8ce0ae', bg: 'rgba(46,194,126,0.18)' };
     case 'failed':
@@ -110,9 +110,9 @@ function processingStatusPill(status: ProcessingJobStatus): { label: string; col
 function artStatusPill(status: ArtJobStatus): { label: string; color: string; bg: string } {
   switch (status) {
     case 'pending':
-      return { label: 'Queued', color: 'rgba(255,255,255,0.6)', bg: 'rgba(255,255,255,0.08)' };
+      return { label: 'Queued', color: 'var(--text-dim)', bg: 'var(--overlay-medium)' };
     case 'running':
-      return { label: 'Exporting…', color: '#9cc2f0', bg: 'rgba(53,132,228,0.22)' };
+      return { label: 'Exporting…', color: 'var(--accent-text)', bg: 'rgba(53,132,228,0.22)' };
     case 'done':
       return { label: 'Done', color: '#8ce0ae', bg: 'rgba(46,194,126,0.18)' };
     case 'failed':
@@ -148,9 +148,9 @@ function isCancellableArtJob(job: ArtJob): boolean {
 function exportStatusPill(status: ExportJobStatus, target: ExportTargetKind): { label: string; color: string; bg: string } {
   switch (status) {
     case 'pending':
-      return { label: 'Queued', color: 'rgba(255,255,255,0.6)', bg: 'rgba(255,255,255,0.08)' };
+      return { label: 'Queued', color: 'var(--text-dim)', bg: 'var(--overlay-medium)' };
     case 'running':
-      return { label: target === 'flickr' ? 'Uploading…' : 'Writing…', color: '#9cc2f0', bg: 'rgba(53,132,228,0.22)' };
+      return { label: target === 'flickr' ? 'Uploading…' : 'Writing…', color: 'var(--accent-text)', bg: 'rgba(53,132,228,0.22)' };
     case 'done':
       return { label: 'Done', color: '#8ce0ae', bg: 'rgba(46,194,126,0.18)' };
     case 'failed':
@@ -259,13 +259,13 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
           width: 460,
           maxWidth: '90%',
           maxHeight: '78vh',
-          background: '#242424',
+          background: 'var(--dialog-bg)',
           borderRadius: 14,
           boxShadow: '0 24px 70px rgba(0,0,0,0.65)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          border: '1px solid var(--border)',
           display: 'flex',
           flexDirection: 'column',
-          color: '#fff',
+          color: 'var(--text)',
         }}
       >
         <div
@@ -273,7 +273,7 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
             display: 'flex',
             alignItems: 'center',
             padding: '16px 18px',
-            borderBottom: '1px solid rgba(255,255,255,0.08)',
+            borderBottom: '1px solid var(--border)',
             flexShrink: 0,
           }}
         >
@@ -285,7 +285,7 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
               width: 26,
               height: 26,
               borderRadius: '50%',
-              background: 'rgba(255,255,255,0.08)',
+              background: 'var(--overlay-medium)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -293,8 +293,8 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
               position: 'relative',
             }}
           >
-            <div style={{ position: 'absolute', width: 10, height: 1.6, background: '#fff', transform: 'rotate(45deg)', borderRadius: 1 }} />
-            <div style={{ position: 'absolute', width: 10, height: 1.6, background: '#fff', transform: 'rotate(-45deg)', borderRadius: 1 }} />
+            <div style={{ position: 'absolute', width: 10, height: 1.6, background: 'var(--text)', transform: 'rotate(45deg)', borderRadius: 1 }} />
+            <div style={{ position: 'absolute', width: 10, height: 1.6, background: 'var(--text)', transform: 'rotate(-45deg)', borderRadius: 1 }} />
           </div>
         </div>
 
@@ -335,12 +335,12 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
                       height: 40,
                       borderRadius: 6,
                       flexShrink: 0,
-                      background: '#333',
+                      background: 'var(--surface-sunken)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       font: '700 9px ui-monospace,monospace',
-                      color: 'rgba(255,255,255,0.6)',
+                      color: 'var(--text-dim)',
                     }}
                   >
                     {ext}
@@ -381,7 +381,7 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
                   <RowThumb assetId={job.targetAssetId} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={rowTitle}>Paste Image Processing</div>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 1 }}>{RAW_CONVERTER_LABEL[job.tool]}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-dimmer)', marginTop: 1 }}>{RAW_CONVERTER_LABEL[job.tool]}</div>
                     {job.error && <div style={rowError}>{job.error}</div>}
                   </div>
                   <StatusPill pill={pill} />
@@ -396,7 +396,7 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
           ) : (
             <>
               <div style={{ display: 'flex', alignItems: 'center', padding: '0 8px 6px', gap: 10 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'rgba(255,255,255,0.6)', cursor: 'default' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text-dim)', cursor: 'default' }}>
                   <input
                     type="checkbox"
                     checked={cancellableArtJobIds.length > 0 && selectedArtJobIds.size === cancellableArtJobIds.length}
@@ -430,15 +430,15 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
                 const cancelled = job.status === 'failed' && isCancelledArtFailure(job.error);
                 const cancelling = (job.status === 'pending' || job.status === 'running') && job.cancelRequested;
                 const stalled = job.status === 'running' && !cancelling && stalledJobIds.has(job.jobId);
-                const neutralPill = { label: '', color: 'rgba(255,255,255,0.6)', bg: 'rgba(255,255,255,0.08)' };
+                const neutralPill = { label: '', color: 'var(--text-dim)', bg: 'var(--overlay-medium)' };
                 const pill = permanent
-                  ? { label: "Won't Export", color: '#ffd699', bg: 'rgba(255,169,15,0.18)' }
+                  ? { label: "Won't Export", color: 'var(--warn)', bg: 'rgba(255,169,15,0.18)' }
                   : cancelled
                     ? { ...neutralPill, label: 'Cancelled' }
                     : cancelling
                       ? { ...neutralPill, label: 'Cancelling…' }
                       : stalled
-                        ? { label: 'Stalled?', color: '#ffd699', bg: 'rgba(255,169,15,0.18)' }
+                        ? { label: 'Stalled?', color: 'var(--warn)', bg: 'rgba(255,169,15,0.18)' }
                         : artStatusPill(job.status);
                 // Real percentage (parsed backend-side from ART-cli's own
                 // --progress output), not just a "Exporting…" pill that looks
@@ -463,7 +463,7 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
                     <RowThumb assetId={job.assetId} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={rowTitle}>{job.exportFileName ?? 'RAW Roundtrip'}</div>
-                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 1 }}>{RAW_CONVERTER_LABEL[job.tool]}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-dimmer)', marginTop: 1 }}>{RAW_CONVERTER_LABEL[job.tool]}</div>
                       {job.error && !cancelled && <div style={permanent ? rowWarning : rowError}>{job.error}</div>}
                       {!job.error && stalled && (
                         <div style={rowWarning}>
@@ -486,7 +486,7 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
             sortedExports.map((job) => {
               const cancelled = job.status === 'failed' && isCancelledExportFailure(job.error);
               const cancelling = (job.status === 'pending' || job.status === 'running') && job.cancelRequested;
-              const neutralPill = { label: '', color: 'rgba(255,255,255,0.6)', bg: 'rgba(255,255,255,0.08)' };
+              const neutralPill = { label: '', color: 'var(--text-dim)', bg: 'var(--overlay-medium)' };
               const pill = cancelled
                 ? { ...neutralPill, label: 'Cancelled' }
                 : cancelling
@@ -498,7 +498,7 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
                   <RowThumb assetId={job.assetId} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={rowTitle}>{job.exportFileName ?? (job.target === 'flickr' ? 'Share to Flickr' : 'Export to Folder')}</div>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 1 }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-dimmer)', marginTop: 1 }}>
                       {job.target === 'flickr' ? 'Flickr' : 'Folder'}
                     </div>
                     {job.error && !cancelled && <div style={rowError}>{job.error}</div>}
@@ -512,8 +512,8 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
                         padding: '0 8px',
                         borderRadius: 6,
                         border: 'none',
-                        background: 'rgba(255,255,255,0.08)',
-                        color: 'rgba(255,255,255,0.7)',
+                        background: 'var(--overlay-medium)',
+                        color: 'var(--text-dim)',
                         fontSize: 10.5,
                         cursor: 'default',
                       }}
@@ -528,7 +528,7 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
-        <div style={{ padding: '12px 18px', borderTop: '1px solid rgba(255,255,255,0.08)', flexShrink: 0, display: 'flex', justifyContent: 'flex-end' }}>
+        <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border)', flexShrink: 0, display: 'flex', justifyContent: 'flex-end' }}>
           <button
             onClick={clearAllCompleted}
             disabled={!hasCompleted}
@@ -537,8 +537,8 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
               padding: '0 14px',
               borderRadius: 8,
               border: 'none',
-              background: 'rgba(255,255,255,0.08)',
-              color: '#fff',
+              background: 'var(--overlay-medium)',
+              color: 'var(--text)',
               fontSize: 12.5,
               cursor: 'default',
               opacity: hasCompleted ? 1 : 0.4,
@@ -558,7 +558,7 @@ function SectionLabel({ children }: { children: string }) {
       style={{
         fontSize: 11,
         fontWeight: 700,
-        color: 'rgba(255,255,255,0.4)',
+        color: 'var(--text-dimmer)',
         textTransform: 'uppercase',
         letterSpacing: '.04em',
         padding: '10px 8px 6px',
@@ -570,7 +570,7 @@ function SectionLabel({ children }: { children: string }) {
 }
 
 function EmptyRow({ children }: { children: string }) {
-  return <div style={{ padding: '10px 8px 18px', color: 'rgba(255,255,255,0.4)', fontSize: 12.5 }}>{children}</div>;
+  return <div style={{ padding: '10px 8px 18px', color: 'var(--text-dimmer)', fontSize: 12.5 }}>{children}</div>;
 }
 
 function StatusPill({ pill }: { pill: { label: string; color: string; bg: string } }) {
@@ -594,5 +594,5 @@ function StatusPill({ pill }: { pill: { label: string; color: string; bg: string
 const rowStyle = { display: 'flex', alignItems: 'center', gap: 11, padding: '9px 8px', borderRadius: 9 } as const;
 const rowTitle = { fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } as const;
 const rowError = { fontSize: 11, color: '#ff8080', marginTop: 2, lineHeight: 1.4 } as const;
-const rowWarning = { fontSize: 11, color: '#ffd699', marginTop: 2, lineHeight: 1.4 } as const;
-const rowProgress = { fontSize: 11, color: '#9cc2f0', marginTop: 2, font: '500 11px ui-monospace,monospace' } as const;
+const rowWarning = { fontSize: 11, color: 'var(--warn)', marginTop: 2, lineHeight: 1.4 } as const;
+const rowProgress = { fontSize: 11, color: 'var(--accent-text)', marginTop: 2, font: '500 11px ui-monospace,monospace' } as const;

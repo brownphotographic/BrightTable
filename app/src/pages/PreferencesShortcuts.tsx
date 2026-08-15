@@ -38,7 +38,7 @@ export default function PreferencesShortcuts() {
           return (
             <div key={def.id}>
               <div style={row}>
-                <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.85)' }}>{def.label}</span>
+                <span style={{ fontSize: 13.5, color: 'var(--text-dim)' }}>{def.label}</span>
                 <div
                   onClick={() => beginCapture(def.id)}
                   style={{
@@ -51,9 +51,9 @@ export default function PreferencesShortcuts() {
                     borderRadius: 8,
                     font: '600 12px ui-monospace,monospace',
                     cursor: 'default',
-                    color: capturing ? '#fff' : '#dfe6ee',
-                    background: capturing ? 'rgba(53,132,228,0.28)' : 'rgba(0,0,0,0.3)',
-                    boxShadow: `inset 0 0 0 1px ${capturing ? 'var(--accent)' : 'rgba(255,255,255,0.12)'}`,
+                    color: capturing ? 'var(--accent-text)' : 'var(--text)',
+                    background: capturing ? 'rgba(53,132,228,0.28)' : 'var(--surface-sunken)',
+                    boxShadow: `inset 0 0 0 1px ${capturing ? 'var(--accent)' : 'var(--border-strong)'}`,
                   }}
                 >
                   {capturing ? 'Press a key…' : prettyShortcut(shortcuts[def.id]) || '—'}
@@ -94,8 +94,8 @@ const resetBtn: CSSProperties = {
   padding: '0 14px',
   border: '1px solid var(--border-strong)',
   borderRadius: 8,
-  background: 'rgba(255,255,255,0.06)',
-  color: '#fff',
+  background: 'var(--overlay-weak)',
+  color: 'var(--text)',
   fontSize: 12.5,
   cursor: 'default',
 };

@@ -472,7 +472,7 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
                   borderRadius: '50%',
                   background: c,
                   cursor: 'default',
-                  boxShadow: newTagColor === c ? '0 0 0 2px #1c1c1c, 0 0 0 4px rgba(255,255,255,0.7)' : '0 0 0 1px rgba(255,255,255,0.15)',
+                  boxShadow: newTagColor === c ? '0 0 0 2px var(--canvas), 0 0 0 4px var(--border-strong)' : '0 0 0 1px var(--border-strong)',
                 }}
               />
             ))}
@@ -502,7 +502,7 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
           >
             <span style={{ fontSize: 12.5, fontWeight: 600 }}>{selectedTagIds.size} selected</span>
             <div style={{ flex: 1 }} />
-            <div onClick={clearTagSelection} style={{ fontSize: 12.5, cursor: 'default', color: 'rgba(255,255,255,0.7)' }}>
+            <div onClick={clearTagSelection} style={{ fontSize: 12.5, cursor: 'default', color: 'var(--text-dim)' }}>
               Clear
             </div>
             <div onClick={() => setConfirmDeleteSelectedTags(true)} style={{ fontSize: 12.5, cursor: 'default', color: '#ff8080' }}>
@@ -585,10 +585,10 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
         <div onClick={() => setOpenTagId(null)} style={{ cursor: 'default', color: 'var(--accent)', fontSize: 13 }}>
           ← Tags
         </div>
-        <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.15)' }} />
-        <div style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: tag.color ?? 'rgba(255,255,255,0.3)' }} />
+        <div style={{ width: 1, height: 18, background: 'var(--overlay-strong)' }} />
+        <div style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: tag.color ?? 'var(--text-dimmer)' }} />
         <span style={{ fontSize: 14, fontWeight: 700 }}>{tag.name}</span>
-        <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)' }}>
+        <span style={{ fontSize: 12.5, color: 'var(--text-dimmer)' }}>
           {tag.assets.length} photo{tag.assets.length === 1 ? '' : 's'}
         </span>
         <div style={{ flex: 1 }} />
@@ -748,7 +748,7 @@ function TagPill({
           height: 16,
           borderRadius: 4,
           flexShrink: 0,
-          border: selected ? 'none' : '1.5px solid rgba(255,255,255,0.3)',
+          border: selected ? 'none' : '1.5px solid var(--border-strong)',
           background: selected ? 'var(--accent)' : 'transparent',
           display: 'flex',
           alignItems: 'center',
@@ -759,7 +759,7 @@ function TagPill({
       >
         {selected && '✓'}
       </div>
-      <div style={{ width: 12, height: 12, borderRadius: '50%', flexShrink: 0, background: tag.color ?? 'rgba(255,255,255,0.3)' }} />
+      <div style={{ width: 12, height: 12, borderRadius: '50%', flexShrink: 0, background: tag.color ?? 'var(--text-dimmer)' }} />
       <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {tag.name}
       </div>
@@ -781,7 +781,7 @@ function TagPill({
 
 function BarTextButton({ onClick, danger, children }: { onClick: () => void; danger?: boolean; children: React.ReactNode }) {
   return (
-    <div onClick={onClick} style={{ fontSize: 12.5, cursor: 'default', color: danger ? '#ff8080' : 'rgba(255,255,255,0.75)', padding: '0 6px' }}>
+    <div onClick={onClick} style={{ fontSize: 12.5, cursor: 'default', color: danger ? '#ff8080' : 'var(--text-dim)', padding: '0 6px' }}>
       {children}
     </div>
   );
@@ -804,10 +804,10 @@ const inputStyle: CSSProperties = {
   flex: 1,
   height: 34,
   padding: '0 12px',
-  background: 'rgba(0,0,0,0.3)',
-  border: '1px solid rgba(255,255,255,0.1)',
+  background: 'var(--surface-sunken)',
+  border: '1px solid var(--border)',
   borderRadius: 9,
-  color: '#fff',
+  color: 'var(--text)',
   fontSize: 13,
 };
 

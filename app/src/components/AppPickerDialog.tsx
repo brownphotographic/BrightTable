@@ -94,7 +94,7 @@ export default function AppPickerDialog({
               <div key={`${app.exec}-${i}`} onClick={() => onPick(app)} style={appRow}>
                 <div style={{ ...avatar, background: KIND_COLOR[app.kind] }}>{app.name.charAt(0).toUpperCase()}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, color: '#fff' }}>{app.name}</div>
+                  <div style={{ fontSize: 13.5, color: 'var(--text)' }}>{app.name}</div>
                   <div style={execText}>{app.exec}</div>
                 </div>
                 <span style={{ ...kindBadge, background: `${KIND_COLOR[app.kind]}26`, color: KIND_COLOR[app.kind] }}>
@@ -106,9 +106,9 @@ export default function AppPickerDialog({
         </div>
 
         <div onClick={pickOther} style={{ ...appRow, borderTop: '1px solid var(--border)' }}>
-          <div style={{ ...avatar, background: 'rgba(255,255,255,0.1)' }}>+</div>
+          <div style={{ ...avatar, background: 'var(--overlay-medium)' }}>+</div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13.5, color: '#fff' }}>Other application…</div>
+            <div style={{ fontSize: 13.5, color: 'var(--text)' }}>Other application…</div>
             <div style={execText}>Browse the filesystem for an executable or AppImage</div>
           </div>
         </div>
@@ -133,14 +133,14 @@ const dialog: CSSProperties = {
   maxWidth: '90%',
   height: 480,
   maxHeight: '80%',
-  background: '#242424',
+  background: 'var(--dialog-bg)',
   borderRadius: 14,
   boxShadow: '0 24px 70px rgba(0,0,0,0.65)',
-  border: '1px solid rgba(255,255,255,0.08)',
+  border: '1px solid var(--border)',
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
-  color: '#fff',
+  color: 'var(--text)',
 };
 
 const header: CSSProperties = {
@@ -154,7 +154,7 @@ const closeBtn: CSSProperties = {
   width: 26,
   height: 26,
   borderRadius: '50%',
-  background: 'rgba(255,255,255,0.08)',
+  background: 'var(--overlay-medium)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
@@ -167,7 +167,7 @@ const closeLine1: CSSProperties = {
   position: 'absolute',
   width: 11,
   height: 1.6,
-  background: '#fff',
+  background: 'var(--text)',
   transform: 'rotate(45deg)',
   borderRadius: 1,
 };
@@ -178,10 +178,10 @@ const filterInput: CSSProperties = {
   width: '100%',
   height: 32,
   padding: '0 10px',
-  background: 'rgba(0,0,0,0.3)',
-  border: '1px solid rgba(255,255,255,0.12)',
+  background: 'var(--surface-sunken)',
+  border: '1px solid var(--border-strong)',
   borderRadius: 7,
-  color: '#fff',
+  color: 'var(--text)',
   fontSize: 13,
 };
 

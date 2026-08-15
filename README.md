@@ -1,4 +1,4 @@
-<img src="screenshots/icon.png" width="96" height="96" alt="BrightTable icon" />
+<img src="requirements/BrightTable-icon.svg" width="96" height="96" alt="BrightTable icon" />
 
 # BrightTable
 

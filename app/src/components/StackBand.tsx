@@ -115,8 +115,8 @@ export default function StackBand({
     <div
       style={{
         gridColumn: '1 / -1',
-        background: 'rgba(255,255,255,0.04)',
-        border: '1px solid rgba(255,255,255,0.09)',
+        background: 'var(--overlay-weak)',
+        border: '1px solid var(--border)',
         borderRadius: 12,
         padding: '12px 14px',
         margin: '2px 0',
@@ -125,10 +125,10 @@ export default function StackBand({
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 12 }}>
         <div style={{ position: 'relative', width: 14, height: 13, flexShrink: 0 }}>
           <div style={{ position: 'absolute', left: 0, top: 0, width: 9, height: 9, border: '1.6px solid #dc8add', borderRadius: 2 }} />
-          <div style={{ position: 'absolute', left: 4, top: 3, width: 9, height: 9, border: '1.6px solid #dc8add', borderRadius: 2, background: '#1c1c1c' }} />
+          <div style={{ position: 'absolute', left: 4, top: 3, width: 9, height: 9, border: '1.6px solid #dc8add', borderRadius: 2, background: 'var(--canvas)' }} />
         </div>
         <span style={{ fontSize: 13, fontWeight: 700 }}>{primary?.fileName ?? 'Stack'}</span>
-        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.42)' }}>
+        <span style={{ fontSize: 12, color: 'var(--text-dimmer)' }}>
           Stack · {members?.length ?? '…'} · Set Pick sets the pick
         </span>
         <div style={{ flex: 1 }} />
@@ -141,10 +141,10 @@ export default function StackBand({
             gap: 6,
             height: 28,
             padding: '0 12px',
-            border: '1px solid rgba(255,255,255,0.14)',
+            border: '1px solid var(--border-strong)',
             borderRadius: 8,
-            background: 'rgba(255,255,255,0.05)',
-            color: '#fff',
+            background: 'var(--overlay-weak)',
+            color: 'var(--text)',
             fontSize: 12,
             cursor: 'default',
             opacity: busy ? 0.6 : 1,
@@ -157,10 +157,10 @@ export default function StackBand({
           style={{
             height: 28,
             padding: '0 12px',
-            border: '1px solid rgba(255,255,255,0.14)',
+            border: '1px solid var(--border-strong)',
             borderRadius: 8,
-            background: 'rgba(255,255,255,0.05)',
-            color: '#fff',
+            background: 'var(--overlay-weak)',
+            color: 'var(--text)',
             fontSize: 12,
             cursor: 'default',
           }}

@@ -30,7 +30,7 @@ export default function PreferencesOverlay({
         position: 'absolute',
         inset: 0,
         zIndex: 90,
-        background: 'rgba(0,0,0,0.5)',
+        background: 'var(--scrim)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -44,10 +44,10 @@ export default function PreferencesOverlay({
           maxWidth: '94%',
           height: 582,
           maxHeight: '92%',
-          background: '#242424',
+          background: 'var(--dialog-bg)',
           borderRadius: 14,
           boxShadow: '0 24px 70px rgba(0,0,0,0.65)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          border: '1px solid var(--border)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -61,13 +61,13 @@ export default function PreferencesOverlay({
             alignItems: 'center',
             gap: 10,
             padding: '0 10px 0 18px',
-            background: '#303030',
-            borderBottom: '1px solid rgba(0,0,0,0.4)',
+            background: 'var(--panel)',
+            borderBottom: '1px solid var(--border-strong)',
           }}
         >
           <span style={{ fontSize: 14, fontWeight: 700 }}>Preferences</span>
           <div style={{ flex: 1 }} />
-          <div style={{ display: 'flex', gap: 3, background: 'rgba(0,0,0,0.25)', padding: 3, borderRadius: 10 }}>
+          <div style={{ display: 'flex', gap: 3, background: 'var(--overlay-medium)', padding: 3, borderRadius: 10 }}>
             {tabs.map((t) => (
               <div
                 key={t.id}
@@ -77,8 +77,8 @@ export default function PreferencesOverlay({
                   borderRadius: 8,
                   fontSize: 12.5,
                   cursor: 'default',
-                  background: tab === t.id ? '#3584e4' : 'transparent',
-                  color: tab === t.id ? '#fff' : 'rgba(255,255,255,0.65)',
+                  background: tab === t.id ? 'var(--accent)' : 'transparent',
+                  color: tab === t.id ? '#fff' : 'var(--text-dim)',
                 }}
               >
                 {t.label}
@@ -92,7 +92,7 @@ export default function PreferencesOverlay({
               width: 30,
               height: 30,
               borderRadius: '50%',
-              background: 'rgba(255,255,255,0.08)',
+              background: 'var(--overlay-medium)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -105,7 +105,7 @@ export default function PreferencesOverlay({
                 position: 'absolute',
                 width: 12,
                 height: 1.7,
-                background: '#fff',
+                background: 'var(--text)',
                 transform: 'rotate(45deg)',
                 borderRadius: 1,
               }}
@@ -115,7 +115,7 @@ export default function PreferencesOverlay({
                 position: 'absolute',
                 width: 12,
                 height: 1.7,
-                background: '#fff',
+                background: 'var(--text)',
                 transform: 'rotate(-45deg)',
                 borderRadius: 1,
               }}

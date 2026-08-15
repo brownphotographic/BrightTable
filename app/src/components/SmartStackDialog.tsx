@@ -109,10 +109,10 @@ export default function SmartStackDialog({
           maxWidth: '94%',
           height: 600,
           maxHeight: '92%',
-          background: '#242424',
+          background: 'var(--dialog-bg)',
           borderRadius: 14,
           boxShadow: '0 24px 70px rgba(0,0,0,0.7)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          border: '1px solid var(--border)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -126,12 +126,12 @@ export default function SmartStackDialog({
             alignItems: 'center',
             gap: 10,
             padding: '0 10px 0 18px',
-            background: '#303030',
+            background: 'var(--panel)',
             borderBottom: '1px solid rgba(0,0,0,0.4)',
           }}
         >
           <span style={{ fontSize: 14, fontWeight: 700 }}>Smart Stack</span>
-          <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)' }}>· {selN} selected</span>
+          <span style={{ fontSize: 12.5, color: 'var(--text-dimmer)' }}>· {selN} selected</span>
           <div style={{ flex: 1 }} />
           <div
             onClick={busy ? undefined : onClose}
@@ -139,7 +139,7 @@ export default function SmartStackDialog({
               width: 30,
               height: 30,
               borderRadius: '50%',
-              background: 'rgba(255,255,255,0.08)',
+              background: 'var(--overlay-medium)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -152,7 +152,7 @@ export default function SmartStackDialog({
         </div>
 
         <div style={{ flexShrink: 0, padding: '18px 22px 16px', borderBottom: '1px solid rgba(0,0,0,0.3)' }}>
-          <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'rgba(255,255,255,0.45)', marginBottom: 8 }}>GROUP BY</div>
+          <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'var(--text-dimmer)', marginBottom: 8 }}>GROUP BY</div>
           <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
             {(['name', 'version', 'time'] as SmartStackMode[]).map((m) => (
               <div key={m} onClick={() => setSettings({ ...settings, mode: m })} style={segStyle(settings.mode === m)}>
@@ -160,11 +160,11 @@ export default function SmartStackDialog({
               </div>
             ))}
           </div>
-          <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.55)', lineHeight: 1.5, minHeight: 36 }}>{MODE_DESC[settings.mode]}</div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.5, minHeight: 36 }}>{MODE_DESC[settings.mode]}</div>
 
           {settings.mode === 'version' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
-              <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.85)', flexShrink: 0 }}>Version pattern</span>
+              <span style={{ fontSize: 13, color: 'var(--text-dim)', flexShrink: 0 }}>Version pattern</span>
               <input
                 value={settings.suffix}
                 onChange={(e) => setSettings({ ...settings, suffix: e.target.value })}
@@ -173,10 +173,10 @@ export default function SmartStackDialog({
                   flex: 1,
                   height: 34,
                   padding: '0 12px',
-                  background: 'rgba(0,0,0,0.3)',
-                  border: '1px solid rgba(255,255,255,0.1)',
+                  background: 'var(--surface-sunken)',
+                  border: '1px solid var(--border)',
                   borderRadius: 9,
-                  color: '#fff',
+                  color: 'var(--text)',
                   font: '500 13px ui-monospace,monospace',
                 }}
               />
@@ -186,8 +186,8 @@ export default function SmartStackDialog({
           {settings.mode === 'time' && (
             <div style={{ marginTop: 10 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9 }}>
-                <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.85)' }}>Time tolerance</span>
-                <span style={{ font: '600 13px ui-monospace,monospace', color: '#7fb0f0' }}>
+                <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>Time tolerance</span>
+                <span style={{ font: '600 13px ui-monospace,monospace', color: 'var(--accent-text)' }}>
                   Within {formatTolerance(toleranceSeconds(settings.tolerance))}
                 </span>
               </div>
@@ -200,7 +200,7 @@ export default function SmartStackDialog({
                 onChange={(e) => setSettings({ ...settings, tolerance: Number(e.target.value) })}
                 style={{ width: '100%' }}
               />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: 'rgba(255,255,255,0.35)', marginTop: 5 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: 'var(--text-dimmer)', marginTop: 5 }}>
                 <span>{formatTolerance(TOL[0])}</span>
                 <span>{formatTolerance(TOL[TOL.length - 1])}</span>
               </div>
@@ -209,16 +209,16 @@ export default function SmartStackDialog({
         </div>
 
         <div style={{ flex: 1, overflow: 'auto', padding: '16px 22px', minHeight: 0 }}>
-          <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'rgba(255,255,255,0.45)', marginBottom: 12 }}>PREVIEW · {groups.length} GROUPS</div>
+          <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'var(--text-dimmer)', marginBottom: 12 }}>PREVIEW · {groups.length} GROUPS</div>
           {groups.length === 0 ? (
-            <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.4)', padding: '48px 20px', fontSize: 13, lineHeight: 1.6 }}>{emptyText}</div>
+            <div style={{ textAlign: 'center', color: 'var(--text-dimmer)', padding: '48px 20px', fontSize: 13, lineHeight: 1.6 }}>{emptyText}</div>
           ) : (
             groups.map((g) => <GroupCard key={g.key} group={g} mode={settings.mode} />)
           )}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 18px', borderTop: '1px solid rgba(0,0,0,0.4)', flexShrink: 0 }}>
-          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>
+          <span style={{ fontSize: 12, color: 'var(--text-dimmer)' }}>
             Grouping {selN} selected photo{selN === 1 ? '' : 's'}. Already-stacked photos are merged into the new
             group, not skipped.
           </span>
@@ -253,14 +253,14 @@ function GroupCard({ group, mode }: { group: SmartStackGroup; mode: SmartStackMo
   }
 
   return (
-    <div style={{ background: '#262626', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 12, padding: '12px 14px', marginBottom: 10 }}>
+    <div style={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', marginBottom: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 11 }}>
         <div style={{ position: 'relative', width: 14, height: 13, flexShrink: 0 }}>
           <div style={{ position: 'absolute', left: 0, top: 0, width: 9, height: 9, border: '1.6px solid #dc8add', borderRadius: 2 }} />
-          <div style={{ position: 'absolute', left: 4, top: 3, width: 9, height: 9, border: '1.6px solid #dc8add', borderRadius: 2, background: '#262626' }} />
+          <div style={{ position: 'absolute', left: 4, top: 3, width: 9, height: 9, border: '1.6px solid #dc8add', borderRadius: 2, background: 'var(--panel)' }} />
         </div>
         <span style={{ font: '600 13px ui-monospace,monospace' }}>{title}</span>
-        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.42)' }}>{sub}</span>
+        <span style={{ fontSize: 12, color: 'var(--text-dimmer)' }}>{sub}</span>
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {group.members.map((m) => {
@@ -276,8 +276,8 @@ function GroupCard({ group, mode }: { group: SmartStackGroup; mode: SmartStackMo
                 borderRadius: 6,
                 overflow: 'hidden',
                 flexShrink: 0,
-                background: '#1c1c1c',
-                boxShadow: isPick ? '0 0 0 2px #3584e4' : '0 0 0 1px rgba(255,255,255,0.1)',
+                background: 'var(--surface-sunken)',
+                boxShadow: isPick ? '0 0 0 2px #3584e4' : '0 0 0 1px var(--border)',
               }}
             >
               <AssetThumbImage asset={m} />
@@ -348,8 +348,8 @@ function segStyle(active: boolean): CSSProperties {
     fontSize: 12,
     borderRadius: 7,
     cursor: 'default',
-    color: active ? '#fff' : 'rgba(255,255,255,0.7)',
-    background: active ? '#3584e4' : 'rgba(255,255,255,0.06)',
+    color: active ? '#fff' : 'var(--text-dim)',
+    background: active ? '#3584e4' : 'var(--overlay-weak)',
   };
 }
 
@@ -364,9 +364,9 @@ const btnBase: CSSProperties = {
 
 const btnSecondary: CSSProperties = {
   ...btnBase,
-  border: '1px solid rgba(255,255,255,0.14)',
-  background: 'rgba(255,255,255,0.06)',
-  color: '#fff',
+  border: '1px solid var(--border-strong)',
+  background: 'var(--overlay-weak)',
+  color: 'var(--text)',
 };
 
 function btnPrimary(enabled: boolean): CSSProperties {

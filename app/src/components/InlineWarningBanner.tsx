@@ -10,7 +10,7 @@ export default function InlineWarningBanner({ message, onDismiss }: { message: s
         gap: 10,
         padding: '6px 14px',
         background: '#4a2f0a',
-        color: '#ffd699',
+        color: 'var(--warn)',
         fontSize: 12.5,
         flexShrink: 0,
       }}

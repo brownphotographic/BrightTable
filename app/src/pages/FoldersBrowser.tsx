@@ -1504,17 +1504,17 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           alignItems: 'center',
           gap: 13,
           padding: '0 12px',
-          background: '#2b2b2b',
+          background: 'var(--panel-3)',
           borderTop: '1px solid rgba(0,0,0,0.4)',
           fontSize: 11.5,
-          color: 'rgba(255,255,255,0.5)',
+          color: 'var(--text-dimmer)',
         }}
       >
         <span>{flatIds.length} assets</span>
         {selected.size > 0 && <span>· {selected.size} selected</span>}
         <div style={{ flex: 1 }} />
         {/* Mirrors PhotosBrowser.tsx's StatusBar thumbnail slider. */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'rgba(255,255,255,0.55)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-dim)' }}>
           <span style={{ fontSize: 11.5 }}>Thumbnails</span>
           <div style={{ position: 'relative', width: 12, height: 12, flexShrink: 0 }}>
             <div style={{ position: 'absolute', left: 0, top: 0, width: 8, height: 8, border: '1.5px solid currentColor', borderRadius: '50%' }} />
@@ -1683,7 +1683,7 @@ function TreeRow({
         padding: `0 9px 0 ${9 + depth * 15}px`,
         borderRadius: 8,
         cursor: 'default',
-        color: selected ? '#fff' : 'rgba(255,255,255,0.9)',
+        color: selected ? 'var(--accent-text)' : 'var(--text-dim)',
         background: selected ? 'rgba(53,132,228,0.32)' : 'transparent',
       }}
     >
@@ -1702,11 +1702,11 @@ function TreeRow({
             borderBottom: '1.7px solid currentColor',
             transform: `rotate(${expanded ? 45 : -45}deg)`,
             opacity: hasChildren ? 0.7 : 0,
-            color: 'rgba(255,255,255,0.7)',
+            color: 'var(--text-dim)',
           }}
         />
       </div>
-      <div style={{ width: 15, height: 12, borderRadius: 2.5, background: 'rgba(255,255,255,0.18)', flexShrink: 0 }} />
+      <div style={{ width: 15, height: 12, borderRadius: 2.5, background: 'var(--overlay-strong)', flexShrink: 0 }} />
       <span style={{ flex: 1, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
     </div>
   );

@@ -78,20 +78,20 @@ export default function AddToAlbumDialog({
           maxWidth: '92%',
           height: 520,
           maxHeight: '86%',
-          background: '#242424',
+          background: 'var(--dialog-bg)',
           borderRadius: 14,
           boxShadow: '0 24px 70px rgba(0,0,0,0.7)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          border: '1px solid var(--border)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
         }}
       >
-        <div style={{ height: 50, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '0 10px 0 18px', background: '#303030', borderBottom: '1px solid rgba(0,0,0,0.4)' }}>
+        <div style={{ height: 50, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '0 10px 0 18px', background: 'var(--panel)', borderBottom: '1px solid rgba(0,0,0,0.4)' }}>
           <span style={{ fontSize: 14, fontWeight: 700 }}>Add to Album</span>
-          <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)' }}>· {count} selected</span>
+          <span style={{ fontSize: 12.5, color: 'var(--text-dimmer)' }}>· {count} selected</span>
           <div style={{ flex: 1 }} />
-          <div onClick={onClose} style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default', fontSize: 14 }}>
+          <div onClick={onClose} style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--overlay-medium)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default', fontSize: 14 }}>
             ✕
           </div>
         </div>
@@ -138,16 +138,16 @@ export default function AddToAlbumDialog({
                 opacity: busyAlbumId && busyAlbumId !== a.id ? 0.5 : 1,
               }}
             >
-              <div style={{ width: 40, height: 40, borderRadius: 6, overflow: 'hidden', flexShrink: 0, background: '#333' }}>
+              <div style={{ width: 40, height: 40, borderRadius: 6, overflow: 'hidden', flexShrink: 0, background: 'var(--surface-sunken)' }}>
                 {a.albumThumbnailAssetId && <img src={thumbnailSrc(a.albumThumbnailAssetId)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.albumName}</div>
-                <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.45)' }}>
+                <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)' }}>
                   {a.assetCount} photo{a.assetCount === 1 ? '' : 's'}
                 </div>
               </div>
-              {busyAlbumId === a.id && <span style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.5)' }}>Adding…</span>}
+              {busyAlbumId === a.id && <span style={{ fontSize: 11.5, color: 'var(--text-dimmer)' }}>Adding…</span>}
             </div>
           ))}
         </div>
@@ -160,10 +160,10 @@ const inputStyle: CSSProperties = {
   flex: 1,
   height: 34,
   padding: '0 12px',
-  background: 'rgba(0,0,0,0.3)',
-  border: '1px solid rgba(255,255,255,0.1)',
+  background: 'var(--surface-sunken)',
+  border: '1px solid var(--border)',
   borderRadius: 9,
-  color: '#fff',
+  color: 'var(--text)',
   fontSize: 13,
 };
 

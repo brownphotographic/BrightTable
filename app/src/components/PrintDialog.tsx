@@ -268,10 +268,10 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
           width: 720,
           maxWidth: '95%',
           maxHeight: '90vh',
-          background: '#242424',
+          background: 'var(--dialog-bg)',
           borderRadius: 14,
           boxShadow: '0 24px 70px rgba(0,0,0,0.7)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          border: '1px solid var(--border)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -285,12 +285,12 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
             alignItems: 'center',
             gap: 10,
             padding: '0 10px 0 18px',
-            background: '#303030',
+            background: 'var(--panel)',
             borderBottom: '1px solid rgba(0,0,0,0.4)',
           }}
         >
           <span style={{ fontSize: 14, fontWeight: 700 }}>Print</span>
-          <span style={{ fontSize: 12, fontFamily: 'ui-monospace, monospace', color: 'rgba(255,255,255,0.45)' }}>{asset.fileName}</span>
+          <span style={{ fontSize: 12, fontFamily: 'ui-monospace, monospace', color: 'var(--text-dimmer)' }}>{asset.fileName}</span>
           <div style={{ flex: 1 }} />
           <div onClick={busy ? undefined : onClose} style={closeBtnStyle}>
             ✕
@@ -298,29 +298,29 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
         </div>
 
         {raw ? (
-          <div style={{ padding: '32px 22px', fontSize: 13, color: 'rgba(255,255,255,0.75)', lineHeight: 1.6 }}>
+          <div style={{ padding: '32px 22px', fontSize: 13, color: 'var(--text-dim)', lineHeight: 1.6 }}>
             RAW photos can't be printed yet — open the edited version or export a JPEG first.
           </div>
         ) : (
           <div style={{ display: 'flex', padding: 20, gap: 22, overflow: 'auto' }}>
             <div style={{ width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 15 }}>
               <div style={{ position: 'relative' }}>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 6 }}>Printer</div>
+                <div style={{ fontSize: 12, color: 'var(--text-dimmer)', marginBottom: 6 }}>Printer</div>
                 <div
                   onClick={() => setPrinterMenuOpen((v) => !v)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, height: 38, padding: '0 13px', background: '#303030', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 9, fontSize: 13, cursor: 'default' }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, height: 38, padding: '0 13px', background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 9, fontSize: 13, cursor: 'default' }}
                 >
                   <div style={{ width: 8, height: 8, borderRadius: '50%', background: curPrinter?.status === 'disabled' ? '#e5a50a' : '#2ec27e', flexShrink: 0 }} />
                   <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{curPrinter?.name ?? (printers == null ? 'Loading…' : 'No printers found')}</span>
-                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{curPrinter ? connectionLabel(curPrinter) : ''}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-dimmer)' }}>{curPrinter ? connectionLabel(curPrinter) : ''}</span>
                 </div>
                 {printerMenuOpen && printers && printers.length > 0 && (
-                  <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 6, background: '#383838', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, boxShadow: '0 12px 30px rgba(0,0,0,0.6)', padding: 5 }}>
+                  <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 6, background: 'var(--panel)', border: '1px solid var(--border-strong)', borderRadius: 10, boxShadow: '0 12px 30px rgba(0,0,0,0.6)', padding: 5 }}>
                     {printers.map((p) => (
                       <div
                         key={p.id}
                         onClick={() => selectPrinter(p)}
-                        style={{ display: 'flex', alignItems: 'center', height: 32, padding: '0 10px', borderRadius: 7, fontSize: 13, cursor: 'default', color: '#fff', background: p.id === printerId ? 'rgba(53,132,228,0.25)' : 'transparent' }}
+                        style={{ display: 'flex', alignItems: 'center', height: 32, padding: '0 10px', borderRadius: 7, fontSize: 13, cursor: 'default', color: 'var(--text)', background: p.id === printerId ? 'rgba(53,132,228,0.25)' : 'transparent' }}
                       >
                         <span style={{ flex: 1 }}>{p.name}</span>
                         <span style={{ fontSize: 11, opacity: 0.55 }}>{connectionLabel(p)}</span>
@@ -331,52 +331,52 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
               </div>
 
               <div style={{ position: 'relative' }}>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 6 }}>Paper</div>
+                <div style={{ fontSize: 12, color: 'var(--text-dimmer)', marginBottom: 6 }}>Paper</div>
                 <div
                   onClick={() => curPrinter && setPaperMenuOpen((v) => !v)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, height: 38, padding: '0 13px', background: '#303030', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 9, fontSize: 13, cursor: 'default' }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, height: 38, padding: '0 13px', background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 9, fontSize: 13, cursor: 'default' }}
                 >
                   <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{curPaper?.name ?? '—'}</span>
                 </div>
                 {paperMenuOpen && curPrinter && (
-                  <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 6, maxHeight: 184, overflow: 'auto', background: '#383838', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, boxShadow: '0 12px 30px rgba(0,0,0,0.6)', padding: 5 }}>
+                  <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 6, maxHeight: 184, overflow: 'auto', background: 'var(--panel)', border: '1px solid var(--border-strong)', borderRadius: 10, boxShadow: '0 12px 30px rgba(0,0,0,0.6)', padding: 5 }}>
                     {curPrinter.papers.map((p) => (
                       <div
                         key={p.id}
                         onClick={() => selectPaper(p)}
-                        style={{ display: 'flex', alignItems: 'center', height: 32, padding: '0 10px', borderRadius: 7, fontSize: 12.5, cursor: 'default', color: '#fff', background: p.id === paperId ? 'rgba(53,132,228,0.25)' : 'transparent' }}
+                        style={{ display: 'flex', alignItems: 'center', height: 32, padding: '0 10px', borderRadius: 7, fontSize: 12.5, cursor: 'default', color: 'var(--text)', background: p.id === paperId ? 'rgba(53,132,228,0.25)' : 'transparent' }}
                       >
                         {p.name}
                       </div>
                     ))}
                   </div>
                 )}
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 6 }}>Papers shown are those installed for this printer.</div>
+                <div style={{ fontSize: 11, color: 'var(--text-dimmer)', marginTop: 6 }}>Papers shown are those installed for this printer.</div>
               </div>
 
               <div style={{ display: 'flex', gap: 14 }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 6 }}>Copies</div>
-                  <div style={{ display: 'flex', alignItems: 'center', height: 38, background: '#303030', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 9, overflow: 'hidden' }}>
+                  <div style={{ fontSize: 12, color: 'var(--text-dimmer)', marginBottom: 6 }}>Copies</div>
+                  <div style={{ display: 'flex', alignItems: 'center', height: 38, background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 9, overflow: 'hidden' }}>
                     <div onClick={() => setCopies((c) => Math.max(1, c - 1))} style={{ width: 36, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default' }}>
-                      <div style={{ width: 11, height: 1.7, background: '#fff' }} />
+                      <div style={{ width: 11, height: 1.7, background: 'var(--text)' }} />
                     </div>
                     <div style={{ flex: 1, textAlign: 'center', fontSize: 14, fontVariantNumeric: 'tabular-nums' }}>{copies}</div>
                     <div onClick={() => setCopies((c) => Math.min(99, c + 1))} style={{ width: 36, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default' }}>
-                      <div style={{ width: 11, height: 1.7, background: '#fff' }} />
+                      <div style={{ width: 11, height: 1.7, background: 'var(--text)' }} />
                     </div>
                   </div>
                 </div>
                 <div style={{ flex: 1.3, position: 'relative' }}>
-                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 6 }}>Print resolution</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-dimmer)', marginBottom: 6 }}>Print resolution</div>
                   <div
                     onClick={() => curPrinter && setDpiMenuOpen((v) => !v)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 10, height: 38, padding: '0 13px', background: '#303030', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 9, fontSize: 13, cursor: 'default' }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, height: 38, padding: '0 13px', background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 9, fontSize: 13, cursor: 'default' }}
                   >
                     <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontVariantNumeric: 'tabular-nums' }}>{dpi != null ? `${dpi} dpi` : '—'}</span>
                   </div>
                   {dpiMenuOpen && curPrinter && (
-                    <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 6, background: '#383838', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, boxShadow: '0 12px 30px rgba(0,0,0,0.6)', padding: 5 }}>
+                    <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 6, background: 'var(--panel)', border: '1px solid var(--border-strong)', borderRadius: 10, boxShadow: '0 12px 30px rgba(0,0,0,0.6)', padding: 5 }}>
                       {curPrinter.dpis.map((d, i) => (
                         <div
                           key={d}
@@ -384,10 +384,10 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
                             setDpi(d);
                             setDpiMenuOpen(false);
                           }}
-                          style={{ display: 'flex', alignItems: 'center', gap: 8, height: 32, padding: '0 10px', borderRadius: 7, fontSize: 12.5, cursor: 'default', color: '#fff', background: dpi === d ? 'rgba(53,132,228,0.25)' : 'transparent' }}
+                          style={{ display: 'flex', alignItems: 'center', gap: 8, height: 32, padding: '0 10px', borderRadius: 7, fontSize: 12.5, cursor: 'default', color: 'var(--text)', background: dpi === d ? 'rgba(53,132,228,0.25)' : 'transparent' }}
                         >
                           <span style={{ flex: 1, fontVariantNumeric: 'tabular-nums' }}>{d} dpi</span>
-                          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>{i === 0 ? 'Highest quality' : i === curPrinter.dpis.length - 1 ? 'Draft / fast' : 'Standard'}</span>
+                          <span style={{ fontSize: 11, color: 'var(--text-dimmer)' }}>{i === 0 ? 'Highest quality' : i === curPrinter.dpis.length - 1 ? 'Draft / fast' : 'Standard'}</span>
                         </div>
                       ))}
                     </div>
@@ -396,7 +396,7 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
               </div>
 
               <div>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>Orientation</div>
+                <div style={{ fontSize: 12, color: 'var(--text-dimmer)', marginBottom: 8 }}>Orientation</div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   {(['landscape', 'portrait'] as const).map((o) => (
                     <div
@@ -412,9 +412,9 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
                         fontSize: 12.5,
                         cursor: 'default',
                         textTransform: 'capitalize',
-                        color: orientation === o ? '#fff' : 'rgba(255,255,255,0.7)',
-                        background: orientation === o ? '#3584e4' : '#303030',
-                        boxShadow: orientation === o ? 'none' : 'inset 0 0 0 1px rgba(255,255,255,0.1)',
+                        color: orientation === o ? '#fff' : 'var(--text-dim)',
+                        background: orientation === o ? '#3584e4' : 'var(--panel)',
+                        boxShadow: orientation === o ? 'none' : 'inset 0 0 0 1px var(--border)',
                       }}
                     >
                       {o}
@@ -424,7 +424,7 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
               </div>
 
               <div>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>Image fit</div>
+                <div style={{ fontSize: 12, color: 'var(--text-dimmer)', marginBottom: 8 }}>Image fit</div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   {(
                     [
@@ -444,29 +444,29 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
                         borderRadius: 8,
                         fontSize: 12.5,
                         cursor: 'default',
-                        color: fitMode === m ? '#fff' : 'rgba(255,255,255,0.7)',
-                        background: fitMode === m ? '#3584e4' : '#303030',
-                        boxShadow: fitMode === m ? 'none' : 'inset 0 0 0 1px rgba(255,255,255,0.1)',
+                        color: fitMode === m ? '#fff' : 'var(--text-dim)',
+                        background: fitMode === m ? '#3584e4' : 'var(--panel)',
+                        boxShadow: fitMode === m ? 'none' : 'inset 0 0 0 1px var(--border)',
                       }}
                     >
                       {label}
                     </div>
                   ))}
                 </div>
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 6 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-dimmer)', marginTop: 6 }}>
                   {fitMode === 'crop' ? "Fills the paper — crops the photo's longer edge to avoid white space." : 'Shows the whole photo — may leave white space on one edge.'}
                 </div>
               </div>
 
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 }}>
-                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>Printed image size</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-dimmer)' }}>Printed image size</span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {(['in', 'cm'] as const).map((u) => (
                       <div
                         key={u}
                         onClick={() => setUnits(u)}
-                        style={{ padding: '3px 9px', borderRadius: 6, fontSize: 11, cursor: 'default', color: units === u ? '#fff' : 'rgba(255,255,255,0.5)', background: units === u ? '#3584e4' : 'rgba(255,255,255,0.08)' }}
+                        style={{ padding: '3px 9px', borderRadius: 6, fontSize: 11, cursor: 'default', color: units === u ? '#fff' : 'var(--text-dimmer)', background: units === u ? '#3584e4' : 'var(--overlay-medium)' }}
                       >
                         {u}
                       </div>
@@ -478,23 +478,23 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
                     value={size ? String(Math.round(toUnit(size[0]) * 100) / 100) : ''}
                     onChange={(e) => onWidthInput(e.target.value)}
                     inputMode="decimal"
-                    style={{ width: 74, height: 36, background: '#303030', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 9, color: '#fff', font: '600 14px ui-monospace,monospace', textAlign: 'center' }}
+                    style={{ width: 74, height: 36, background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 9, color: 'var(--text)', font: '600 14px ui-monospace,monospace', textAlign: 'center' }}
                   />
-                  <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>×</div>
+                  <div style={{ color: 'var(--text-dimmer)', fontSize: 13 }}>×</div>
                   <input
                     value={size ? String(Math.round(toUnit(size[1]) * 100) / 100) : ''}
                     onChange={(e) => onHeightInput(e.target.value)}
                     inputMode="decimal"
-                    style={{ width: 74, height: 36, background: '#303030', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 9, color: '#fff', font: '600 14px ui-monospace,monospace', textAlign: 'center' }}
+                    style={{ width: 74, height: 36, background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 9, color: 'var(--text)', font: '600 14px ui-monospace,monospace', textAlign: 'center' }}
                   />
-                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>{units}</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-dimmer)' }}>{units}</span>
                   <div style={{ flex: 1 }} />
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-dimmer)' }}>
                     {fitMode === 'fit' ? 'Aspect locked' : 'Independent (cropped to fill)'}
                   </div>
                 </div>
                 {area && size && dpi != null && curPaper && (
-                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 8, lineHeight: 1.5 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-dimmer)', marginTop: 8, lineHeight: 1.5 }}>
                     {fitMode === 'fit' ? 'Fits within' : 'Fills'} {Math.round(toUnit(area[0]) * 100) / 100}×{Math.round(toUnit(area[1]) * 100) / 100} {units} printable on{' '}
                     {curPaper.name.split(' (')[0]} · {orientation === 'landscape' ? 'Landscape' : 'Portrait'} · ≈ {Math.round(size[0] * dpi)}×{Math.round(size[1] * dpi)} px at {dpi} dpi
                   </div>
@@ -530,12 +530,12 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
                       />
                     </div>
                   </div>
-                  <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.4)', fontVariantNumeric: 'tabular-nums' }}>
+                  <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)', fontVariantNumeric: 'tabular-nums' }}>
                     {curPaper.name.split(' (')[0]} · image {Math.round(toUnit(size[0]) * 100) / 100}×{Math.round(toUnit(size[1]) * 100) / 100} {units}
                   </div>
                 </>
               ) : (
-                <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)' }}>{loadError ?? (printers == null ? 'Loading printers…' : 'No printers found')}</span>
+                <span style={{ fontSize: 12.5, color: 'var(--text-dimmer)' }}>{loadError ?? (printers == null ? 'Loading printers…' : 'No printers found')}</span>
               )}
             </div>
           </div>

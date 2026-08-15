@@ -28,7 +28,7 @@ export default function EditQueueIndicator({ onClick }: { onClick: () => void })
         fontSize: 11.5,
         fontWeight: 700,
         cursor: 'default',
-        color: syncing ? '#9cc2f0' : '#ff8080',
+        color: syncing ? 'var(--accent-text)' : '#ff8080',
         background: syncing ? 'rgba(53,132,228,0.22)' : 'rgba(224,27,36,0.22)',
       }}
     >

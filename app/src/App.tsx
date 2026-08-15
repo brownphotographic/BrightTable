@@ -5,6 +5,7 @@ import { LibraryStatusProvider } from './lib/libraryStatus';
 import { isTypingTarget, matchesShortcut, ShortcutsProvider, useShortcuts } from './lib/shortcuts';
 import { SmartStackSettingsProvider } from './lib/smartStackSettings';
 import { WindowControlsProvider } from './lib/windowControls';
+import { ThemeProvider } from './lib/theme';
 import { ApplicationsProvider } from './lib/applications';
 import { RawOverridesProvider } from './lib/rawOverrides';
 import { EditQueueProvider } from './lib/editQueue';
@@ -34,31 +35,33 @@ import { DEFAULT_FILTERS } from './lib/filters';
 
 export default function App() {
   return (
-    <ShortcutsProvider>
-      <WindowControlsProvider>
-        <SmartStackSettingsProvider>
-          <ApplicationsProvider>
-            <RawOverridesProvider>
-              <ClipboardProvider>
-                <EditQueueProvider>
-                  <ImportQueueProvider>
-                    <ProcessingQueueProvider>
-                      <ArtQueueProvider>
-                        <ExportQueueProvider>
-                          <LibraryStatusProvider>
-                            <AppShell />
-                          </LibraryStatusProvider>
-                        </ExportQueueProvider>
-                      </ArtQueueProvider>
-                    </ProcessingQueueProvider>
-                  </ImportQueueProvider>
-                </EditQueueProvider>
-              </ClipboardProvider>
-            </RawOverridesProvider>
-          </ApplicationsProvider>
-        </SmartStackSettingsProvider>
-      </WindowControlsProvider>
-    </ShortcutsProvider>
+    <ThemeProvider>
+      <ShortcutsProvider>
+        <WindowControlsProvider>
+          <SmartStackSettingsProvider>
+            <ApplicationsProvider>
+              <RawOverridesProvider>
+                <ClipboardProvider>
+                  <EditQueueProvider>
+                    <ImportQueueProvider>
+                      <ProcessingQueueProvider>
+                        <ArtQueueProvider>
+                          <ExportQueueProvider>
+                            <LibraryStatusProvider>
+                              <AppShell />
+                            </LibraryStatusProvider>
+                          </ExportQueueProvider>
+                        </ArtQueueProvider>
+                      </ProcessingQueueProvider>
+                    </ImportQueueProvider>
+                  </EditQueueProvider>
+                </ClipboardProvider>
+              </RawOverridesProvider>
+            </ApplicationsProvider>
+          </SmartStackSettingsProvider>
+        </WindowControlsProvider>
+      </ShortcutsProvider>
+    </ThemeProvider>
   );
 }
 
@@ -182,7 +185,7 @@ function AppShell() {
       style={{
         height: '100vh',
         width: '100%',
-        background: '#1c1c1c',
+        background: 'var(--canvas)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
@@ -233,7 +236,7 @@ function AppShell() {
         onClearSearch={clearSearch}
       />
 
-      <div style={{ flex: 1, display: 'flex', minHeight: 0, background: '#242424', position: 'relative' }}>
+      <div style={{ flex: 1, display: 'flex', minHeight: 0, background: 'var(--panel-2)', position: 'relative' }}>
         <Sidebar
           active={leftTab}
           onSelect={(tab) => {
@@ -247,7 +250,7 @@ function AppShell() {
           tagsCount={tagsCount}
         />
 
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: '#1c1c1c', position: 'relative' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--photo-canvas)', position: 'relative' }}>
           {/* Photos and Folders stay mounted (just hidden) once visited, rather
               than being unmounted on every tab switch - each keeps its own
               assetCache of everything already fetched from Immich this

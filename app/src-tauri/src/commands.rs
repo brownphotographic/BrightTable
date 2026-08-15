@@ -7,7 +7,7 @@ use tauri::{AppHandle, State};
 use crate::apps::{self, AppChoice};
 use crate::art_queue::{self, ArtJob, ArtJobStatus, ArtQueue};
 use crate::cli_process;
-use crate::config::{self, AppConfig, ApplicationsConfig, ImportSettings, LibraryConfig, RawConverterKind, SharingConfig, SmartStackSettings, WindowControlsPosition};
+use crate::config::{self, AppConfig, ApplicationsConfig, CanvasShade, ImportSettings, LibraryConfig, RawConverterKind, SharingConfig, SmartStackSettings, ThemeMode, WindowControlsPosition};
 use crate::edit_queue::EditJob;
 use crate::export_naming;
 use crate::export_queue::{self, ExportDelivery, ExportFormat, ExportJob, ExportTarget, FlickrAlbumChoice, RenditionOptions};
@@ -73,6 +73,30 @@ pub fn save_window_controls_position(
 ) -> Result<AppConfig, String> {
     let mut guard = state.config.lock().unwrap();
     guard.window_controls_position = position;
+    config::save(&app, &guard)?;
+    Ok(guard.clone())
+}
+
+#[tauri::command]
+pub fn save_theme_mode(
+    app: AppHandle,
+    state: State<AppState>,
+    mode: ThemeMode,
+) -> Result<AppConfig, String> {
+    let mut guard = state.config.lock().unwrap();
+    guard.theme_mode = mode;
+    config::save(&app, &guard)?;
+    Ok(guard.clone())
+}
+
+#[tauri::command]
+pub fn save_canvas_shade(
+    app: AppHandle,
+    state: State<AppState>,
+    shade: CanvasShade,
+) -> Result<AppConfig, String> {
+    let mut guard = state.config.lock().unwrap();
+    guard.canvas_shade = shade;
     config::save(&app, &guard)?;
     Ok(guard.clone())
 }
@@ -1675,18 +1699,38 @@ pub async fn check_sidecar_metadata(
     }
 }
 
-/// Current process's resident memory and CPU load, for the Sidebar's rolling
-/// resource chart - a lightweight live readout, not a profiler. `cpu_percent`
-/// is normalized to 0-100 of total system capacity (raw `Process::cpu_usage`
-/// is 100 per core); `ram_percent` is RSS as a fraction of total system RAM.
-/// Reuses `AppState::resource_monitor`'s `System` across calls, since
+/// For the Sidebar's rolling resource chart - a lightweight live readout,
+/// not a profiler. Two independent numbers, deliberately not one:
+///
+/// - `system_ram_percent` is system-wide memory pressure (what fraction of
+///   total RAM is *not* available for new allocation, i.e. `1 -
+///   available_memory/total_memory`) - a single machine-wide reading with no
+///   double-counting, and the number that actually predicts an OS-level OOM
+///   kill (which is a system-wide decision, not "did this app's own RSS
+///   cross some threshold"). This is the primary number and the one safe to
+///   put a `%` on.
+/// - `app_rss_bytes` is this process's plus its descendants' resident
+///   memory, summed - see the loop below for why descendants matter on
+///   Linux. Deliberately reported as a byte count, not a percent: summing
+///   RSS across a process tree double- (or triple-)counts memory those
+///   processes share (webkit2gtk's engine libraries, and the IPC/GPU
+///   buffers the UI/Web/Network processes use to hand off rendered frames),
+///   so it can read like "300% of system RAM" - a real number, but not one
+///   safe to express as a fraction of anything. It's still useful as an
+///   approximate, trend-over-time indicator of this app's own footprint,
+///   just not as a precise "% of system" claim the way `system_ram_percent`
+///   is.
+///
+/// `cpu_percent` (this process's tree only) is normalized to 0-100 of total
+/// system capacity (raw `Process::cpu_usage` is 100 per core). Reuses
+/// `AppState::resource_monitor`'s `System` across calls, since
 /// `Process::cpu_usage()` needs a previous sample to diff against - a fresh
 /// `System` every call would always read 0.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceUsage {
-    pub rss_bytes: u64,
-    pub ram_percent: f32,
+    pub app_rss_bytes: u64,
+    pub system_ram_percent: f32,
     pub cpu_percent: f32,
 }
 
@@ -1696,22 +1740,48 @@ pub fn get_resource_usage(state: State<AppState>) -> ResourceUsage {
     let pid = sysinfo::get_current_pid().unwrap_or(Pid::from(0));
     let mut sys = state.resource_monitor.lock().unwrap();
     sys.refresh_memory();
+    // `remove_dead_processes: true` - without it, an exited process's
+    // last-known reading lingers in sysinfo's internal cache forever and
+    // keeps getting summed into app_rss_bytes below on every subsequent
+    // poll. This app spawns plenty of short-lived children (exiftool for
+    // every metadata/sidecar write, RawTherapee/Darktable/ART-cli for round
+    // trips) - left unpruned, each one's stale memory reading permanently
+    // inflates the total.
     sys.refresh_processes_specifics(
-        ProcessesToUpdate::Some(&[pid]),
-        false,
+        ProcessesToUpdate::All,
+        true,
         ProcessRefreshKind::nothing().with_memory().with_cpu(),
     );
-    let process = sys.process(pid);
-    let rss_bytes = process.map(|p| p.memory()).unwrap_or(0);
-    let raw_cpu = process.map(|p| p.cpu_usage()).unwrap_or(0.0);
+    // Sums every descendant process, not just this one, because on Linux
+    // Tauri's webview is webkit2gtk, which renders the actual page (DOM, JS,
+    // every decoded image) in separate `WebKitWebProcess`/
+    // `WebKitNetworkProcess` children rather than in this process.
+    let mut children_of: HashMap<Pid, Vec<Pid>> = HashMap::new();
+    for (child_pid, process) in sys.processes() {
+        if let Some(parent) = process.parent() {
+            children_of.entry(parent).or_default().push(*child_pid);
+        }
+    }
+    let mut app_rss_bytes = 0u64;
+    let mut raw_cpu = 0f32;
+    let mut stack = vec![pid];
+    while let Some(p) = stack.pop() {
+        if let Some(process) = sys.process(p) {
+            app_rss_bytes += process.memory();
+            raw_cpu += process.cpu_usage();
+        }
+        if let Some(kids) = children_of.get(&p) {
+            stack.extend(kids.iter().copied());
+        }
+    }
     let cpu_percent = raw_cpu / state.num_cpus as f32;
     let total_bytes = sys.total_memory();
-    let ram_percent = if total_bytes > 0 {
-        rss_bytes as f32 / total_bytes as f32 * 100.0
+    let system_ram_percent = if total_bytes > 0 {
+        (1.0 - sys.available_memory() as f32 / total_bytes as f32) * 100.0
     } else {
         0.0
     };
-    ResourceUsage { rss_bytes, ram_percent, cpu_percent }
+    ResourceUsage { app_rss_bytes, system_ram_percent, cpu_percent }
 }
 
 /// Preferences → Configuration's "Thumbnail Cache" panel - reports the

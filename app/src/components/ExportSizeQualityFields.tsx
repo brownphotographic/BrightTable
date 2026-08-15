@@ -60,7 +60,7 @@ export default function ExportSizeQualityFields({
       </div>
 
       {format === 'jpeg' && hasVideo && (
-        <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.45)', marginBottom: 12, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)', marginBottom: 12, lineHeight: 1.5 }}>
           Videos in this selection are always exported as their original file — size and quality below only apply to
           photos.
         </div>
@@ -78,8 +78,8 @@ export default function ExportSizeQualityFields({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.85)' }}>JPEG quality</span>
-            <span style={{ font: '600 13px ui-monospace,monospace', color: '#7fb0f0' }}>{quality}</span>
+            <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>JPEG quality</span>
+            <span style={{ font: '600 13px ui-monospace,monospace', color: 'var(--accent-text)' }}>{quality}</span>
           </div>
           <input type="range" min={50} max={100} step={1} value={quality} onChange={(e) => onQualityChange(Number(e.target.value))} style={{ width: '100%', marginBottom: 16 }} />
         </>
@@ -94,7 +94,7 @@ export default function ExportSizeQualityFields({
         ))}
       </div>
       {format === 'original' && hasRawOriginal && metadata !== 'keep' && (
-        <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.45)', marginTop: 8, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)', marginTop: 8, lineHeight: 1.5 }}>
           RAW originals are rewritten in place with exiftool — camera maker-note data may not be fully removable on
           all RAW formats.
         </div>
@@ -112,12 +112,12 @@ function FormatCard({ active, title, subtitle, onClick }: { active: boolean; tit
         padding: '12px 14px',
         borderRadius: 10,
         cursor: 'default',
-        border: active ? '1.5px solid #3584e4' : '1px solid rgba(255,255,255,0.1)',
-        background: active ? 'rgba(53,132,228,0.14)' : 'rgba(255,255,255,0.04)',
+        border: active ? '1.5px solid #3584e4' : '1px solid var(--border)',
+        background: active ? 'rgba(53,132,228,0.14)' : 'var(--overlay-weak)',
       }}
     >
-      <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', marginBottom: 3 }}>{title}</div>
-      <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.5)' }}>{subtitle}</div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 3 }}>{title}</div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)' }}>{subtitle}</div>
     </div>
   );
 }
@@ -128,9 +128,9 @@ function chipStyle(active: boolean): CSSProperties {
     borderRadius: 7,
     fontSize: 12,
     cursor: 'default',
-    color: active ? '#fff' : 'rgba(255,255,255,0.7)',
-    background: active ? '#3584e4' : 'rgba(255,255,255,0.06)',
+    color: active ? '#fff' : 'var(--text-dim)',
+    background: active ? '#3584e4' : 'var(--overlay-weak)',
   };
 }
 
-const labelStyle: CSSProperties = { fontSize: 11, letterSpacing: '.05em', color: 'rgba(255,255,255,0.45)', marginBottom: 8 };
+const labelStyle: CSSProperties = { fontSize: 11, letterSpacing: '.05em', color: 'var(--text-dimmer)', marginBottom: 8 };

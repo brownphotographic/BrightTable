@@ -41,14 +41,14 @@ export default function Sidebar({
 
   const versionWarning = !!status && !status.serverVersionSupported;
   const dotColor = checking
-    ? 'rgba(255,255,255,0.3)'
+    ? 'var(--text-dimmer)'
     : status
       ? versionWarning
         ? 'var(--warn)'
         : '#2ec27e'
       : error
         ? '#e01b24'
-        : 'rgba(255,255,255,0.3)';
+        : 'var(--text-dimmer)';
   const statusText = checking
     ? 'Connecting…'
     : status
@@ -63,8 +63,8 @@ export default function Sidebar({
         display: 'flex',
         flexDirection: 'column',
         minHeight: 0,
-        background: '#303030',
-        borderRight: '1px solid rgba(0,0,0,0.4)',
+        background: 'var(--panel)',
+        borderRight: '1px solid var(--border-strong)',
         padding: '10px 9px',
       }}
     >
@@ -83,7 +83,7 @@ export default function Sidebar({
               borderRadius: 9,
               cursor: 'default',
               marginBottom: 1,
-              color: isActive ? '#fff' : 'rgba(255,255,255,0.85)',
+              color: isActive ? 'var(--accent-text)' : 'var(--text-dim)',
               background: isActive ? 'rgba(53,132,228,0.28)' : 'transparent',
             }}
           >
@@ -97,14 +97,14 @@ export default function Sidebar({
               }}
             />
             <span style={{ flex: 1, fontSize: 13.5 }}>{n.label}</span>
-            <span style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.4)', fontVariantNumeric: 'tabular-nums' }}>
+            <span style={{ fontSize: 11.5, color: 'var(--text-dimmer)', fontVariantNumeric: 'tabular-nums' }}>
               {counts[n.id]}
             </span>
           </div>
         );
       })}
 
-      <div style={{ height: 1, background: 'rgba(255,255,255,0.08)', margin: '7px 4px' }} />
+      <div style={{ height: 1, background: 'var(--border)', margin: '7px 4px' }} />
       {(() => {
         const isActive = active === 'trash';
         return (
@@ -119,7 +119,7 @@ export default function Sidebar({
               borderRadius: 9,
               cursor: 'default',
               marginBottom: 1,
-              color: isActive ? '#fff' : 'rgba(255,255,255,0.85)',
+              color: isActive ? 'var(--danger)' : 'var(--text-dim)',
               background: isActive ? 'rgba(224,27,36,0.28)' : 'transparent',
             }}
           >
@@ -133,7 +133,7 @@ export default function Sidebar({
               }}
             />
             <span style={{ flex: 1, fontSize: 13.5 }}>Trash</span>
-            <span style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.4)', fontVariantNumeric: 'tabular-nums' }}>
+            <span style={{ fontSize: 11.5, color: 'var(--text-dimmer)', fontVariantNumeric: 'tabular-nums' }}>
               {counts.trash}
             </span>
           </div>
@@ -147,7 +147,7 @@ export default function Sidebar({
           alignItems: 'center',
           gap: 8,
           fontSize: 11.5,
-          color: 'rgba(255,255,255,0.5)',
+          color: 'var(--text-dim)',
           padding: '6px 6px 2px',
         }}
       >

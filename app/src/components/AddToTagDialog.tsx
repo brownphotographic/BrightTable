@@ -120,22 +120,22 @@ export default function AddToTagDialog({
           maxWidth: '92%',
           height: 560,
           maxHeight: '86%',
-          background: '#242424',
+          background: 'var(--dialog-bg)',
           borderRadius: 14,
           boxShadow: '0 24px 70px rgba(0,0,0,0.7)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          border: '1px solid var(--border)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
         }}
       >
-        <div style={{ height: 50, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '0 10px 0 18px', background: '#303030', borderBottom: '1px solid rgba(0,0,0,0.4)' }}>
+        <div style={{ height: 50, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '0 10px 0 18px', background: 'var(--panel)', borderBottom: '1px solid rgba(0,0,0,0.4)' }}>
           <span style={{ fontSize: 14, fontWeight: 700 }}>Add to Tag</span>
-          <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)' }}>· {count} selected</span>
+          <span style={{ fontSize: 12.5, color: 'var(--text-dimmer)' }}>· {count} selected</span>
           <div style={{ flex: 1 }} />
           <div
             onClick={assigning ? undefined : onClose}
-            style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default', fontSize: 14, opacity: assigning ? 0.5 : 1 }}
+            style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--overlay-medium)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default', fontSize: 14, opacity: assigning ? 0.5 : 1 }}
           >
             ✕
           </div>
@@ -172,7 +172,7 @@ export default function AddToTagDialog({
                   borderRadius: '50%',
                   background: c,
                   cursor: 'default',
-                  boxShadow: newColor === c ? '0 0 0 2px #242424, 0 0 0 4px rgba(255,255,255,0.7)' : '0 0 0 1px rgba(255,255,255,0.15)',
+                  boxShadow: newColor === c ? '0 0 0 2px var(--dialog-bg), 0 0 0 4px var(--border-strong)' : '0 0 0 1px var(--border-strong)',
                 }}
               />
             ))}
@@ -181,7 +181,7 @@ export default function AddToTagDialog({
 
         {totalPending > 0 && (
           <div style={{ flexShrink: 0, padding: '10px 18px', borderBottom: '1px solid rgba(0,0,0,0.3)' }}>
-            <div style={{ fontSize: 10.5, letterSpacing: '.06em', color: 'rgba(255,255,255,0.4)', marginBottom: 8 }}>TO ASSIGN</div>
+            <div style={{ fontSize: 10.5, letterSpacing: '.06em', color: 'var(--text-dimmer)', marginBottom: 8 }}>TO ASSIGN</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {[...pendingExisting].map((id) => {
                 const t = tags?.find((x) => x.id === id);
@@ -230,7 +230,7 @@ export default function AddToTagDialog({
                     height: 16,
                     borderRadius: 4,
                     flexShrink: 0,
-                    border: isPending ? 'none' : '1.5px solid rgba(255,255,255,0.3)',
+                    border: isPending ? 'none' : '1.5px solid var(--border-strong)',
                     background: isPending ? 'var(--accent)' : 'transparent',
                     display: 'flex',
                     alignItems: 'center',
@@ -241,7 +241,7 @@ export default function AddToTagDialog({
                 >
                   {isPending && '✓'}
                 </div>
-                <div style={{ width: 12, height: 12, borderRadius: '50%', flexShrink: 0, background: t.color ?? 'rgba(255,255,255,0.3)' }} />
+                <div style={{ width: 12, height: 12, borderRadius: '50%', flexShrink: 0, background: t.color ?? 'var(--text-dimmer)' }} />
                 <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {t.name}
                 </div>
@@ -272,16 +272,16 @@ function PendingChip({ color, name, onRemove }: { color: string | null; name: st
         gap: 6,
         padding: '4px 6px 4px 9px',
         borderRadius: 999,
-        background: 'rgba(255,255,255,0.08)',
+        background: 'var(--overlay-medium)',
         fontSize: 12,
       }}
     >
-      <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: color ?? 'rgba(255,255,255,0.35)' }} />
+      <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: color ?? 'var(--text-dimmer)' }} />
       {name}
       <div
         onClick={onRemove}
         title="Remove"
-        style={{ cursor: 'default', color: 'rgba(255,255,255,0.5)', fontSize: 11, padding: '0 2px' }}
+        style={{ cursor: 'default', color: 'var(--text-dimmer)', fontSize: 11, padding: '0 2px' }}
       >
         ✕
       </div>
@@ -293,10 +293,10 @@ const inputStyle: CSSProperties = {
   flex: 1,
   height: 34,
   padding: '0 12px',
-  background: 'rgba(0,0,0,0.3)',
-  border: '1px solid rgba(255,255,255,0.1)',
+  background: 'var(--surface-sunken)',
+  border: '1px solid var(--border)',
   borderRadius: 9,
-  color: '#fff',
+  color: 'var(--text)',
   fontSize: 13,
 };
 
@@ -312,9 +312,9 @@ const btnBase: CSSProperties = {
 
 const btnSecondary: CSSProperties = {
   ...btnBase,
-  border: '1px solid rgba(255,255,255,0.14)',
-  background: 'rgba(255,255,255,0.06)',
-  color: '#fff',
+  border: '1px solid var(--border-strong)',
+  background: 'var(--overlay-weak)',
+  color: 'var(--text)',
 };
 
 function btnPrimary(enabled: boolean): CSSProperties {

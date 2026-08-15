@@ -24,7 +24,7 @@ export default function MetadataPanel({
         width: 312,
         flexShrink: 0,
         borderLeft: '1px solid rgba(0,0,0,0.4)',
-        background: '#222',
+        background: 'var(--surface-sunken)',
         display: 'flex',
         flexDirection: 'column',
         minHeight: 0,
@@ -49,7 +49,7 @@ export default function MetadataPanel({
             width: 28,
             height: 28,
             borderRadius: '50%',
-            background: 'rgba(255,255,255,0.08)',
+            background: 'var(--overlay-medium)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -57,8 +57,8 @@ export default function MetadataPanel({
             position: 'relative',
           }}
         >
-          <div style={{ position: 'absolute', width: 11, height: 1.6, background: '#fff', transform: 'rotate(45deg)', borderRadius: 1 }} />
-          <div style={{ position: 'absolute', width: 11, height: 1.6, background: '#fff', transform: 'rotate(-45deg)', borderRadius: 1 }} />
+          <div style={{ position: 'absolute', width: 11, height: 1.6, background: 'var(--text)', transform: 'rotate(45deg)', borderRadius: 1 }} />
+          <div style={{ position: 'absolute', width: 11, height: 1.6, background: 'var(--text)', transform: 'rotate(-45deg)', borderRadius: 1 }} />
         </div>
       </div>
 
@@ -77,7 +77,7 @@ export default function MetadataPanel({
                 border: '1px solid rgba(53,132,228,0.3)',
                 fontSize: 11.5,
                 lineHeight: 1.45,
-                color: '#9cc2f0',
+                color: 'var(--accent-text)',
               }}
             >
               Showing {asset.fileName} — {selected.length} photos selected. Editing applies to
@@ -90,7 +90,7 @@ export default function MetadataPanel({
           <DescriptionEditor key={asset.id} asset={asset} onEdit={(patch) => onEdit(asset.id, patch)} />
         </div>
       ) : (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: 13, lineHeight: 1.6, padding: 30 }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: 'var(--text-dimmer)', fontSize: 13, lineHeight: 1.6, padding: 30 }}>
           Select a photo to view
           <br />
           its metadata.
@@ -132,8 +132,8 @@ function DescriptionEditor({
   }
 
   return (
-    <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-      <div style={{ fontSize: 10.5, letterSpacing: '.06em', color: 'rgba(255,255,255,0.4)', marginBottom: 9 }}>
+    <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+      <div style={{ fontSize: 10.5, letterSpacing: '.06em', color: 'var(--text-dimmer)', marginBottom: 9 }}>
         CAPTION / DESCRIPTION
       </div>
       <textarea
@@ -146,10 +146,10 @@ function DescriptionEditor({
         style={{
           width: '100%',
           padding: '8px 11px',
-          background: '#2c2c2c',
-          border: '1px solid rgba(255,255,255,0.1)',
+          background: 'var(--surface-sunken)',
+          border: '1px solid var(--border)',
           borderRadius: 8,
-          color: '#fff',
+          color: 'var(--text)',
           fontSize: 13,
           resize: 'vertical',
           fontFamily: 'inherit',

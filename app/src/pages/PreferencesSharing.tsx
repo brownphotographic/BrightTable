@@ -109,7 +109,7 @@ function ServiceCard({
       <div style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '13px 16px' }}>
         <Avatar color={color} letter={letter} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 700, color: '#fff' }}>{name}</div>
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text)' }}>{name}</div>
           <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{blurb}</div>
         </div>
       </div>
@@ -131,7 +131,7 @@ function ComingSoonCard({ color, letter, name, blurb }: { color: string; letter:
       <div style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '13px 16px' }}>
         <Avatar color={color} letter={letter} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 700, color: '#fff' }}>{name}</div>
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text)' }}>{name}</div>
           <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{blurb}</div>
         </div>
         <span
@@ -140,7 +140,7 @@ function ComingSoonCard({ color, letter, name, blurb }: { color: string; letter:
             fontWeight: 700,
             letterSpacing: '.03em',
             color: 'var(--text-dimmer)',
-            background: 'rgba(255,255,255,0.06)',
+            background: 'var(--overlay-weak)',
             padding: '4px 9px',
             borderRadius: 6,
             flexShrink: 0,
@@ -162,4 +162,4 @@ const panel: CSSProperties = {
 
 const btnBase: CSSProperties = { height: 30, padding: '0 12px', borderRadius: 8, fontSize: 12, cursor: 'default', border: 'none', flexShrink: 0 };
 
-const btnSecondary: CSSProperties = { ...btnBase, border: '1px solid var(--border-strong)', background: 'rgba(255,255,255,0.06)', color: '#fff' };
+const btnSecondary: CSSProperties = { ...btnBase, border: '1px solid var(--border-strong)', background: 'var(--overlay-weak)', color: 'var(--text)' };

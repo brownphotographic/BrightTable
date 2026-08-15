@@ -98,8 +98,8 @@ const AssetTile = memo(function AssetTile({
         borderRadius: 8,
         overflow: 'hidden',
         cursor: 'default',
-        background: '#222',
-        boxShadow: selected ? '0 0 0 2px #3584e4, 0 2px 10px rgba(0,0,0,.45)' : '0 0 0 1px rgba(255,255,255,0.07)',
+        background: 'var(--surface-sunken)',
+        boxShadow: selected ? '0 0 0 2px #3584e4, 0 2px 10px rgba(0,0,0,.45)' : '0 0 0 1px var(--border)',
         position: 'relative',
         // Without this, the browser's own double-tap-to-zoom gesture
         // recognizer swallows both taps of a touchpad/touch double-tap
@@ -230,7 +230,7 @@ const AssetTile = memo(function AssetTile({
             title={`Rate ${v}`}
             style={{ width: 12, height: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default' }}
           >
-            <Star filled={v <= (asset.rating || 0)} size={8} />
+            <Star filled={v <= (asset.rating || 0)} size={8} dimColor="rgba(255,255,255,0.3)" />
           </div>
         ))}
         <div
@@ -241,7 +241,7 @@ const AssetTile = memo(function AssetTile({
           title="Reject"
           style={{ width: 12, height: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default' }}
         >
-          <RejectIcon active={asset.rating === -1} size={9} />
+          <RejectIcon active={asset.rating === -1} size={9} dimColor="rgba(255,255,255,0.3)" />
         </div>
         {asset.unsyncedMetadata && (
           // A local sidecar/embedded file has a rating and/or description

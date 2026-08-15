@@ -336,10 +336,10 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
         <div onClick={onClose} style={{ cursor: 'default', color: 'var(--accent)', fontSize: 13 }}>
           ✕ Close Search
         </div>
-        <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.15)' }} />
+        <div style={{ width: 1, height: 18, background: 'var(--overlay-strong)' }} />
         <span style={{ fontSize: 14, fontWeight: 700 }}>"{query}"</span>
         {assets && (
-          <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)' }}>
+          <span style={{ fontSize: 12.5, color: 'var(--text-dimmer)' }}>
             {assets.length} result{assets.length === 1 ? '' : 's'}
           </span>
         )}

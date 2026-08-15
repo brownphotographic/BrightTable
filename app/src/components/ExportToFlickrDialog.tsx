@@ -119,10 +119,10 @@ export default function ExportToFlickrDialog({ assets, onClose, onExported }: { 
           width: 480,
           maxWidth: '92%',
           maxHeight: '86vh',
-          background: '#242424',
+          background: 'var(--dialog-bg)',
           borderRadius: 14,
           boxShadow: '0 24px 70px rgba(0,0,0,0.7)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          border: '1px solid var(--border)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -136,12 +136,12 @@ export default function ExportToFlickrDialog({ assets, onClose, onExported }: { 
             alignItems: 'center',
             gap: 10,
             padding: '0 10px 0 18px',
-            background: '#303030',
+            background: 'var(--panel)',
             borderBottom: '1px solid rgba(0,0,0,0.4)',
           }}
         >
           <span style={{ fontSize: 14, fontWeight: 700 }}>Share to Flickr</span>
-          <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)' }}>
+          <span style={{ fontSize: 12.5, color: 'var(--text-dimmer)' }}>
             · {n} photo{n === 1 ? '' : 's'} selected
           </span>
           <div style={{ flex: 1 }} />
@@ -164,8 +164,8 @@ export default function ExportToFlickrDialog({ assets, onClose, onExported }: { 
             hasVideo={assets.some(isVideoAsset)}
           />
 
-          <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'rgba(255,255,255,0.45)', margin: '18px 0 8px' }}>ALBUM</div>
-          {albumsError && <div style={{ fontSize: 11.5, color: '#ffd699', marginBottom: 8, lineHeight: 1.5 }}>{albumsError}</div>}
+          <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'var(--text-dimmer)', margin: '18px 0 8px' }}>ALBUM</div>
+          {albumsError && <div style={{ fontSize: 11.5, color: 'var(--warn)', marginBottom: 8, lineHeight: 1.5 }}>{albumsError}</div>}
           <select
             value={selectedAlbumId}
             onChange={(e) => setSelectedAlbumId(e.target.value)}
@@ -174,9 +174,9 @@ export default function ExportToFlickrDialog({ assets, onClose, onExported }: { 
               height: 36,
               padding: '0 10px',
               borderRadius: 9,
-              background: 'rgba(0,0,0,0.3)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              color: '#fff',
+              background: 'var(--surface-sunken)',
+              border: '1px solid var(--border)',
+              color: 'var(--text)',
               fontSize: 12.5,
             }}
           >
@@ -198,16 +198,16 @@ export default function ExportToFlickrDialog({ assets, onClose, onExported }: { 
                 height: 34,
                 marginTop: 8,
                 padding: '0 12px',
-                background: 'rgba(0,0,0,0.3)',
-                border: '1px solid rgba(255,255,255,0.1)',
+                background: 'var(--surface-sunken)',
+                border: '1px solid var(--border)',
                 borderRadius: 9,
-                color: '#fff',
+                color: 'var(--text)',
                 fontSize: 13,
               }}
             />
           )}
 
-          <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'rgba(255,255,255,0.45)', margin: '18px 0 8px' }}>PRIVACY</div>
+          <div style={{ fontSize: 11, letterSpacing: '.05em', color: 'var(--text-dimmer)', margin: '18px 0 8px' }}>PRIVACY</div>
           <div style={{ display: 'flex', gap: 6 }}>
             {PRIVACY_OPTIONS.map((opt) => (
               <div
@@ -222,8 +222,8 @@ export default function ExportToFlickrDialog({ assets, onClose, onExported }: { 
                   fontSize: 12,
                   borderRadius: 7,
                   cursor: 'default',
-                  color: privacy === opt.value ? '#fff' : 'rgba(255,255,255,0.7)',
-                  background: privacy === opt.value ? '#3584e4' : 'rgba(255,255,255,0.06)',
+                  color: privacy === opt.value ? '#fff' : 'var(--text-dim)',
+                  background: privacy === opt.value ? '#3584e4' : 'var(--overlay-weak)',
                 }}
               >
                 {opt.label}

@@ -1,4 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   deleteAssets,
   getPerson,
@@ -38,6 +39,19 @@ function prevValuesFor(asset: AssetSummary | undefined, patch: AssetMetadataPatc
   if (patch.description !== undefined) prev.description = asset?.description ?? null;
   return prev;
 }
+
+// A person's whole photo list is fetched up front (unlike Photos/Folders'
+// server-paginated time/folder buckets), but still rendered windowed like
+// they are - without this, a person with thousands of photos mounted every
+// single AssetTile's DOM subtree at once, which could peg the webview's
+// render thread for seconds (invisible to BrightTable's own CPU/RAM readout,
+// since that only samples the Rust process - see `get_resource_usage` - not
+// the separate webview process actually doing the work) and, because it's a
+// single-page app, made every tab feel frozen along with it. There's no
+// real "bucket" to virtualize over here the way Folders has real folders,
+// so this just chunks the flat asset list into fixed-size groups purely for
+// windowing purposes.
+const PEOPLE_GRID_CHUNK_SIZE = 60;
 
 export interface PeopleBrowserHandle {
   openExportToFolder: () => void;
@@ -128,6 +142,33 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
   }, [person]);
 
   const flatIds = useMemo(() => (person?.assets ?? []).map((a) => a.id), [person]);
+
+  const assetChunks = useMemo(() => {
+    const assets = person?.assets ?? [];
+    const chunks: AssetSummary[][] = [];
+    for (let i = 0; i < assets.length; i += PEOPLE_GRID_CHUNK_SIZE) {
+      chunks.push(assets.slice(i, i + PEOPLE_GRID_CHUNK_SIZE));
+    }
+    return chunks;
+  }, [person]);
+
+  const gridContainerRef = useRef<HTMLDivElement>(null);
+  const gridVirtualizer = useVirtualizer({
+    count: assetChunks.length,
+    getScrollElement: () => gridContainerRef.current,
+    // A rough guess (~6 columns of 3:2 tiles) - corrected per-chunk once it
+    // actually renders via virtualizer.measureElement, same as Folders'
+    // bucket virtualizer.
+    estimateSize: () => Math.ceil(PEOPLE_GRID_CHUNK_SIZE / 6) * 124,
+    overscan: 2,
+  });
+
+  useEffect(() => {
+    // A newly-opened person's chunk heights have nothing to do with the
+    // previous one's - avoid rendering a window sized off stale estimates.
+    gridVirtualizer.measure();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openPersonId]);
 
   const selectedAssets = useMemo(
     () => [...selected].map((id) => assetById.get(id)).filter((a): a is AssetSummary => !!a),
@@ -435,9 +476,9 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
         <div onClick={() => setOpenPersonId(null)} style={{ cursor: 'default', color: 'var(--accent)', fontSize: 13 }}>
           ← People
         </div>
-        <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.15)' }} />
+        <div style={{ width: 1, height: 18, background: 'var(--overlay-strong)' }} />
         <span style={{ fontSize: 14, fontWeight: 700, fontStyle: person.name ? 'normal' : 'italic', opacity: person.name ? 1 : 0.7 }}>{displayName}</span>
-        <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)' }}>
+        <span style={{ fontSize: 12.5, color: 'var(--text-dimmer)' }}>
           {person.assets.length} photo{person.assets.length === 1 ? '' : 's'}
         </span>
         <div style={{ flex: 1 }} />
@@ -471,22 +512,33 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
       )}
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 16 }}>
+        <div ref={gridContainerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 16 }}>
           {person.assets.length === 0 ? (
             <div style={{ color: 'var(--text-dimmer)', fontSize: 12.5 }}>No photos of this person yet.</div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: 12 }}>
-              {person.assets.map((a) => (
-                <AssetTile
-                  key={a.id}
-                  asset={a}
-                  selected={selected.has(a.id)}
-                  onToggleSelect={handleThumbClick}
-                  onToggleOne={toggleOne}
-                  onOpen={setOpenId}
-                  onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
-                  onRate={(id, rating) => commitEdit(id, { rating })}
-                />
+            <div style={{ height: gridVirtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
+              {gridVirtualizer.getVirtualItems().map((item) => (
+                <div
+                  key={item.key}
+                  ref={gridVirtualizer.measureElement}
+                  data-index={item.index}
+                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${item.start}px)` }}
+                >
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: 12, paddingBottom: 12 }}>
+                    {assetChunks[item.index].map((a) => (
+                      <AssetTile
+                        key={a.id}
+                        asset={a}
+                        selected={selected.has(a.id)}
+                        onToggleSelect={handleThumbClick}
+                        onToggleOne={toggleOne}
+                        onOpen={setOpenId}
+                        onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
+                        onRate={(id, rating) => commitEdit(id, { rating })}
+                      />
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
           )}
@@ -559,7 +611,7 @@ function PersonCard({
       onMouseLeave={() => setHovered(false)}
       style={{ cursor: 'default' }}
     >
-      <div style={{ aspectRatio: '1 / 1', borderRadius: '50%', overflow: 'hidden', position: 'relative', background: '#222', boxShadow: '0 0 0 1px rgba(255,255,255,0.07)' }}>
+      <div style={{ aspectRatio: '1 / 1', borderRadius: '50%', overflow: 'hidden', position: 'relative', background: 'var(--surface-sunken)', boxShadow: '0 0 0 1px var(--border)' }}>
         <img src={personThumbnailSrc(person.id)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         {hovered && (
           <div style={{ position: 'absolute', top: 6, right: 6, display: 'flex', gap: 5 }}>
@@ -591,7 +643,7 @@ function PersonCard({
       >
         {person.name || 'Unnamed person'}
       </div>
-      <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.45)', textAlign: 'center' }}>
+      <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)', textAlign: 'center' }}>
         {person.assetCount} photo{person.assetCount === 1 ? '' : 's'}
       </div>
     </div>
@@ -628,7 +680,7 @@ function RenamePersonDialog({
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={busy ? undefined : onClose}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 360, maxWidth: '92%', background: '#242424', borderRadius: 14, boxShadow: '0 24px 70px rgba(0,0,0,0.7)', border: '1px solid rgba(255,255,255,0.08)', padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 360, maxWidth: '92%', background: 'var(--dialog-bg)', borderRadius: 14, boxShadow: '0 24px 70px rgba(0,0,0,0.7)', border: '1px solid var(--border)', padding: 20 }}>
         <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 14 }}>{isNaming ? 'Name This Person' : 'Rename Person'}</div>
         <input
           value={name}
@@ -656,7 +708,7 @@ function RenamePersonDialog({
 
 function BarTextButton({ onClick, danger, children }: { onClick: () => void; danger?: boolean; children: React.ReactNode }) {
   return (
-    <div onClick={onClick} style={{ fontSize: 12.5, cursor: 'default', color: danger ? '#ff8080' : 'rgba(255,255,255,0.75)', padding: '0 6px' }}>
+    <div onClick={onClick} style={{ fontSize: 12.5, cursor: 'default', color: danger ? '#ff8080' : 'var(--text-dim)', padding: '0 6px' }}>
       {children}
     </div>
   );
@@ -679,10 +731,10 @@ const inputStyle: CSSProperties = {
   flex: 1,
   height: 34,
   padding: '0 12px',
-  background: 'rgba(0,0,0,0.3)',
-  border: '1px solid rgba(255,255,255,0.1)',
+  background: 'var(--surface-sunken)',
+  border: '1px solid var(--border)',
   borderRadius: 9,
-  color: '#fff',
+  color: 'var(--text)',
   fontSize: 13,
 };
 
@@ -698,9 +750,9 @@ const btnBase: CSSProperties = {
 
 const btnSecondary: CSSProperties = {
   ...btnBase,
-  border: '1px solid rgba(255,255,255,0.14)',
-  background: 'rgba(255,255,255,0.06)',
-  color: '#fff',
+  border: '1px solid var(--border-strong)',
+  background: 'var(--overlay-weak)',
+  color: 'var(--text)',
 };
 
 function btnPrimary(enabled: boolean): CSSProperties {

@@ -1763,16 +1763,16 @@ function StatusBar({
         alignItems: 'center',
         gap: 13,
         padding: '0 12px',
-        background: '#2b2b2b',
-        borderTop: '1px solid rgba(0,0,0,0.4)',
+        background: 'var(--panel-3)',
+        borderTop: '1px solid var(--border-strong)',
         fontSize: 11.5,
-        color: 'rgba(255,255,255,0.5)',
+        color: 'var(--text-dim)',
       }}
     >
       <span>{totalCount} assets</span>
       {selectedCount > 0 && <span>· {selectedCount} selected</span>}
       <div style={{ flex: 1 }} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'rgba(255,255,255,0.55)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-dim)' }}>
         <span style={{ fontSize: 11.5 }}>Thumbnails</span>
         <div style={{ position: 'relative', width: 12, height: 12, flexShrink: 0 }}>
           <div style={{ position: 'absolute', left: 0, top: 0, width: 8, height: 8, border: '1.5px solid currentColor', borderRadius: '50%' }} />
@@ -1863,10 +1863,23 @@ function BucketContent({
   onRate: (assetId: string, rating: number) => Promise<void>;
   resolveAsset: (id: string) => AssetSummary | undefined;
 }) {
-  const monthLabel = parseCalendarDate(bucket.timeBucket).toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'long',
-  });
+  // `react-virtual`'s scroll listener re-renders PhotosBrowser (and every
+  // currently-mounted BucketContent/DayGroups with it) on every scroll tick
+  // just to recompute getVirtualItems() - toLocaleDateString is an Intl
+  // call, expensive enough that redoing it here unmemoized, for every
+  // visible+overscanned bucket, on every one of those ticks, was the actual
+  // source of Photos' choppy scrolling (Folders has no per-day grouping/
+  // labeling layer at all, which is why it stayed smooth on the same
+  // virtualizer). bucket.timeBucket only changes when this bucket itself
+  // does, so this now only runs once per bucket instead of once per frame.
+  const monthLabel = useMemo(
+    () =>
+      parseCalendarDate(bucket.timeBucket).toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'long',
+      }),
+    [bucket.timeBucket],
+  );
 
   return (
     <div>
@@ -1925,13 +1938,26 @@ function DayGroups({
   onRate: (assetId: string, rating: number) => Promise<void>;
   resolveAsset: (id: string) => AssetSummary | undefined;
 }) {
-  const groups = groupByDay(assets);
+  // Same reasoning as BucketContent's monthLabel memo just above - grouping
+  // plus two toLocaleDateString Intl calls per day, previously redone from
+  // scratch on every scroll-driven re-render for every visible bucket, was
+  // the main source of Photos' choppy scrolling. `assets` is the bucket's
+  // array from filteredAssetCache (see useBucketMemo), which keeps the same
+  // reference across a pure scroll - it only changes when that bucket's
+  // underlying data actually does - so this now runs once per bucket
+  // content change instead of once per frame.
+  const dayGroups = useMemo(() => {
+    const groups = groupByDay(assets);
+    return [...groups.entries()].map(([day, items]) => {
+      const place = placeLabel(items[0]);
+      const dateObj = parseCalendarDate(day);
+      const dayLabel = `${dateObj.toLocaleDateString(undefined, { weekday: 'long' })} · ${dateObj.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}`;
+      return { day, items, place, dayLabel };
+    });
+  }, [assets]);
   return (
     <>
-      {[...groups.entries()].map(([day, items]) => {
-        const place = placeLabel(items[0]);
-        const dateObj = parseCalendarDate(day);
-        const dayLabel = `${dateObj.toLocaleDateString(undefined, { weekday: 'long' })} · ${dateObj.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}`;
+      {dayGroups.map(({ day, items, place, dayLabel }) => {
         return (
           <div key={day} style={{ marginBottom: 16 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '2px 2px 10px' }}>

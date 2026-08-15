@@ -54,7 +54,7 @@ export default function ResizeHandles() {
           cursor: 'nwse-resize',
           zIndex: 1001,
           backgroundImage:
-            'repeating-linear-gradient(135deg, rgba(255,255,255,0.4) 0px, rgba(255,255,255,0.4) 1.4px, transparent 1.4px, transparent 4px)',
+            'repeating-linear-gradient(135deg, var(--text-dim) 0px, var(--text-dim) 1.4px, transparent 1.4px, transparent 4px)',
           backgroundPosition: 'bottom right',
           backgroundRepeat: 'no-repeat',
           backgroundSize: '11px 11px',
