@@ -124,7 +124,6 @@ export interface SharingConfig {
 
 export type WindowControlsPosition = 'left' | 'right';
 export type ThemeMode = 'dark' | 'light';
-export type CanvasShade = 'default' | 'white' | 'grey';
 
 export interface AppConfig {
   library: LibraryConfig;
@@ -137,7 +136,6 @@ export interface AppConfig {
   sharing: SharingConfig;
   windowControlsPosition: WindowControlsPosition;
   themeMode: ThemeMode;
-  canvasShade: CanvasShade;
 }
 
 export interface ConnectionStatus {
@@ -341,10 +339,6 @@ export function saveWindowControlsPosition(position: WindowControlsPosition): Pr
 
 export function saveThemeMode(mode: ThemeMode): Promise<AppConfig> {
   return invoke('save_theme_mode', { mode });
-}
-
-export function saveCanvasShade(shade: CanvasShade): Promise<AppConfig> {
-  return invoke('save_canvas_shade', { shade });
 }
 
 export function setRawOverrides(assetIds: string[], isRaw: boolean): Promise<AppConfig> {

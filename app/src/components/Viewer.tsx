@@ -719,7 +719,7 @@ const Viewer = forwardRef<ViewerHandle, {
         position: 'fixed',
         inset: 0,
         zIndex: 200,
-        background: 'var(--photo-canvas)',
+        background: 'var(--canvas)',
         display: 'flex',
         flexDirection: 'column',
         color: 'var(--text)',
@@ -956,7 +956,7 @@ const Viewer = forwardRef<ViewerHandle, {
       </div>
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ flex: 1, position: 'relative', minHeight: 0, background: 'var(--photo-canvas)' }}>
+        <div style={{ flex: 1, position: 'relative', minHeight: 0, background: 'var(--canvas)' }}>
           <div style={{ position: 'absolute', inset: 0, overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 28 }}>
             {/* Fixed-size stage (not sized by the images) so both layers fill the
                 available viewing area via objectFit rather than collapsing to

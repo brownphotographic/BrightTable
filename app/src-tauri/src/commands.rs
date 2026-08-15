@@ -7,7 +7,7 @@ use tauri::{AppHandle, State};
 use crate::apps::{self, AppChoice};
 use crate::art_queue::{self, ArtJob, ArtJobStatus, ArtQueue};
 use crate::cli_process;
-use crate::config::{self, AppConfig, ApplicationsConfig, CanvasShade, ImportSettings, LibraryConfig, RawConverterKind, SharingConfig, SmartStackSettings, ThemeMode, WindowControlsPosition};
+use crate::config::{self, AppConfig, ApplicationsConfig, ImportSettings, LibraryConfig, RawConverterKind, SharingConfig, SmartStackSettings, ThemeMode, WindowControlsPosition};
 use crate::edit_queue::EditJob;
 use crate::export_naming;
 use crate::export_queue::{self, ExportDelivery, ExportFormat, ExportJob, ExportTarget, FlickrAlbumChoice, RenditionOptions};
@@ -85,18 +85,6 @@ pub fn save_theme_mode(
 ) -> Result<AppConfig, String> {
     let mut guard = state.config.lock().unwrap();
     guard.theme_mode = mode;
-    config::save(&app, &guard)?;
-    Ok(guard.clone())
-}
-
-#[tauri::command]
-pub fn save_canvas_shade(
-    app: AppHandle,
-    state: State<AppState>,
-    shade: CanvasShade,
-) -> Result<AppConfig, String> {
-    let mut guard = state.config.lock().unwrap();
-    guard.canvas_shade = shade;
     config::save(&app, &guard)?;
     Ok(guard.clone())
 }

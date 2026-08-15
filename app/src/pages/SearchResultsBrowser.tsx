@@ -1,4 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   deleteAssets,
   revealInFileManager,
@@ -38,6 +39,14 @@ export interface SearchResultsBrowserHandle {
   openExportToFolder: () => void;
   openExportToFlickr: () => void;
 }
+
+// See AlbumsBrowser.tsx/PeopleBrowser.tsx's identical constant/comment - a
+// smart-search hit list is fetched up front too (up to 4000 assets across
+// search_paginated's page cap), so this windows it the same way for the same
+// reason: mounting every AssetTile at once could peg the webview's render
+// thread and freeze the whole single-page app, not just this tab - which is
+// exactly what made typing a follow-up search feel laggy on a large result set.
+const SEARCH_GRID_CHUNK_SIZE = 60;
 
 // Real Immich search (POST /search/smart, Immich's own natural-language
 // "smart search") - a flat results grid replacing whichever tab was showing
@@ -85,6 +94,33 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
   }, [assets]);
 
   const flatIds = useMemo(() => (assets ?? []).map((a) => a.id), [assets]);
+
+  const assetChunks = useMemo(() => {
+    const items = assets ?? [];
+    const chunks: AssetSummary[][] = [];
+    for (let i = 0; i < items.length; i += SEARCH_GRID_CHUNK_SIZE) {
+      chunks.push(items.slice(i, i + SEARCH_GRID_CHUNK_SIZE));
+    }
+    return chunks;
+  }, [assets]);
+
+  const gridContainerRef = useRef<HTMLDivElement>(null);
+  const gridVirtualizer = useVirtualizer({
+    count: assetChunks.length,
+    getScrollElement: () => gridContainerRef.current,
+    // A rough guess (~6 columns of 3:2 tiles) - corrected per-chunk once it
+    // actually renders via virtualizer.measureElement, same as Albums'/
+    // People's chunk virtualizers.
+    estimateSize: () => Math.ceil(SEARCH_GRID_CHUNK_SIZE / 6) * 124,
+    overscan: 2,
+  });
+
+  useEffect(() => {
+    // A new query's chunk heights have nothing to do with the previous one's -
+    // avoid rendering a window sized off stale estimates.
+    gridVirtualizer.measure();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
 
   const selectedAssets = useMemo(
     () => [...selected].map((id) => assetById.get(id)).filter((a): a is AssetSummary => !!a),
@@ -337,7 +373,7 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
           ✕ Close Search
         </div>
         <div style={{ width: 1, height: 18, background: 'var(--overlay-strong)' }} />
-        <span style={{ fontSize: 14, fontWeight: 700 }}>"{query}"</span>
+        <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>"{query}"</span>
         {assets && (
           <span style={{ fontSize: 12.5, color: 'var(--text-dimmer)' }}>
             {assets.length} result{assets.length === 1 ? '' : 's'}
@@ -370,25 +406,36 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
       )}
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 16 }}>
+        <div ref={gridContainerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 16, background: 'var(--canvas)' }}>
           {error && <div style={{ color: 'var(--danger)', fontSize: 13 }}>Couldn't search — {error}.</div>}
           {!assets && !error && <div style={{ color: 'var(--text-dim)', fontSize: 13 }}>Searching…</div>}
           {assets && assets.length === 0 && !error && (
             <div style={{ color: 'var(--text-dimmer)', fontSize: 12.5 }}>No photos matched "{query}".</div>
           )}
           {assets && assets.length > 0 && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: 12 }}>
-              {assets.map((a) => (
-                <AssetTile
-                  key={a.id}
-                  asset={a}
-                  selected={selected.has(a.id)}
-                  onToggleSelect={handleThumbClick}
-                  onToggleOne={toggleOne}
-                  onOpen={setOpenId}
-                  onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
-                  onRate={(id, rating) => commitEdit(id, { rating })}
-                />
+            <div style={{ height: gridVirtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
+              {gridVirtualizer.getVirtualItems().map((item) => (
+                <div
+                  key={item.key}
+                  ref={gridVirtualizer.measureElement}
+                  data-index={item.index}
+                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${item.start}px)` }}
+                >
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: 12, paddingBottom: 12 }}>
+                    {assetChunks[item.index].map((a) => (
+                      <AssetTile
+                        key={a.id}
+                        asset={a}
+                        selected={selected.has(a.id)}
+                        onToggleSelect={handleThumbClick}
+                        onToggleOne={toggleOne}
+                        onOpen={setOpenId}
+                        onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
+                        onRate={(id, rating) => commitEdit(id, { rating })}
+                      />
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
           )}

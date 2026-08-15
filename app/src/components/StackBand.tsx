@@ -119,7 +119,7 @@ export default function StackBand({
         border: '1px solid var(--border)',
         borderRadius: 12,
         padding: '12px 14px',
-        margin: '2px 0',
+        color: 'var(--text)',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 12 }}>

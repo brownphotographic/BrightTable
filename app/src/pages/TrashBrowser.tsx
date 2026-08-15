@@ -57,7 +57,7 @@ export default function TrashBrowser({ onCount }: { onCount?: (n: number) => voi
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      <div style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 24 }}>
+      <div style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 24, background: 'var(--canvas)' }}>
         {assets.length === 0 ? (
           <div style={{ color: 'var(--text-dimmer)', fontSize: 13 }}>Trash is empty.</div>
         ) : (
@@ -80,7 +80,9 @@ export default function TrashBrowser({ onCount }: { onCount?: (n: number) => voi
           display: 'flex',
           alignItems: 'center',
           gap: 13,
-          padding: '0 12px',
+          // Extra right padding keeps "Empty Trash" clear of the window's
+          // bottom-right resize grip (see ResizeHandles.tsx).
+          padding: '0 28px 0 12px',
           background: 'var(--panel-3)',
           borderTop: '1px solid rgba(0,0,0,0.4)',
           fontSize: 11.5,

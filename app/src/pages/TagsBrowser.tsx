@@ -511,7 +511,7 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
           </div>
         )}
 
-        <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
+        <div style={{ flex: 1, overflow: 'auto', padding: 20, background: 'var(--canvas)' }}>
           {listError && <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 12 }}>Couldn't load tags — {listError}.</div>}
           {!tags && !listError && <div style={{ color: 'var(--text-dim)', fontSize: 13 }}>Loading tags…</div>}
           {tags && tags.length === 0 && !listError && (
@@ -623,7 +623,7 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
       )}
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 16 }}>
+        <div style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 16, background: 'var(--canvas)' }}>
           {tag.assets.length === 0 ? (
             <div style={{ color: 'var(--text-dimmer)', fontSize: 12.5 }}>
               No photos tagged yet — select photos anywhere and use "Add to Tag".

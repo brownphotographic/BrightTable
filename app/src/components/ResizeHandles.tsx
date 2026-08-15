@@ -7,12 +7,13 @@ const appWindow = getCurrentWindow();
 // razor-thin edge a Linux window manager happens to hit-test around an
 // undecorated window (varies by WM, and on several is effectively nothing).
 // These are plain invisible drag strips along each edge/corner that call
-// Tauri's own `startResizeDragging`, plus one small visible diagonal-lines
-// grip in the bottom-right corner (the "evident" affordance most desktop
-// apps put there) so there's at least one obvious, generously-sized spot to
-// grab even if the thin edges are still fiddly to hit exactly.
-const EDGE = 6;
-const CORNER = 16;
+// Tauri's own `startResizeDragging`.
+//
+// No bottom-right (SouthEast) handle: that corner is where the Photos/
+// Folders/Trash status bars put their own right-aligned controls (thumbnail
+// zoom slider, "Empty Trash"), and it was stealing clicks from them.
+const EDGE = 8;
+const CORNER = 24;
 
 type Dir = 'North' | 'South' | 'East' | 'West' | 'NorthEast' | 'NorthWest' | 'SouthEast' | 'SouthWest';
 
@@ -39,28 +40,6 @@ export default function ResizeHandles() {
       <div onMouseDown={startDrag('NorthWest')} style={edgeStyle({ top: 0, left: 0, width: CORNER, height: CORNER, cursor: 'nwse-resize' })} />
       <div onMouseDown={startDrag('NorthEast')} style={edgeStyle({ top: 0, right: 0, width: CORNER, height: CORNER, cursor: 'nesw-resize' })} />
       <div onMouseDown={startDrag('SouthWest')} style={edgeStyle({ bottom: 0, left: 0, width: CORNER, height: CORNER, cursor: 'nesw-resize' })} />
-      <div onMouseDown={startDrag('SouthEast')} style={edgeStyle({ bottom: 0, right: 0, width: CORNER, height: CORNER, cursor: 'nwse-resize' })} />
-
-      {/* The one visible grip - diagonal lines in the bottom-right corner,
-          the same spot apps like GIMP/most GTK apps put a resize grip. */}
-      <div
-        onMouseDown={startDrag('SouthEast')}
-        title="Drag to resize"
-        style={edgeStyle({
-          bottom: 2,
-          right: 2,
-          width: 13,
-          height: 13,
-          cursor: 'nwse-resize',
-          zIndex: 1001,
-          backgroundImage:
-            'repeating-linear-gradient(135deg, var(--text-dim) 0px, var(--text-dim) 1.4px, transparent 1.4px, transparent 4px)',
-          backgroundPosition: 'bottom right',
-          backgroundRepeat: 'no-repeat',
-          backgroundSize: '11px 11px',
-          pointerEvents: 'auto',
-        })}
-      />
     </>
   );
 }

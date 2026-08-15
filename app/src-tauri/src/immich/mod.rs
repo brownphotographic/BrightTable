@@ -18,6 +18,33 @@ pub struct ImmichClient {
     http: reqwest::Client,
 }
 
+/// Applied per-request to every `get_json`/`post_json` call (metadata/search/
+/// list endpoints, always small JSON payloads - not the separate thumbnail/
+/// original byte-fetch methods, which can legitimately take much longer for
+/// a large RAW/video and stay uncapped). Without this, a stuck connection
+/// (e.g. the Tailscale/WireGuard tunnel wedged under a burst of concurrent
+/// thumbnail fetches) hung forever instead of failing - so failed requests
+/// piled up rather than freeing their connection/task for the next one, and
+/// there was nothing to report back to the UI either.
+const JSON_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// `reqwest::Error`'s own `Display` only prints the outer "error sending
+/// request for url (...)" wrapper, not *why* - the actual cause (timed out,
+/// connection reset, DNS failure, TLS error, "too many open files") lives in
+/// its `source()` chain and is silently dropped by `{e}`. Walking that chain
+/// explicitly is the difference between the error banner saying just "error
+/// sending request for url (...)" (as seen when this went unfixed) and
+/// something a user can actually act on.
+fn describe_reqwest_error(e: &reqwest::Error) -> String {
+    let mut msg = e.to_string();
+    let mut source = std::error::Error::source(e);
+    while let Some(s) = source {
+        msg.push_str(&format!(": {s}"));
+        source = s.source();
+    }
+    msg
+}
+
 /// GET /server/ping is Immich's unauthenticated health-check endpoint - no
 /// API key needed, so this can run before an `ImmichClient` even exists.
 /// Short timeout since this only exists to disambiguate "on the LAN right
@@ -122,9 +149,10 @@ impl ImmichClient {
             .header("x-api-key", &self.api_key)
             .header("Accept", "application/json")
             .query(query)
+            .timeout(JSON_REQUEST_TIMEOUT)
             .send()
             .await
-            .map_err(|e| format!("Request to {path} failed: {e}"))?;
+            .map_err(|e| format!("Request to {path} failed: {}", describe_reqwest_error(&e)))?;
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
@@ -146,9 +174,10 @@ impl ImmichClient {
             .header("x-api-key", &self.api_key)
             .header("Content-Type", "application/json")
             .json(body)
+            .timeout(JSON_REQUEST_TIMEOUT)
             .send()
             .await
-            .map_err(|e| format!("Request to {path} failed: {e}"))?;
+            .map_err(|e| format!("Request to {path} failed: {}", describe_reqwest_error(&e)))?;
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
@@ -209,7 +238,7 @@ impl ImmichClient {
         body.insert("takenBefore".into(), serde_json::json!(taken_before));
         body.insert("withExif".into(), serde_json::json!(true));
         body.insert("size".into(), serde_json::json!(1000));
-        self.search_paginated("/search/metadata", body).await
+        self.search_paginated("/search/metadata", body, 20).await
     }
 
     /// Trash listing can't use `/search/metadata` at all (see the note on
@@ -244,11 +273,18 @@ impl ImmichClient {
     /// `assets.nextPage`), differing only in `path` and which filter fields
     /// the caller puts in `base_body` (date-bounded timeline/trash listings,
     /// an `albumIds`/`personIds`/`tagIds` filter, or `search_smart`'s free-
-    /// text `query`).
+    /// text `query`). `max_pages` bounds worst-case round trips: a known-
+    /// bounded collection listing (an album/person/tag's asset list) needs to
+    /// come back complete, but `search_smart`'s free-text CLIP query passes a
+    /// much smaller cap (see its own doc comment) - each page is a real
+    /// server-side embedding search, not a cheap DB scan, so paging all the
+    /// way to a generic large cap there means the UI waits out that many
+    /// sequential ML round trips before showing a single result.
     async fn search_paginated(
         &self,
         path: &str,
         mut base_body: serde_json::Map<String, serde_json::Value>,
+        max_pages: u32,
     ) -> Result<Vec<models::AssetSummary>, String> {
         let mut all = Vec::new();
         let mut page = 1u32;
@@ -259,7 +295,7 @@ impl ImmichClient {
             let got = resp.assets.items.len();
             all.extend(resp.assets.items);
             match resp.assets.next_page {
-                Some(next) if got > 0 && page < 20 => {
+                Some(next) if got > 0 && page < max_pages => {
                     page = next.parse().unwrap_or(page + 1);
                 }
                 _ => break,
@@ -629,7 +665,7 @@ impl ImmichClient {
         body.insert("albumIds".into(), serde_json::json!([album_id]));
         body.insert("withExif".into(), serde_json::json!(true));
         body.insert("size".into(), serde_json::json!(1000));
-        let assets = self.search_paginated("/search/metadata", body).await?;
+        let assets = self.search_paginated("/search/metadata", body, 20).await?;
         Ok(AlbumDetail {
             id: raw.id,
             album_name: raw.album_name,
@@ -791,7 +827,7 @@ impl ImmichClient {
         body.insert("personIds".into(), serde_json::json!([person_id]));
         body.insert("withExif".into(), serde_json::json!(true));
         body.insert("size".into(), serde_json::json!(1000));
-        let assets = self.search_paginated("/search/metadata", body).await?;
+        let assets = self.search_paginated("/search/metadata", body, 20).await?;
         Ok(PersonDetail { id: raw.id, name: raw.name, assets })
     }
 
@@ -862,7 +898,7 @@ impl ImmichClient {
         body.insert("tagIds".into(), serde_json::json!([tag_id]));
         body.insert("withExif".into(), serde_json::json!(true));
         body.insert("size".into(), serde_json::json!(1000));
-        let assets = self.search_paginated("/search/metadata", body).await?;
+        let assets = self.search_paginated("/search/metadata", body, 20).await?;
         Ok(TagDetail { id: raw.id, name: raw.value, color: raw.color, assets })
     }
 
@@ -945,18 +981,24 @@ impl ImmichClient {
     /// embeddings), the same mechanism behind Immich's own web UI search
     /// box. Returns the same `SearchResponseDto` envelope as `/search/
     /// metadata` (confirmed against Immich's own `search.dto.ts`), so this
-    /// reuses `search_paginated` unchanged - just a different path and a
-    /// free-text `query` field instead of a structural filter. Capped at
-    /// `size: 200` per page (vs. 1000 for a known-bounded album/person/tag
-    /// asset list) since an open-ended text query against a large library
-    /// could otherwise return an unbounded number of "relevant" results;
-    /// `search_paginated`'s own 20-page cap still applies on top of that.
+    /// reuses `search_paginated` - just a different path and a free-text
+    /// `query` field instead of a structural filter. Capped at `size: 200`
+    /// per page (vs. 1000 for a known-bounded album/person/tag asset list)
+    /// since an open-ended text query against a large library could
+    /// otherwise return an unbounded number of "relevant" results. Unlike
+    /// those bounded listings, this also passes a much smaller *page* cap (3,
+    /// vs. `search_paginated`'s general 20) - each page here is a real
+    /// server-side CLIP embedding search, not a cheap DB scan, so waiting out
+    /// 20 of them serially before the UI shows a single result made a broad
+    /// query feel like it had hung. 3 pages (600 results, already ranked by
+    /// relevance) is generous for a search box and cuts worst-case latency by
+    /// nearly 7x.
     pub async fn search_smart(&self, query: &str) -> Result<Vec<models::AssetSummary>, String> {
         let mut body = serde_json::Map::new();
         body.insert("query".into(), serde_json::json!(query));
         body.insert("withExif".into(), serde_json::json!(true));
         body.insert("size".into(), serde_json::json!(200));
-        self.search_paginated("/search/smart", body).await
+        self.search_paginated("/search/smart", body, 3).await
     }
 
     /// GET /assets/{id} - a single asset's full detail. Confirmed against

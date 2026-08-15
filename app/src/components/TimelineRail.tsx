@@ -26,6 +26,21 @@ function bucketIndexForCount(cumulative: number[], target: number): number {
   return lo;
 }
 
+// Largest bucket index b such that bucketFirstRowIndex[b] <= rowIndex - same
+// binary-search shape as bucketIndexForCount above, used to translate the
+// row-level virtualizer's own visible range (row indices) back into a bucket
+// index for the viewport-thumb math below.
+function bucketIndexForRow(bucketFirstRowIndex: number[], rowIndex: number): number {
+  let lo = 0;
+  let hi = bucketFirstRowIndex.length - 2;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (bucketFirstRowIndex[mid] <= rowIndex) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
 // Right-hand scrubber for the Photos grid - Immich's own timeline has one,
 // and so did the design prototype (`showScrubber`/`scrubLabels` in
 // `Immich Desktop.dc.html`), but it never made it into the real
@@ -43,6 +58,13 @@ function bucketIndexForCount(cumulative: number[], target: number): number {
 // or dragging. Cumulative asset count is stable regardless of what's been
 // measured, so labels/hover/thumb no longer move once drawn.
 //
+// The grid itself now virtualizes at the *row* level (one item per month
+// header/day header/asset row, not one per month - see PhotosBrowser's
+// PhotoRow type) for scroll performance, so this component's own bucket
+// index math needs `bucketFirstRowIndex` (buckets.length + 1 entries, the
+// row index each bucket's content starts at) to translate a bucket index
+// into a row index the virtualizer can actually scroll to, and vice versa.
+//
 // Jumping (click/drag) uses `virtualizer.scrollToIndex` rather than setting
 // `scrollTop` directly off a fraction of `getTotalSize()` - same reasoning:
 // `getTotalSize()` is only as accurate as the estimate for unmeasured
@@ -54,9 +76,11 @@ function bucketIndexForCount(cumulative: number[], target: number): number {
 export default function TimelineRail({
   buckets,
   virtualizer,
+  bucketFirstRowIndex,
 }: {
   buckets: TimeBucketInfo[];
   virtualizer: Virtualizer<HTMLDivElement, Element>;
+  bucketFirstRowIndex: number[];
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<{ y: number; text: string } | null>(null);
@@ -78,8 +102,10 @@ export default function TimelineRail({
   }
 
   const range = virtualizer.range;
-  const viewStart = range ? cumulative[range.startIndex] / totalCount : 0;
-  const viewEnd = range ? cumulative[Math.min(range.endIndex + 1, buckets.length)] / totalCount : 1;
+  const viewStartBucket = range ? bucketIndexForRow(bucketFirstRowIndex, range.startIndex) : 0;
+  const viewEndBucket = range ? bucketIndexForRow(bucketFirstRowIndex, range.endIndex) + 1 : buckets.length;
+  const viewStart = cumulative[viewStartBucket] / totalCount;
+  const viewEnd = cumulative[Math.min(viewEndBucket, buckets.length)] / totalCount;
   const viewFrac = Math.max(0.02, viewEnd - viewStart);
   const thumbTop = Math.min(viewStart, 1 - viewFrac);
 
@@ -92,7 +118,8 @@ export default function TimelineRail({
 
   const jumpToFraction = (fraction: number) => {
     const target = Math.min(totalCount - 1, Math.max(0, fraction * totalCount));
-    virtualizer.scrollToIndex(bucketIndexForCount(cumulative, target), { align: 'start' });
+    const bucketIndex = bucketIndexForCount(cumulative, target);
+    virtualizer.scrollToIndex(bucketFirstRowIndex[bucketIndex], { align: 'start' });
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -123,7 +150,11 @@ export default function TimelineRail({
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseLeave={() => setHover(null)}
-      style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 60, zIndex: 8, cursor: 'ns-resize' }}
+      // Inset from the true right edge - that sliver is reserved for the
+      // window's own resize handle (see ResizeHandles.tsx's EDGE), which
+      // sits on top (zIndex 1000) and would otherwise never get a click
+      // through this rail's much wider (60px) drag-to-scrub hit area.
+      style={{ position: 'absolute', top: 0, right: 8, bottom: 0, width: 60, zIndex: 8, cursor: 'ns-resize' }}
     >
       <div
         style={{
@@ -132,16 +163,20 @@ export default function TimelineRail({
         }}
       />
       {yearTicks.map((t) => (
+        // clamp() keeps the tick/label fully inside the rail - at t.top near
+        // 0% or 100% (first/last year), centering on the raw percentage would
+        // hang the label half outside the rail's box, bleeding into whatever
+        // sits above/below it (the bottom status bar, in particular).
         <div key={t.year}>
           <div
             style={{
-              position: 'absolute', right: 5, top: `${t.top}%`, transform: 'translateY(-50%)',
+              position: 'absolute', right: 5, top: `clamp(8px, ${t.top}%, calc(100% - 8px))`, transform: 'translateY(-50%)',
               width: 7, height: 2, borderRadius: 1, background: 'var(--text-dimmer)', pointerEvents: 'none',
             }}
           />
           <div
             style={{
-              position: 'absolute', right: 15, top: `${t.top}%`, transform: 'translateY(-50%)',
+              position: 'absolute', right: 15, top: `clamp(8px, ${t.top}%, calc(100% - 8px))`, transform: 'translateY(-50%)',
               fontSize: 11, fontWeight: 700, color: 'var(--text-dimmer)', whiteSpace: 'nowrap', pointerEvents: 'none',
             }}
           >

@@ -56,25 +56,6 @@ impl Default for ThemeMode {
     }
 }
 
-/// Background surface behind the grid/light-table view and the image
-/// detail/loupe view - Preferences → Configuration, independent of
-/// `ThemeMode`. Defaults to `Default` (today's canvas colour / no visual
-/// change on upgrade). `White` and `Grey` are fixed neutral photo-viewing
-/// surrounds, not theme-dependent.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum CanvasShade {
-    Default,
-    White,
-    Grey,
-}
-
-impl Default for CanvasShade {
-    fn default() -> Self {
-        CanvasShade::Default
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryConfig {
@@ -237,8 +218,6 @@ pub struct AppConfig {
     pub window_controls_position: WindowControlsPosition,
     #[serde(default)]
     pub theme_mode: ThemeMode,
-    #[serde(default)]
-    pub canvas_shade: CanvasShade,
 }
 
 /// Preferences → Sharing. Only Flickr has a real, working connection today -

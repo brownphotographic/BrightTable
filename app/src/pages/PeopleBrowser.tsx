@@ -420,7 +420,7 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
   if (!openPersonId) {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
+        <div style={{ flex: 1, overflow: 'auto', padding: 20, background: 'var(--canvas)' }}>
           {listError && <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 12 }}>Couldn't load people — {listError}.</div>}
           {!people && !listError && <div style={{ color: 'var(--text-dim)', fontSize: 13 }}>Loading people…</div>}
           {people && people.length === 0 && !listError && (
@@ -512,7 +512,7 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
       )}
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div ref={gridContainerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 16 }}>
+        <div ref={gridContainerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 16, background: 'var(--canvas)' }}>
           {person.assets.length === 0 ? (
             <div style={{ color: 'var(--text-dimmer)', fontSize: 12.5 }}>No photos of this person yet.</div>
           ) : (

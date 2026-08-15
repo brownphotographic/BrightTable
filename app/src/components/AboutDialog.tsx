@@ -64,7 +64,7 @@ export default function AboutDialog({ onClose }: { onClose: () => void }) {
 
         <div style={{ height: 1, background: 'var(--overlay-medium)', margin: '18px 0' }} />
 
-        <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)' }}>Copyright © 2026 Rob Brown · MIT License</div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)' }}>Copyright © 2026 Rob Brown · GPL-3.0 License</div>
 
         <button
           onClick={onClose}

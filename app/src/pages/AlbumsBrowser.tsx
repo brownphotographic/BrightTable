@@ -467,7 +467,7 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
           </button>
         </div>
 
-        <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
+        <div style={{ flex: 1, overflow: 'auto', padding: 20, background: 'var(--canvas)' }}>
           {listError && <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 12 }}>Couldn't load albums — {listError}.</div>}
           {!albums && !listError && <div style={{ color: 'var(--text-dim)', fontSize: 13 }}>Loading albums…</div>}
           {albums && albums.length === 0 && !listError && (
@@ -583,7 +583,7 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
       )}
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div ref={gridContainerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 16 }}>
+        <div ref={gridContainerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 16, background: 'var(--canvas)' }}>
           {album.assets.length === 0 ? (
             <div style={{ color: 'var(--text-dimmer)', fontSize: 12.5 }}>
               No photos in this album yet — select photos in Photos or Folders and use "Add to Album".

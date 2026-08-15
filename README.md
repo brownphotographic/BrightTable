@@ -10,13 +10,13 @@ If you decide to use this, please read the warnings below.
 
 **What does it do?**
 
-- The library: Uses Immich and the Immich API as a self hosted asset manager backend
+- The library: Uses Immich and the Immich API as a self hosted asset manager backend. It will not work without Immich!
 
 - Processing: Uses open source RAW editors for photo processing e.g. ART, RawTherapee. 
 
-- The light table (this app): A front end app that uses the above, and creates a (I think) great user experience for  editing your photos.
+- The light table (this app): A front end app that uses the above, and creates a (I think) great user experience for editing your photos.
 
-- GNU/Linux only application. Sorry Windows/Mac users. Actually, not sorry - life is way better on Linux, so come join the fun.
+- Tested on GNU/Linux only. While it technically could be extended to Mac or Windows, I don't have either platform to test and to be honest life is way better on Linux. 
 
 **Warning!**
 
@@ -28,9 +28,9 @@ If you decide to use this, please read the warnings below.
 
 - As they say, backup backup backup!  
 
-- I may or may not address bugs reported by the community. I have a full time job and this is very much a side project in exceptionally rare spare time. I absolutely don't have the time to deep dive bugs encountered. Sorry.
+- I may or may not address bugs reported by the community. I have a full time job and this is very much a side project in my spare time. I  don't have the time to deep dive bugs encountered because of differences in your setup. Sorry.
 
-- Features are the enemy of quality! In the interest of keeping it simple I am unlikely to respond to requests to make the tool integrate with other tools and systems.
+- Features are the enemy of quality! In the interest of keeping it simple I am unlikely to respond to new feature requests.
 
 - Please, please - fork the code! Add your own features to it, repackage it, do something completely different, submit a pull request with a bug fix. Consider this a concept and take it in the direction you want it to go. 
 
@@ -39,10 +39,9 @@ If you decide to use this, please read the warnings below.
 Requires Node.js, Rust/Cargo, and the Tauri CLI (`cargo install tauri-cli`) installed.
 
 - Run in dev mode (hot-reloading frontend + native window): `cd BrightTable && cargo tauri dev`
-
-- Build a distributable AppImage: `cd BrightTable && npm run build:appimage`
-
-  Output lands at `BrightTable/src-tauri/target/release/bundle/appimage/BrightTable_<version>_amd64.AppImage`.
+- AppImmage is included in the folder /app/src-tauri/target/release/bundle/appimage . I recommend using GearLever to manage your AppImages.
+- To build a distributable AppImage: `cd BrightTable && npm run build:appimage`
+  - Output lands at `BrightTable/src-tauri/target/release/bundle/appimage/BrightTable_<version>_amd64.AppImage`.
 
   Note: on some distros with very new glibc/binutils, the bundled `linuxdeploy` tool's `strip` binary can't parse newer libraries and fails the build — `build:appimage` already sets `NO_STRIP=1` to work around this.
 

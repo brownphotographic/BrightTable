@@ -22,7 +22,7 @@ export default function PreferencesConfiguration() {
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState(false);
   const { position, setPosition } = useWindowControls();
-  const { themeMode, setThemeMode, canvasShade, setCanvasShade } = useTheme();
+  const { themeMode, setThemeMode } = useTheme();
 
   useEffect(() => {
     getThumbCacheInfo()
@@ -49,22 +49,6 @@ export default function PreferencesConfiguration() {
             onChange={setThemeMode}
           />
         </Row>
-        <Divider />
-        <Row label="Photo background">
-          <Segmented
-            value={canvasShade}
-            options={[
-              { value: 'white', label: 'White' },
-              { value: 'default', label: 'Default' },
-              { value: 'grey', label: 'Grey' },
-            ]}
-            onChange={setCanvasShade}
-          />
-        </Row>
-      </div>
-      <div style={helpText}>
-        Theme controls the app's overall colors. Photo background sets the surface behind photos
-        in the grid and the full-screen viewer, independent of theme.
       </div>
 
       <div style={{ fontSize: 14, fontWeight: 700, margin: '26px 4px 12px' }}>Window</div>

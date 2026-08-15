@@ -250,7 +250,7 @@ function AppShell() {
           tagsCount={tagsCount}
         />
 
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--photo-canvas)', position: 'relative' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--canvas)', position: 'relative' }}>
           {/* Photos and Folders stay mounted (just hidden) once visited, rather
               than being unmounted on every tab switch - each keeps its own
               assetCache of everything already fetched from Immich this

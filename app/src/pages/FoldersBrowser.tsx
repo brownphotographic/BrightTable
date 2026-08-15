@@ -1405,7 +1405,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         />
       )}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ width: 208, flexShrink: 0, borderRight: '1px solid rgba(0,0,0,0.35)', padding: '10px 8px', overflow: 'auto' }}>
+        <div style={{ width: 208, flexShrink: 0, borderRight: '1px solid rgba(0,0,0,0.35)', padding: '10px 8px', overflow: 'auto', background: 'var(--canvas)' }}>
           <TreeRow
             label="All Originals"
             depth={0}
@@ -1426,7 +1426,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           ))}
         </div>
 
-        <div ref={containerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 16, ...pendingStyle(isFiltering) }}>
+        <div ref={containerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 16, background: 'var(--canvas)', ...pendingStyle(isFiltering) }}>
           {activeBucketKeys.length === 0 ? (
             <div style={{ color: 'var(--text-dimmer)', fontSize: 12.5 }}>No assets in this folder.</div>
           ) : (
@@ -1503,7 +1503,9 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           display: 'flex',
           alignItems: 'center',
           gap: 13,
-          padding: '0 12px',
+          // Extra right padding keeps the thumbnail slider's hit area clear
+          // of the window's bottom-right resize grip (see ResizeHandles.tsx).
+          padding: '0 28px 0 12px',
           background: 'var(--panel-3)',
           borderTop: '1px solid rgba(0,0,0,0.4)',
           fontSize: 11.5,

@@ -22,10 +22,6 @@
   --overlay-medium: rgba(255, 255, 255, 0.12);
   --overlay-strong: rgba(255, 255, 255, 0.18);
   --scrim: rgba(0, 0, 0, 0.5);
-  /* Background behind photos in the grid ("light table") and the full-
-     screen viewer. Defaults to --canvas; overridden by the independent
-     Photo background preference below, regardless of theme. */
-  --photo-canvas: var(--canvas);
   color-scheme: dark;
 }
 
@@ -52,17 +48,6 @@
   --overlay-strong: rgba(0, 0, 0, 0.14);
   --scrim: rgba(0, 0, 0, 0.35);
   color-scheme: light;
-}
-
-/* Photo background preference - fixed neutral surrounds, independent of
-   theme (20% grey = 51/255 luminance, a common neutral photo-viewing
-   surround). */
-:root[data-canvas-shade='white'] {
-  --photo-canvas: #ffffff;
-}
-
-:root[data-canvas-shade='grey'] {
-  --photo-canvas: #333333;
 }
 
 * {

@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { forwardRef, memo, useCallback, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { listen } from '@tauri-apps/api/event';
 import {
@@ -87,10 +87,29 @@ function parseCalendarDate(dateStr: string): Date {
   return new Date(y, m - 1, d);
 }
 
-const COLUMNS_GUESS = 6;
-const MONTH_HEADER_HEIGHT = 34;
-const DAY_HEADER_HEIGHT = 26;
+const MONTH_TOP_PADDING = 16;
+const MONTH_HEADER_HEIGHT = 22;
+const DAY_HEADER_HEIGHT = 36;
+const GRID_GAP = 12;
+const STACK_BAND_HEIGHT_GUESS = 210;
 const DEFAULT_THUMB_SIZE = 168;
+
+// A flat, virtualizable description of everything the grid renders - one
+// entry per *row* (a month header, a day header, one row of asset tiles, or
+// an expanded stack's band), rather than one entry per month the way the
+// virtualizer used to work. That's the whole point: the old bucket-level
+// virtualizer mounted every asset in a visible month at once (a busy month
+// can hold thousands), which is what made Immich's own timeline (which
+// virtualizes at the row level, like this) feel so much snappier in
+// comparison. `bucketIndex` lets the fetch-on-scroll effect and
+// TimelineRail's bucket-index math both find their way back to which month
+// a given row belongs to.
+type PhotoRow =
+  | { kind: 'loading'; bucketIndex: number; height: number }
+  | { kind: 'month'; bucketIndex: number; height: number }
+  | { kind: 'day'; bucketIndex: number; day: string; dayLabel: string; place: string | null; count: number; height: number }
+  | { kind: 'assets'; bucketIndex: number; day: string; items: AssetSummary[]; height: number }
+  | { kind: 'stackband'; bucketIndex: number; day: string; stackId: string; assetId: string; height: number };
 
 export interface PhotosBrowserHandle {
   selectAll: () => void;
@@ -139,6 +158,29 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   const [assetCache, setAssetCache] = useState<Record<string, AssetSummary[]>>({});
   const inFlight = useRef<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
+  // Content-box width of the scroll container (i.e. already excludes its own
+  // horizontal padding) - used to compute exactly how many columns the grid
+  // holds and how wide/tall each tile is, so row heights are known up front
+  // instead of guessed and corrected after the fact. Read via ResizeObserver
+  // rather than a plain window-resize listener so it also tracks the
+  // Metadata panel opening/closing (which resizes this container without
+  // resizing the window).
+  const [contentWidth, setContentWidth] = useState(0);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => setContentWidth(entries[0].contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+    // Deliberately keyed on `buckets`/`error` (not `[]`) - the scroll
+    // container this observes only exists in the DOM once the timeline has
+    // actually loaded (see the early `if (!buckets) return <Loading.../>`
+    // below), so a mount-only effect would find `containerRef.current` still
+    // null the one time it runs and would never get another chance to
+    // attach. Found live: with `[]`, contentWidth stayed stuck at 0 forever,
+    // which pinned the grid at a single full-width column and made the
+    // thumbnail-size slider look like it did nothing.
+  }, [buckets, error]);
   // Lets rotateLeft/rotateRight (Edit menu) reach the currently-open Viewer
   // - null whenever nothing's open, since <Viewer> below is only mounted at
   // all when openAsset exists.
@@ -699,6 +741,14 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       return next;
     });
   }, []);
+
+  // Stabilized (rather than inline arrow functions in the render below) so
+  // the memoized row components (see PhotoRow type/render further down) can
+  // actually bail out of re-rendering on scroll - a plain per-render arrow
+  // function would defeat that memoization for every visible row.
+  const handleRowContextMenu = useCallback((assetId: string, x: number, y: number) => setContextMenu({ assetId, x, y }), []);
+  const handleRowRate = useCallback((id: string, rating: number) => commitEdit(id, { rating }), [commitEdit]);
+  const resolveAsset = useCallback((id: string) => assetByIdAll.get(id), [assetByIdAll]);
 
   // Context menu / Viewer's Unstack button don't already have a member list
   // handy the way StackBand does (it just fetched one) - fetch it fresh
@@ -1446,24 +1496,116 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     [selectRange, toggleOne, selectExclusive],
   );
 
-  const rowHeightGuess = Math.round((thumbSize * 2) / 3) + 12;
+  // Number of tiles per row, computed the same way CSS grid's own
+  // `repeat(auto-fill, minmax(thumbSize, 1fr))` would (as many tracks of at
+  // least thumbSize as fit, then stretched evenly) - but done here in JS
+  // instead of left to the browser, since row-level virtualization needs to
+  // know each row's exact tile count and height *before* it renders, not
+  // find out from the DOM afterwards.
+  const columns = useMemo(() => {
+    if (contentWidth <= 0) return 1;
+    return Math.max(1, Math.floor((contentWidth + GRID_GAP) / (thumbSize + GRID_GAP)));
+  }, [contentWidth, thumbSize]);
+  const tileWidth = columns > 0 ? (contentWidth - GRID_GAP * (columns - 1)) / columns : thumbSize;
+  const assetRowHeight = Math.max(1, Math.round((tileWidth * 2) / 3)) + GRID_GAP;
+
+  // Flattens every loaded bucket's day-groups into individual grid rows (see
+  // the PhotoRow type above) - an expanded stack's band always starts a new
+  // row and takes the whole width, exactly mirroring how CSS grid's
+  // auto-placement already handled a `gridColumn: 1 / -1` item inline with
+  // the old single-grid-per-day layout. A bucket whose assets haven't loaded
+  // yet still contributes one 'loading' placeholder row sized off its known
+  // asset count, so the fetch-on-scroll effect below still has something to
+  // key off of and the scrollbar doesn't jump once it does load.
+  const rows = useMemo<PhotoRow[]>(() => {
+    if (!buckets) return [];
+    const out: PhotoRow[] = [];
+    buckets.forEach((bucket, bucketIndex) => {
+      const assets = filteredAssetCache[bucket.timeBucket];
+      if (!assets) {
+        const dayHeadersGuess = Math.min(bucket.count, 28);
+        const rowsGuess = Math.ceil(bucket.count / columns);
+        const height = MONTH_TOP_PADDING + MONTH_HEADER_HEIGHT + dayHeadersGuess * DAY_HEADER_HEIGHT + rowsGuess * assetRowHeight;
+        out.push({ kind: 'loading', bucketIndex, height });
+        return;
+      }
+      out.push({ kind: 'month', bucketIndex, height: MONTH_TOP_PADDING + MONTH_HEADER_HEIGHT });
+      for (const [day, items] of groupByDay(assets)) {
+        const place = placeLabel(items[0]);
+        const dateObj = parseCalendarDate(day);
+        const dayLabel = `${dateObj.toLocaleDateString(undefined, { weekday: 'long' })} · ${dateObj.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}`;
+        out.push({ kind: 'day', bucketIndex, day, dayLabel, place, count: items.length, height: DAY_HEADER_HEIGHT });
+        let currentRow: AssetSummary[] = [];
+        for (const a of items) {
+          const isExpandedStackPrimary = !!a.stack && a.stack.primaryAssetId === a.id && a.stack.assetCount > 1 && expandedStacks.has(a.stack.id);
+          if (isExpandedStackPrimary) {
+            if (currentRow.length) {
+              out.push({ kind: 'assets', bucketIndex, day, items: currentRow, height: assetRowHeight });
+              currentRow = [];
+            }
+            out.push({ kind: 'stackband', bucketIndex, day, stackId: a.stack!.id, assetId: a.id, height: STACK_BAND_HEIGHT_GUESS });
+            continue;
+          }
+          currentRow.push(a);
+          if (currentRow.length === columns) {
+            out.push({ kind: 'assets', bucketIndex, day, items: currentRow, height: assetRowHeight });
+            currentRow = [];
+          }
+        }
+        if (currentRow.length) out.push({ kind: 'assets', bucketIndex, day, items: currentRow, height: assetRowHeight });
+      }
+    });
+    return out;
+  }, [buckets, filteredAssetCache, expandedStacks, columns, assetRowHeight]);
+
+  // First row index belonging to each bucket (length buckets.length + 1, the
+  // last entry being rows.length) - lets TimelineRail translate its own
+  // bucket-index math (built off exact Immich asset counts, see its own doc
+  // comment) into a row index this row-level virtualizer can actually scroll
+  // to. Every bucket has at least one asset (Immich never returns a
+  // zero-count bucket) so this is always strictly non-decreasing.
+  const bucketFirstRowIndex = useMemo(() => {
+    const arr = new Array<number>((buckets?.length ?? 0) + 1).fill(rows.length);
+    let cursor = 0;
+    for (let b = 0; b < (buckets?.length ?? 0); b++) {
+      while (cursor < rows.length && rows[cursor].bucketIndex < b) cursor++;
+      arr[b] = cursor;
+    }
+    arr[buckets?.length ?? 0] = rows.length;
+    return arr;
+  }, [rows, buckets]);
 
   const virtualizer = useVirtualizer({
-    count: buckets?.length ?? 0,
+    count: rows.length,
     getScrollElement: () => containerRef.current,
-    estimateSize: (index) => {
-      const b = buckets![index];
-      const rows = Math.ceil(b.count / COLUMNS_GUESS);
-      const dayHeadersGuess = Math.min(b.count, 28);
-      return MONTH_HEADER_HEIGHT + dayHeadersGuess * DAY_HEADER_HEIGHT + rows * rowHeightGuess;
-    },
-    overscan: 3,
+    estimateSize: (index) => rows[index].height,
+    overscan: 12,
   });
+
+  // `rows` changing shape (a thumbnail-size drag changes `columns`, which
+  // changes how many items land in each row, which shifts what every row
+  // *index* even means) leaves the virtualizer's own per-index measurement
+  // cache pointing at stale heights from the old grouping - only whichever
+  // rows happen to be mounted right now would ever get remeasured on their
+  // own (via the ResizeObserver measureElement attaches), so scrolled-away
+  // rows would silently keep wrong cached heights, and the ones on screen
+  // could lag a frame. `measure()` (same fix FoldersBrowser's own
+  // virtualizer already applies when its bucket keys change) clears that
+  // cache outright so every row - visible or not - is sized fresh off the
+  // new `estimateSize` the moment it's actually rendered.
+  useEffect(() => {
+    virtualizer.measure();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
 
   useEffect(() => {
     if (!buckets) return;
+    const seenBuckets = new Set<number>();
     for (const item of virtualizer.getVirtualItems()) {
-      const bucket = buckets[item.index];
+      const row = rows[item.index];
+      if (!row || seenBuckets.has(row.bucketIndex)) continue;
+      seenBuckets.add(row.bucketIndex);
+      const bucket = buckets[row.bucketIndex];
       if (assetCache[bucket.timeBucket] || inFlight.current.has(bucket.timeBucket)) continue;
       inFlight.current.add(bucket.timeBucket);
       getTimelineBucketAssets(bucket.timeBucket)
@@ -1577,39 +1719,32 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       )}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
-          <div ref={containerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: '0 76px 0 24px', ...pendingStyle(isFiltering) }}>
+          <div ref={containerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: '0 76px 0 24px', background: 'var(--canvas)', ...pendingStyle(isFiltering) }}>
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
               {virtualizer.getVirtualItems().map((item) => {
-                const bucket = buckets[item.index];
+                const row = rows[item.index];
+                const bucket = buckets[row.bucketIndex];
                 return (
                   <div
-                    key={bucket.timeBucket}
+                    key={item.key}
                     ref={virtualizer.measureElement}
                     data-index={item.index}
-                    style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: '100%',
-                      transform: `translateY(${item.start}px)`,
-                      paddingTop: 16,
-                    }}
+                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${item.start}px)` }}
                   >
-                    <BucketContent
+                    <PhotoRowView
+                      row={row}
                       bucket={bucket}
-                      assets={filteredAssetCache[bucket.timeBucket]}
+                      columns={columns}
                       selected={selected}
                       onToggleSelect={handleThumbClick}
                       onToggleOne={toggleOne}
                       onOpen={setOpenId}
-                      onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
-                      thumbSize={thumbSize}
-                      expandedStacks={expandedStacks}
+                      onContextMenu={handleRowContextMenu}
                       onToggleStackExpand={toggleStackExpand}
                       onUnstack={unstack}
                       onSetPick={setStackPickAction}
-                      onRate={(id, rating) => commitEdit(id, { rating })}
-                      resolveAsset={(id) => assetByIdAll.get(id)}
+                      onRate={handleRowRate}
+                      resolveAsset={resolveAsset}
                     />
                   </div>
                 );
@@ -1617,7 +1752,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
             </div>
           </div>
           {selected.size === 0 && (
-            <TimelineRail buckets={buckets} virtualizer={virtualizer} />
+            <TimelineRail buckets={buckets} virtualizer={virtualizer} bucketFirstRowIndex={bucketFirstRowIndex} />
           )}
         </div>
         {metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
@@ -1762,7 +1897,9 @@ function StatusBar({
         display: 'flex',
         alignItems: 'center',
         gap: 13,
-        padding: '0 12px',
+        // Extra right padding keeps the thumbnail slider's hit area clear of
+        // the window's bottom-right resize grip (see ResizeHandles.tsx).
+        padding: '0 28px 0 12px',
         background: 'var(--panel-3)',
         borderTop: '1px solid var(--border-strong)',
         fontSize: 11.5,
@@ -1832,186 +1969,124 @@ function groupByDay(assets: AssetSummary[]): Map<string, AssetSummary[]> {
   return groups;
 }
 
-function BucketContent({
+// Renders exactly one row of the flattened PhotoRow list - a month header, a
+// day header, one row of asset tiles, or an expanded stack's band. Wrapped in
+// memo() so that, unlike the old BucketContent/DayGroups (which relied on
+// staying mounted across scroll ticks for their internal useMemo to pay off),
+// a row that virtualizes in and out repeatedly - and every row's parent
+// re-rendering on every scroll tick regardless - doesn't redo any work as
+// long as its own `row` object and the handful of callback props are
+// referentially stable, which they are (`rows` only changes when the
+// underlying data/columns/expanded-stacks actually do; the callbacks are all
+// useCallback-wrapped in PhotosBrowser).
+const PhotoRowView = memo(function PhotoRowView({
+  row,
   bucket,
-  assets,
+  columns,
   selected,
   onToggleSelect,
   onToggleOne,
   onOpen,
   onContextMenu,
-  thumbSize,
-  expandedStacks,
   onToggleStackExpand,
   onUnstack,
   onSetPick,
   onRate,
   resolveAsset,
 }: {
+  row: PhotoRow;
   bucket: TimeBucketInfo;
-  assets?: AssetSummary[];
+  columns: number;
   selected: Set<string>;
   onToggleSelect: (id: string, mods: ClickMods) => void;
   onToggleOne: (id: string) => void;
   onOpen: (id: string) => void;
   onContextMenu: (id: string, x: number, y: number) => void;
-  thumbSize: number;
-  expandedStacks: Set<string>;
   onToggleStackExpand: (stackId: string) => void;
   onUnstack: (stackId: string, memberIds: string[]) => Promise<void>;
   onSetPick: (stackId: string, assetId: string, memberIds: string[]) => Promise<void>;
   onRate: (assetId: string, rating: number) => Promise<void>;
   resolveAsset: (id: string) => AssetSummary | undefined;
 }) {
-  // `react-virtual`'s scroll listener re-renders PhotosBrowser (and every
-  // currently-mounted BucketContent/DayGroups with it) on every scroll tick
-  // just to recompute getVirtualItems() - toLocaleDateString is an Intl
-  // call, expensive enough that redoing it here unmemoized, for every
-  // visible+overscanned bucket, on every one of those ticks, was the actual
-  // source of Photos' choppy scrolling (Folders has no per-day grouping/
-  // labeling layer at all, which is why it stayed smooth on the same
-  // virtualizer). bucket.timeBucket only changes when this bucket itself
-  // does, so this now only runs once per bucket instead of once per frame.
-  const monthLabel = useMemo(
-    () =>
-      parseCalendarDate(bucket.timeBucket).toLocaleDateString(undefined, {
-        year: 'numeric',
-        month: 'long',
-      }),
-    [bucket.timeBucket],
-  );
-
-  return (
-    <div>
-      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dim)', margin: '0 0 10px' }}>
-        {monthLabel} <span style={{ color: 'var(--text-dimmer)', fontWeight: 400 }}>· {bucket.count}</span>
-      </div>
-      {assets ? (
-        <DayGroups
-          assets={assets}
-          selected={selected}
-          onToggleSelect={onToggleSelect}
-          onToggleOne={onToggleOne}
-          onOpen={onOpen}
-          onContextMenu={onContextMenu}
-          thumbSize={thumbSize}
-          expandedStacks={expandedStacks}
-          onToggleStackExpand={onToggleStackExpand}
-          onUnstack={onUnstack}
-          onSetPick={onSetPick}
-          onRate={onRate}
-          resolveAsset={resolveAsset}
-        />
-      ) : (
-        <div style={{ color: 'var(--text-dimmer)', fontSize: 12.5 }}>Loading…</div>
-      )}
-    </div>
-  );
-}
-
-function DayGroups({
-  assets,
-  selected,
-  onToggleSelect,
-  onToggleOne,
-  onOpen,
-  onContextMenu,
-  thumbSize,
-  expandedStacks,
-  onToggleStackExpand,
-  onUnstack,
-  onSetPick,
-  onRate,
-  resolveAsset,
-}: {
-  assets: AssetSummary[];
-  selected: Set<string>;
-  onToggleSelect: (id: string, mods: ClickMods) => void;
-  onToggleOne: (id: string) => void;
-  onOpen: (id: string) => void;
-  onContextMenu: (id: string, x: number, y: number) => void;
-  thumbSize: number;
-  expandedStacks: Set<string>;
-  onToggleStackExpand: (stackId: string) => void;
-  onUnstack: (stackId: string, memberIds: string[]) => Promise<void>;
-  onSetPick: (stackId: string, assetId: string, memberIds: string[]) => Promise<void>;
-  onRate: (assetId: string, rating: number) => Promise<void>;
-  resolveAsset: (id: string) => AssetSummary | undefined;
-}) {
-  // Same reasoning as BucketContent's monthLabel memo just above - grouping
-  // plus two toLocaleDateString Intl calls per day, previously redone from
-  // scratch on every scroll-driven re-render for every visible bucket, was
-  // the main source of Photos' choppy scrolling. `assets` is the bucket's
-  // array from filteredAssetCache (see useBucketMemo), which keeps the same
-  // reference across a pure scroll - it only changes when that bucket's
-  // underlying data actually does - so this now runs once per bucket
-  // content change instead of once per frame.
-  const dayGroups = useMemo(() => {
-    const groups = groupByDay(assets);
-    return [...groups.entries()].map(([day, items]) => {
-      const place = placeLabel(items[0]);
-      const dateObj = parseCalendarDate(day);
-      const dayLabel = `${dateObj.toLocaleDateString(undefined, { weekday: 'long' })} · ${dateObj.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}`;
-      return { day, items, place, dayLabel };
-    });
-  }, [assets]);
-  return (
-    <>
-      {dayGroups.map(({ day, items, place, dayLabel }) => {
-        return (
-          <div key={day} style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '2px 2px 10px' }}>
-              <span style={{ fontSize: 13.5, fontWeight: 700 }}>{dayLabel}</span>
-              <span style={{ fontSize: 12, color: 'var(--text-dimmer)' }}>
-                {place ? `${place} · ` : ''}
-                {items.length}
-              </span>
-            </div>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: `repeat(auto-fill, minmax(${thumbSize}px, 1fr))`,
-                gap: 12,
-              }}
-            >
-              {items.map((a) => {
-                if (a.stack && a.stack.primaryAssetId === a.id && expandedStacks.has(a.stack.id)) {
-                  const stackId = a.stack.id;
-                  return (
-                    <StackBand
-                      key={a.id}
-                      stackId={stackId}
-                      selected={selected}
-                      onSelectMember={(id) => onToggleSelect(id, { shiftKey: false, ctrlKey: false, metaKey: false })}
-                      onOpen={onOpen}
-                      onCollapse={() => onToggleStackExpand(stackId)}
-                      onUnstack={(memberIds) => onUnstack(stackId, memberIds)}
-                      onSetPick={(assetId, memberIds) => onSetPick(stackId, assetId, memberIds)}
-                      onRate={onRate}
-                      onContextMenu={onContextMenu}
-                      resolveAsset={resolveAsset}
-                    />
-                  );
-                }
-                return (
-                  <AssetTile
-                    key={a.id}
-                    asset={a}
-                    selected={selected.has(a.id)}
-                    onToggleSelect={onToggleSelect}
-                    onToggleOne={onToggleOne}
-                    onOpen={onOpen}
-                    onContextMenu={onContextMenu}
-                    onToggleStackExpand={onToggleStackExpand}
-                    onRate={onRate}
-                  />
-                );
-              })}
-            </div>
+  switch (row.kind) {
+    case 'loading': {
+      const monthLabel = parseCalendarDate(bucket.timeBucket).toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
+      return (
+        <div style={{ paddingTop: MONTH_TOP_PADDING }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dim)', marginBottom: 10 }}>
+            {monthLabel} <span style={{ color: 'var(--text-dimmer)', fontWeight: 400 }}>· {bucket.count}</span>
           </div>
-        );
-      })}
-    </>
-  );
-}
+          <div style={{ color: 'var(--text-dimmer)', fontSize: 12.5 }}>Loading…</div>
+        </div>
+      );
+    }
+    case 'month': {
+      const monthLabel = parseCalendarDate(bucket.timeBucket).toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
+      return (
+        <div style={{ paddingTop: MONTH_TOP_PADDING, fontSize: 13, fontWeight: 700, color: 'var(--text-dim)' }}>
+          {monthLabel} <span style={{ color: 'var(--text-dimmer)', fontWeight: 400 }}>· {bucket.count}</span>
+        </div>
+      );
+    }
+    case 'day':
+      return (
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '14px 2px 10px', color: 'var(--text)' }}>
+          <span style={{ fontSize: 13.5, fontWeight: 700 }}>{row.dayLabel}</span>
+          <span style={{ fontSize: 12, color: 'var(--text-dimmer)' }}>
+            {row.place ? `${row.place} · ` : ''}
+            {row.count}
+          </span>
+        </div>
+      );
+    case 'assets':
+      // `gap` only spaces items apart *within* a grid, but each row here is
+      // its own single-row grid (one per virtualized row) - the actual
+      // vertical gap before the next row instead has to come from this row's
+      // own rendered (and therefore measured) height, hence the real
+      // paddingBottom rather than relying on `gap` for it. Must match the
+      // GRID_GAP baked into `assetRowHeight`'s estimate above, or the
+      // virtualizer's measured height won't agree with what it guessed and
+      // rows will visibly snap together/apart on the next remeasure.
+      return (
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${columns}, 1fr)`, gap: GRID_GAP, paddingBottom: GRID_GAP }}>
+          {row.items.map((a) => (
+            <AssetTile
+              key={a.id}
+              asset={a}
+              selected={selected.has(a.id)}
+              onToggleSelect={onToggleSelect}
+              onToggleOne={onToggleOne}
+              onOpen={onOpen}
+              onContextMenu={onContextMenu}
+              onToggleStackExpand={onToggleStackExpand}
+              onRate={onRate}
+            />
+          ))}
+        </div>
+      );
+    case 'stackband':
+      // paddingBottom (not margin) for the same reason as the 'assets' case
+      // above: this row's real vertical gap to whatever follows has to come
+      // from its own rendered height, matched to GRID_GAP like every other
+      // row kind - StackBand itself no longer carries its own margin, so an
+      // expanded stack doesn't sit noticeably tighter against its neighbors
+      // than a plain asset row does.
+      return (
+        <div style={{ paddingBottom: GRID_GAP }}>
+          <StackBand
+            stackId={row.stackId}
+            selected={selected}
+            onSelectMember={(id) => onToggleSelect(id, { shiftKey: false, ctrlKey: false, metaKey: false })}
+            onOpen={onOpen}
+            onCollapse={() => onToggleStackExpand(row.stackId)}
+            onUnstack={(memberIds) => onUnstack(row.stackId, memberIds)}
+            onSetPick={(assetId, memberIds) => onSetPick(row.stackId, assetId, memberIds)}
+            onRate={onRate}
+            onContextMenu={onContextMenu}
+            resolveAsset={resolveAsset}
+          />
+        </div>
+      );
+  }
+});
 

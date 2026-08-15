@@ -134,7 +134,7 @@ export default function SelectionBar({
         <div style={{ position: 'absolute', width: 12, height: 1.7, background: '#fff', transform: 'rotate(45deg)', borderRadius: 1 }} />
         <div style={{ position: 'absolute', width: 12, height: 1.7, background: '#fff', transform: 'rotate(-45deg)', borderRadius: 1 }} />
       </div>
-      <span style={{ fontSize: 14, fontWeight: 700 }}>{count} selected</span>
+      <span style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>{count} selected</span>
       <div style={{ flex: 1 }} />
       <RatingGroup onRate={onRate} />
       {unsyncedCount > 0 && (

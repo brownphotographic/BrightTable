@@ -14,43 +14,49 @@ const tabLabels: Record<string, string> = {
   trash: 'Trash',
 };
 
-function WindowButtons() {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-      <WinButton onClick={() => appWindow.minimize()} idleBg="var(--overlay-weak)" hoverBg="var(--overlay-strong)">
-        <div style={{ width: 9, height: 1.6, background: 'var(--text)', borderRadius: 1, marginTop: 6 }} />
-      </WinButton>
-      <WinButton onClick={() => appWindow.toggleMaximize()} idleBg="var(--overlay-weak)" hoverBg="var(--overlay-strong)">
-        <div style={{ width: 8, height: 8, border: '1.6px solid var(--text)', borderRadius: 2 }} />
-      </WinButton>
-      <WinButton onClick={() => appWindow.close()} idleBg="rgba(0,0,0,0.35)" hoverBg="#e01b24">
-        <div style={{ position: 'relative', width: 11, height: 11 }}>
-          <div
-            style={{
-              position: 'absolute',
-              width: 11,
-              height: 1.6,
-              background: '#fff',
-              borderRadius: 1,
-              transform: 'rotate(45deg)',
-              top: 4.7,
-            }}
-          />
-          <div
-            style={{
-              position: 'absolute',
-              width: 11,
-              height: 1.6,
-              background: '#fff',
-              borderRadius: 1,
-              transform: 'rotate(-45deg)',
-              top: 4.7,
-            }}
-          />
-        </div>
-      </WinButton>
-    </div>
+function WindowButtons({ reversed }: { reversed?: boolean }) {
+  const minimizeBtn = (
+    <WinButton key="minimize" onClick={() => appWindow.minimize()} idleBg="var(--overlay-weak)" hoverBg="var(--overlay-strong)">
+      <div style={{ width: 9, height: 1.6, background: 'var(--text)', borderRadius: 1, marginTop: 6 }} />
+    </WinButton>
   );
+  const maximizeBtn = (
+    <WinButton key="maximize" onClick={() => appWindow.toggleMaximize()} idleBg="var(--overlay-weak)" hoverBg="var(--overlay-strong)">
+      <div style={{ width: 8, height: 8, border: '1.6px solid var(--text)', borderRadius: 2 }} />
+    </WinButton>
+  );
+  const closeBtn = (
+    <WinButton key="close" onClick={() => appWindow.close()} idleBg="rgba(0,0,0,0.35)" hoverBg="#e01b24">
+      <div style={{ position: 'relative', width: 11, height: 11 }}>
+        <div
+          style={{
+            position: 'absolute',
+            width: 11,
+            height: 1.6,
+            background: '#fff',
+            borderRadius: 1,
+            transform: 'rotate(45deg)',
+            top: 4.7,
+          }}
+        />
+        <div
+          style={{
+            position: 'absolute',
+            width: 11,
+            height: 1.6,
+            background: '#fff',
+            borderRadius: 1,
+            transform: 'rotate(-45deg)',
+            top: 4.7,
+          }}
+        />
+      </div>
+    </WinButton>
+  );
+
+  const buttons = reversed ? [closeBtn, maximizeBtn, minimizeBtn] : [minimizeBtn, maximizeBtn, closeBtn];
+
+  return <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>{buttons}</div>;
 }
 
 export default function TitleBar({ activeTab, onOpenActivity }: { activeTab: string; onOpenActivity: () => void }) {
@@ -71,7 +77,7 @@ export default function TitleBar({ activeTab, onOpenActivity }: { activeTab: str
         borderBottom: '1px solid var(--border-strong)',
       }}
     >
-      {onLeft && <WindowButtons />}
+      {onLeft && <WindowButtons reversed />}
       {onLeft && <div style={{ width: 1, height: 18, background: 'var(--overlay-medium)' }} />}
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0, pointerEvents: 'none' }}>
         <img
