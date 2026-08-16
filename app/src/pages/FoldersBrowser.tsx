@@ -73,8 +73,6 @@ function prevValuesFor(asset: AssetSummary | undefined, patch: AssetMetadataPatc
   return prev;
 }
 
-const DEFAULT_THUMB_SIZE = 168;
-
 export interface FoldersBrowserHandle {
   selectAll: () => void;
   deselectAll: () => void;
@@ -109,7 +107,10 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // assetCache/folder tree survive switching away and back, but its global
   // keydown shortcuts need suppressing while hidden.
   active?: boolean;
-}>(function FoldersBrowser({ metaOpen, onCloseMetadata, filters, onOpenApplicationsPreferences, active = true }, ref) {
+  // Grid thumbnail size - controlled from MenuBar's slider (App.tsx owns
+  // the state) since it moved out of this view's own bottom status bar.
+  thumbSize: number;
+}>(function FoldersBrowser({ metaOpen, onCloseMetadata, filters, onOpenApplicationsPreferences, active = true, thumbSize }, ref) {
   const [folderPaths, setFolderPaths] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // See PhotosBrowser.tsx's identical state - set only when
@@ -129,7 +130,6 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // all when openAsset exists.
   const viewerRef = useRef<ViewerHandle>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [thumbSize, setThumbSize] = useState(DEFAULT_THUMB_SIZE);
   const lastClickedId = useRef<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [confirmDeleteSelection, setConfirmDeleteSelection] = useState(false);
@@ -1494,56 +1494,6 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           )}
         </div>
         {metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
-      </div>
-
-      <div
-        style={{
-          height: 30,
-          flexShrink: 0,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 13,
-          // Extra right padding keeps the thumbnail slider's hit area clear
-          // of the window's bottom-right resize grip (see ResizeHandles.tsx).
-          padding: '0 28px 0 12px',
-          background: 'var(--panel-3)',
-          borderTop: '1px solid rgba(0,0,0,0.4)',
-          fontSize: 11.5,
-          color: 'var(--text-dimmer)',
-        }}
-      >
-        <span>{flatIds.length} assets</span>
-        {selected.size > 0 && <span>· {selected.size} selected</span>}
-        <div style={{ flex: 1 }} />
-        {/* Mirrors PhotosBrowser.tsx's StatusBar thumbnail slider. */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-dim)' }}>
-          <span style={{ fontSize: 11.5 }}>Thumbnails</span>
-          <div style={{ position: 'relative', width: 12, height: 12, flexShrink: 0 }}>
-            <div style={{ position: 'absolute', left: 0, top: 0, width: 8, height: 8, border: '1.5px solid currentColor', borderRadius: '50%' }} />
-            <div
-              style={{
-                position: 'absolute',
-                left: 6.6,
-                top: 6.6,
-                width: 4,
-                height: 1.5,
-                background: 'currentColor',
-                borderRadius: 1,
-                transformOrigin: 'left center',
-                transform: 'rotate(45deg)',
-              }}
-            />
-          </div>
-          <input
-            type="range"
-            min={100}
-            max={320}
-            step={4}
-            value={thumbSize}
-            onChange={(e) => setThumbSize(Number(e.target.value))}
-            style={{ width: 104 }}
-          />
-        </div>
       </div>
 
       {openAsset && (

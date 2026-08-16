@@ -947,11 +947,11 @@ const Viewer = forwardRef<ViewerHandle, {
             </div>
           </>
         )}
-        <div onClick={() => setInfoOpen((v) => !v)} style={headerButtonStyle(infoOpen)}>
-          Info
-        </div>
         <div onClick={() => setFilmstripOpen((v) => !v)} style={headerButtonStyle(filmstripOpen)}>
           Filmstrip
+        </div>
+        <div onClick={() => setInfoOpen((v) => !v)} style={headerButtonStyle(infoOpen)}>
+          Metadata
         </div>
       </div>
 

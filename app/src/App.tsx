@@ -128,6 +128,10 @@ function AppShell() {
     setActiveSearch('');
   };
   const [photosCount, setPhotosCount] = useState(0);
+  // Grid thumbnail size, shared by Photos and Folders (the only two grid
+  // views with a size slider) - lives here since the slider itself now sits
+  // in MenuBar rather than in either browser's own (removed) status bar.
+  const [thumbSize, setThumbSize] = useState(168);
   // Shared by both PhotosBrowser and FoldersBrowser - bumping it forces
   // whichever is currently mounted to fully remount (clearing its
   // assetCache/unsyncedMetadata/etc.), since neither view otherwise has any
@@ -234,6 +238,9 @@ function AppShell() {
         onSearchQueryChange={setSearchQuery}
         onSearchSubmit={() => searchQuery.trim() && setActiveSearch(searchQuery.trim())}
         onClearSearch={clearSearch}
+        thumbSize={thumbSize}
+        onThumbSizeChange={setThumbSize}
+        showThumbSize={!activeSearch && (leftTab === 'photos' || leftTab === 'folders')}
       />
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0, background: 'var(--panel-2)', position: 'relative' }}>
@@ -283,6 +290,7 @@ function AppShell() {
               onCloseMetadata={() => setMetaOpen(false)}
               filters={filters}
               onOpenApplicationsPreferences={() => openPreferencesTab('applications')}
+              thumbSize={thumbSize}
             />
           </div>
           {albumsVisited && (
@@ -328,6 +336,8 @@ function AppShell() {
                 onCloseMetadata={() => setMetaOpen(false)}
                 filters={filters}
                 onOpenApplicationsPreferences={() => openPreferencesTab('applications')}
+                thumbSize={thumbSize}
+                onThumbSizeChange={setThumbSize}
               />
             </div>
           )}

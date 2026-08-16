@@ -92,7 +92,6 @@ const MONTH_HEADER_HEIGHT = 22;
 const DAY_HEADER_HEIGHT = 36;
 const GRID_GAP = 12;
 const STACK_BAND_HEIGHT_GUESS = 210;
-const DEFAULT_THUMB_SIZE = 168;
 
 // A flat, virtualizable description of everything the grid renders - one
 // entry per *row* (a month header, a day header, one row of asset tiles, or
@@ -143,7 +142,10 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // has focus. Defaults true so FoldersBrowser (no such prop) keeps working
   // unaffected - only PhotosBrowser and FoldersBrowser pass this explicitly.
   active?: boolean;
-}>(function PhotosBrowser({ onTotalCount, metaOpen, onCloseMetadata, filters, onOpenApplicationsPreferences, active = true }, ref) {
+  // Grid thumbnail size - controlled from MenuBar's slider (App.tsx owns
+  // the state) since it moved out of this view's own bottom status bar.
+  thumbSize: number;
+}>(function PhotosBrowser({ onTotalCount, metaOpen, onCloseMetadata, filters, onOpenApplicationsPreferences, active = true, thumbSize }, ref) {
   const [buckets, setBuckets] = useState<TimeBucketInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Set only when update_asset_metadata itself rejects synchronously (read-
@@ -187,8 +189,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   const viewerRef = useRef<ViewerHandle>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const lastClickedId = useRef<string | null>(null);
-  const [thumbSize, setThumbSize] = useState(DEFAULT_THUMB_SIZE);
-  const [totalCount, setTotalCount] = useState(0);
+  const [, setTotalCount] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
   const [confirmDeleteSelection, setConfirmDeleteSelection] = useState(false);
   const [expandedStacks, setExpandedStacks] = useState<Set<string>>(new Set());
@@ -1757,12 +1758,6 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
         </div>
         {metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
       </div>
-      <StatusBar
-        totalCount={totalCount}
-        selectedCount={selected.size}
-        thumbSize={thumbSize}
-        onThumbSize={setThumbSize}
-      />
       {openAsset && (
         <Viewer
           ref={viewerRef}
@@ -1877,69 +1872,6 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
 });
 
 export default PhotosBrowser;
-
-function StatusBar({
-  totalCount,
-  selectedCount,
-  thumbSize,
-  onThumbSize,
-}: {
-  totalCount: number;
-  selectedCount: number;
-  thumbSize: number;
-  onThumbSize: (n: number) => void;
-}) {
-  return (
-    <div
-      style={{
-        height: 30,
-        flexShrink: 0,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 13,
-        // Extra right padding keeps the thumbnail slider's hit area clear of
-        // the window's bottom-right resize grip (see ResizeHandles.tsx).
-        padding: '0 28px 0 12px',
-        background: 'var(--panel-3)',
-        borderTop: '1px solid var(--border-strong)',
-        fontSize: 11.5,
-        color: 'var(--text-dim)',
-      }}
-    >
-      <span>{totalCount} assets</span>
-      {selectedCount > 0 && <span>· {selectedCount} selected</span>}
-      <div style={{ flex: 1 }} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-dim)' }}>
-        <span style={{ fontSize: 11.5 }}>Thumbnails</span>
-        <div style={{ position: 'relative', width: 12, height: 12, flexShrink: 0 }}>
-          <div style={{ position: 'absolute', left: 0, top: 0, width: 8, height: 8, border: '1.5px solid currentColor', borderRadius: '50%' }} />
-          <div
-            style={{
-              position: 'absolute',
-              left: 6.6,
-              top: 6.6,
-              width: 4,
-              height: 1.5,
-              background: 'currentColor',
-              borderRadius: 1,
-              transformOrigin: 'left center',
-              transform: 'rotate(45deg)',
-            }}
-          />
-        </div>
-        <input
-          type="range"
-          min={100}
-          max={320}
-          step={4}
-          value={thumbSize}
-          onChange={(e) => onThumbSize(Number(e.target.value))}
-          style={{ width: 104 }}
-        />
-      </div>
-    </div>
-  );
-}
 
 function placeLabel(a: AssetSummary): string | null {
   return a.city || a.country || null;

@@ -20,5 +20,4 @@
 //
 // Set to `null` once Immich ships a real fix to re-enable Add to Tag
 // everywhere - every call site keys off this one constant.
-export const TAG_ASSIGN_DISABLED_REASON: string | null =
-  "Disabled — Immich has a known server bug where tags report as assigned but don't actually save (immich-app/immich#17165). Waiting on an upstream fix.";
+export const TAG_ASSIGN_DISABLED_REASON: string | null = 'Editing tags disabled due to open Immich bug';

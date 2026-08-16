@@ -26,11 +26,12 @@ export function isRawExtension(ext: string): boolean {
 // native format on some very old digital cameras (the original Canon 1Ds),
 // but it's also an ordinary export/rendition format, and nothing in Immich's
 // metadata reliably tells the two apart (checked: neither camera EXIF nor
-// pixel dimensions distinguish them). So TIFF defaults to "not RAW", and the
-// user marks individual exceptions via `isRawOverride` (Edit menu -> Toggle
-// Canon RAW, see lib/rawOverrides.tsx) instead of guessing.
+// pixel dimensions distinguish them). TIF/TIFF is treated uniformly as "not
+// RAW" - the old per-asset `isRawOverride` escape hatch (Edit menu -> Toggle
+// Canon RAW, see lib/rawOverrides.tsx) is disabled for now, so it's ignored
+// here even if still set from before.
 export function isRawAsset(asset: AssetSummary): boolean {
-  return !!asset.isRawOverride || isRawExtension(asset.fileExtension);
+  return isRawExtension(asset.fileExtension);
 }
 
 export function isVideoAsset(asset: AssetSummary): boolean {

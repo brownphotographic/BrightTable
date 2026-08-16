@@ -18,7 +18,7 @@ export default function MenuBar({
   onDeselectAll,
   onStackSelected,
   onSmartStack,
-  onToggleRawOverride,
+  // onToggleRawOverride - unused while "Toggle Canon RAW" is disabled, see below
   onSyncSidecarRatings,
   onCopyImageProcessing,
   onPasteImageProcessing,
@@ -36,6 +36,9 @@ export default function MenuBar({
   onSearchQueryChange,
   onSearchSubmit,
   onClearSearch,
+  thumbSize,
+  onThumbSizeChange,
+  showThumbSize,
 }: {
   onOpenPreferences: () => void;
   onRefreshTimeline: () => void;
@@ -71,6 +74,12 @@ export default function MenuBar({
   // search-as-you-type, since Immich's smart search is a real network call.
   onSearchSubmit: () => void;
   onClearSearch: () => void;
+  // Grid thumbnail size slider, formerly in each grid view's own bottom
+  // status bar (now removed) - shown here instead, to the left of the
+  // search box, only while a view that has a thumbnail grid is active.
+  thumbSize: number;
+  onThumbSizeChange: (n: number) => void;
+  showThumbSize: boolean;
 }) {
   const [open, setOpen] = useState<MenuKey>(null);
   const { shortcuts } = useShortcuts();
@@ -190,13 +199,15 @@ export default function MenuBar({
           }}
         />
         <Divider />
-        <MenuItem
+        {/* Toggle Canon RAW - disabled for now; TIF/TIFF is treated uniformly
+            as non-RAW instead of relying on a manual per-asset override. */}
+        {/* <MenuItem
           label="Toggle Canon RAW"
           onClick={() => {
             close();
             onToggleRawOverride();
           }}
-        />
+        /> */}
         <MenuItem
           label="Sync Metadata from Sidecar"
           onClick={() => {
@@ -264,23 +275,32 @@ export default function MenuBar({
       </TopMenu>
 
       <TopMenu label="View" isOpen={open === 'view'} onClick={() => toggle('view')} onEnter={() => hoverTo('view')}>
-        <MenuItem label="Show Filmstrip" onClick={close} />
+        {/* Show Filmstrip/Show Info Panel disabled - not wired to anything
+            (the real toggles are Viewer-only: filmstripOpen/infoOpen in
+            Viewer.tsx, with their own header buttons and shortcuts), and
+            this menu has no way to know whether the Viewer is even open. */}
+        {/* <MenuItem label="Show Filmstrip" onClick={close} />
         <MenuItem label="Show Info Panel" onClick={close} />
-        <Divider />
+        <Divider /> */}
         <MenuItem label="Zoom In" shortcut="Ctrl++" onClick={close} />
         <MenuItem label="Zoom Out" shortcut="Ctrl+-" onClick={close} />
-        <Divider />
+        {/* Sort Photos By disabled - none of these are wired to anything, so
+            picking any of them had no effect and the grid stayed on its
+            current (always-on) order regardless. */}
+        {/* <Divider />
         <div style={{ padding: '3px 11px 5px', fontSize: 11, letterSpacing: '.04em', color: 'var(--text-dimmer)' }}>
           SORT PHOTOS BY
         </div>
         <MenuItem label="Newest first" onClick={close} />
         <MenuItem label="Oldest first" onClick={close} />
         <MenuItem label="Name" onClick={close} />
-        <MenuItem label="Rating" onClick={close} />
+        <MenuItem label="Rating" onClick={close} /> */}
       </TopMenu>
 
       <TopMenu label="Help" isOpen={open === 'help'} onClick={() => toggle('help')} onEnter={() => hoverTo('help')}>
-        <MenuItem label="Keyboard Shortcuts" shortcut="?" onClick={close} />
+        {/* Keyboard Shortcuts disabled - not wired to anything, and already
+            covered by Preferences -> Shortcuts (PreferencesShortcuts.tsx). */}
+        {/* <MenuItem label="Keyboard Shortcuts" shortcut="?" onClick={close} /> */}
         <MenuItem
           label="About BrightTable"
           onClick={() => {
@@ -460,6 +480,36 @@ export default function MenuBar({
 
       <div style={{ flex: 1 }} />
 
+      {showThumbSize && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-dim)', marginRight: 12 }}>
+          <div style={{ position: 'relative', width: 12, height: 12, flexShrink: 0 }}>
+            <div style={{ position: 'absolute', left: 0, top: 0, width: 8, height: 8, border: '1.5px solid currentColor', borderRadius: '50%' }} />
+            <div
+              style={{
+                position: 'absolute',
+                left: 6.6,
+                top: 6.6,
+                width: 4,
+                height: 1.5,
+                background: 'currentColor',
+                borderRadius: 1,
+                transformOrigin: 'left center',
+                transform: 'rotate(45deg)',
+              }}
+            />
+          </div>
+          <input
+            type="range"
+            min={100}
+            max={320}
+            step={4}
+            value={thumbSize}
+            onChange={(e) => onThumbSizeChange(Number(e.target.value))}
+            style={{ width: 104 }}
+          />
+        </div>
+      )}
+
       <div
         style={{
           display: 'flex',
@@ -532,20 +582,14 @@ export default function MenuBar({
           display: 'flex',
           alignItems: 'center',
           gap: 7,
-          height: 27,
-          padding: '0 10px',
-          borderRadius: 7,
+          height: 30,
+          padding: '0 13px',
+          borderRadius: 8,
+          fontSize: 12.5,
           cursor: 'default',
-          color: metaOpen ? 'var(--accent-text)' : 'var(--text-dim)',
-          background: metaOpen ? 'rgba(53,132,228,0.28)' : 'transparent',
-          fontSize: 13,
+          background: metaOpen ? '#3584e4' : 'var(--overlay-medium)',
         }}
       >
-        <div style={{ width: 11, height: 13, border: '1.5px solid currentColor', borderRadius: 2, position: 'relative', flexShrink: 0 }}>
-          <div style={{ position: 'absolute', left: 2, top: 3, right: 3, height: 1.3, background: 'currentColor' }} />
-          <div style={{ position: 'absolute', left: 2, top: 6, right: 3, height: 1.3, background: 'currentColor' }} />
-          <div style={{ position: 'absolute', left: 2, top: 9, right: 5, height: 1.3, background: 'currentColor' }} />
-        </div>
         Metadata
       </div>
     </div>
