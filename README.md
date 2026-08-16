@@ -52,7 +52,7 @@ _System requirements:_
 
 _How to use:_
 
-- Executable: An AppImmage is included in the folder /app/src-tauri/target/release/bundle/appimage . I recommend using GearLever to manage your AppImages.
+- Executable: A stable AppImmage version is included here [https://github.com/brownphotographic/BrightTable/releases/tag/production](https://github.com/brownphotographic/BrightTable/releases/tag/production). I recommend using GearLever to manage your AppImages.
 
 _Developers:_
 
