@@ -43,7 +43,7 @@ _How it works:_
 
 **Usage**
 
-For a basic user manual read this [USAGE.md](USAGE.md)
+For a basic user manual read this [User-Guide.md](User-Guide.md)
 
 _System requirements:_
 
