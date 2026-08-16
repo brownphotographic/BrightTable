@@ -1,0 +1,119 @@
+<img src="requirements/BrightTable-icon.svg" width="96" height="96" alt="BrightTable icon" />
+
+# BrightTable // Copyright (C) 2026 Rob Brown
+
+**A desktop viewer for Linux desktop, connecting Immich and open source RAW editors into a seamless experience**
+_An LLM coded project. Human generated requirements and testing._
+
+I designed this for myself because I dislike the user experience and functionality that exists on GNU/Linux for managing and editing photos. For me, this gap it fills the gap between DAM and raw editing and honestly an experience I have been pining for since the great Apple Aperture bit the dust a decade ago. There are some great tools out there already like RawTherapee/ART, Digikam, RapiddRAW, Digikam, Shotwell. But to me, none of them had exactly the user experience and workflow that I really wanted. So after a couple of years of threatening myself to build my own tool: I did. 
+
+While this tool uses LLMs to generate code, the concept, requirements, and testing is performed by the author. I absolutely hate the term 'vibe coding'. This is Human Reqs --> LLM Coding --> Human Testing.
+
+If you disagree, take your neo-luddite principles elsewhere.
+
+If you decide to use this, please read the warnings below.
+
+**What does it do?**
+_Background (the inspiration):_
+For those of you who have actually used a real light table and loupe to view transparency film you will understand the purpose of this tool. Light tables to me were the most enjoyable part of my photography workflow back when I shot film: heading to my local pro film label, getting that processed film back and sticking it on their light table to view the goods. It was fun, and tactile.
+
+As I entered the digital world in 2005 I intially used tools like Pixmantec Rawshooter (Asbove bought them out and it became Lightroom), and later the great Apple Aperture. Aperture was a rare tool that had a great user experience and brought it all together.
+
+_How it works:_
+
+- The library: Uses Immich and the Immich API as a self hosted asset manager backend. It will not work without Immich!
+- Processing: Uses open source RAW editors for photo processing e.g. ART, RawTherapee. 
+- The light table (this app): A front end app that uses the above, and creates a (I think) great user experience for editing your photos.
+
+**Warning!**
+
+- This tool was created by me, for me. I am giving it to the community to allow others who are interested to use it, and accept the risks involved.
+
+- Use at your own risk! You are responsible for using this tool. Read the code and understand what it does before using it. Test it on a sandbox first.
+
+- If you use Immich, and use the excellent opensource RAW editing tools: ART, RawTherapee, Darktable, then you will be able to use this tool. If you don't, then sorry this is not for you.
+
+- As they say, backup backup backup!  
+
+- I may or may not address bugs reported by the community. I have a full time job and this is very much a side project in my spare time. I  don't have the time to deep dive bugs encountered because of differences in your setup. Sorry.
+
+- Features are the enemy of quality! In the interest of keeping it simple I am unlikely to respond to new feature requests. You are welcome to submit a pull request with a bug fix, or a feature request that you are willing to implement yourself. However I want to keep this application primarily a simple, quality-focused tool with a user experience that is easy to use and understand. I therefore may reject pull requests for new features if I don't feel they fit the project's goals.
+
+- That said you are welcome to fork the code! Add your own features to it, repackage it, do something completely different. Consider this a concept and take it in the direction you want it to go. 
+
+**Usage**
+
+For a basic user manual read this [USAGE.md](USAGE.md)
+
+_System requirements:_
+
+- Designed and tested on GNU/Linux only. While it technically could be extended to Mac or Windows, I don't have either platform to test and to be honest life is way better on Linux. 
+- Requires Node.js, Rust/Cargo, and the Tauri CLI (`cargo install tauri-cli`) installed.
+
+_How to use:_
+
+- Executable: An AppImmage is included in the folder /app/src-tauri/target/release/bundle/appimage . I recommend using GearLever to manage your AppImages.
+
+_Developers:_
+
+- Run in dev mode (hot-reloading frontend + native window): `cd BrightTable && cargo tauri dev`
+- To build a distributable AppImage: 
+  - navigate to `/app/`
+  - run `npm run build:appimage`
+  - script will ask which Immich server version it was tested against, and the version of the app you would like to make this:
+    - Convention: 0.0.0 - First.Second.Third
+    - First: Sweeping changes to the app
+    - Second: New Features. Number keeps incrementing so e.g. you can have a large middle number e.g 1.101.0 
+    - Third: Bug fix
+  - Output lands at `BrightTable/src-tauri/target/release/bundle/appimage/BrightTable_<version>_amd64.AppImage`.
+
+- If you tested this build against a specific Immich server version, set `TESTED_IMMICH_VERSION` so the version bump also updates the About dialog's compatibility line, e.g. `TESTED_IMMICH_VERSION=3.0.1 npm run build:appimage`. Still update [COMPATIBILITY.md](COMPATIBILITY.md) by hand — that isn't automated.
+
+## Troubleshooting:
+
+_Compatibility_
+
+- Not sure if your Immich server version is supported? See [COMPATIBILITY.md](COMPATIBILITY.md) for which Immich version each BrightTable release has actually been tested against.
+- On some distros with very new glibc/binutils, the bundled `linuxdeploy` tool's `strip` binary can't parse newer libraries and fails the build — `build:appimage` already sets `NO_STRIP=1` to work around this.
+
+_NFS Permission Errors (Immich + Unraid)_
+Seeing `Permission denied` errors when BrightTable writes metadata over NFS (e.g. Immich + Unraid)?
+
+**Symptom:** BrightTable throws a permission error writing metadata (ratings, tags, etc.) to photos — either in an **external library** mounted into Immich, or in **Immich's own managed upload library** — even though the Docker mount shows `rw`, the Immich container runs as root, and the folder looks writable when checked directly on the Unraid host.
+
+**Root cause** (two variants, both boiling down to a UID/GID mismatch over NFS):
+
+1. **External library folders** are typically owned by whatever UID/GID they were originally created under, with restrictive bits (e.g. `drwxr-xr-x`) that don't grant write access to your NFS client user.
+2. **Immich-managed upload library folders** are created by the Immich container itself, usually owned by Unraid's default `nobody` user (uid 99, group `users`) with standard `644`/`755` permissions. Your client connects over NFS as a different UID (e.g. `rbrown` = uid 1000) — the kernel enforces permissions by numeric UID, not username, so the mismatch blocks the write even though both "look" like valid users.
+
+**Why ACLs don't fix it:** setting a POSIX ACL (`setfacl`) on the Unraid host — even directly on the underlying ZFS dataset with `posixacl` enabled — doesn't reliably propagate over Unraid's `shfs` FUSE union export path (`/mnt/user/...`). `getfacl` from the NFS client shows no ACL entries at all, even though the ACL is present server-side. Go straight to `chown`/`chmod` instead.
+
+**The fix:** apply a blunt permissions reset directly on the **underlying disk path** (not the `/mnt/user/...` shfs union path — find the real disk with `ls -la /mnt/disk*/...`):
+
+```bash
+chown -R nobody:users /mnt/bigdisk/Rob/Immich_Uploaded/library
+chmod -R 777 /mnt/bigdisk/Rob/Immich_Uploaded/library
+```
+
+Plain POSIX permission bits transmit reliably over NFS even though ACLs don't. Substitute the correct disk path for the external library if different.
+
+**Why it breaks again, and the permanent fix:** a one-off `chmod -R 777` only fixes files that exist at that moment — any file Immich creates afterward gets its default ownership/permissions again, so the error recurs on new photos. The official `ghcr.io/immich-app/immich-server` image doesn't support `PUID`/`PGID`/`UMASK` (that's a linuxserver.io convention, not used here), so there's no simple env-var fix. Instead, set up a recurring fix via Unraid's **User Scripts** plugin:
+
+1. Install **User Scripts** from Community Applications, if not already installed.
+
+2. **User Scripts** tab → **Add New Script** (e.g. `fix-immich-library-perms`).
+
+3. Script contents:
+   
+   ```bash
+   #!/bin/bash
+   chmod -R 777 /mnt/bigdisk/Rob/Immich_Uploaded/library
+   ```
+   
+   Add more `chmod -R 777 ...` lines for any external library path(s) too.
+
+4. Schedule it (e.g. nightly, or a cron expression like `0 3 * * *`), and optionally run it once manually to confirm it works immediately.
+
+*Higher-risk alternative, not recommended without testing:* run the Immich container as your own UID (`--user 1000:100` in the Unraid Docker template) so new files are owned correctly from creation. This avoids the recurring script but risks breaking permissions on `/config` (appdata) and other mounted paths that may currently be owned by root or a different UID.
+
+**If this recurs on a different library/folder later**, work through in order: confirm the Docker mount is `rw` (`docker inspect`), confirm the container's UID (`docker exec ... id`), check ownership as Immich sees it (`docker exec ... ls -la /path/inside/container`), check for ACLs from the client (`getfacl` — if empty, skip straight to `chown`/`chmod`), find the real underlying disk path rather than fixing only `/mnt/user/...`, apply the `chown`/`chmod` fix above, and add it to the scheduled User Script if it's a folder Immich actively writes new files into.

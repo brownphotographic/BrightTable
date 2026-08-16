@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="220" viewBox="0 0 256 256">
+      <defs>
+        <linearGradient id="t4a" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d4dfeb"></stop><stop offset="1" stop-color="#a9b9ca"></stop></linearGradient>
+        <clipPath id="lens4a"><circle cx="128" cy="118" r="60"></circle></clipPath>
+      </defs>
+      <rect width="256" height="256" rx="52" fill="url(#t4a)"></rect>
+      <rect x="34" y="100" width="184" height="16" rx="4" fill="#96c6dd"></rect>
+      <rect x="34" y="122" width="184" height="16" rx="4" fill="#6993be"></rect>
+      <rect x="34" y="144" width="184" height="16" rx="4" fill="#134245"></rect>
+      <g clip-path="url(#lens4a)">
+        <circle cx="128" cy="118" r="60" fill="#b9c9db"></circle>
+        <g transform="translate(128,118) scale(2.2) translate(-128,-118)">
+          <rect x="34" y="100" width="184" height="16" rx="4" fill="#96c6dd"></rect>
+          <rect x="34" y="122" width="184" height="16" rx="4" fill="#6993be"></rect>
+          <rect x="34" y="144" width="184" height="16" rx="4" fill="#134245"></rect>
+        </g>
+      </g>
+      <circle cx="128" cy="118" r="60" fill="none" stroke="#282e38" stroke-width="12"></circle>
+    </svg>
