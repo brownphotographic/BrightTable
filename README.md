@@ -1,22 +1,29 @@
 <img src="requirements/BrightTable-icon.svg" width="96" height="96" alt="BrightTable icon" />
 
-# BrightTable
+# BrightTable // Copyright (C) 2026 Rob Brown
 
-**An LLM coded project. Human generated requirements and testing.**
+**A desktop viewer for Linux desktop, connecting Immich and open source RAW editors into a seamless experience**
+_An LLM coded project. Human generated requirements and testing._
 
-I designed this for myself because I dislike the user experience and functionality that exists on GNU/Linux for managing and editing photos. For me, this gap it fills the gap between DAM and raw editing and honestly an experience I have been pining for since the great Apple Aperture bit the dclust a decade ago. There are some great tools out there already like RawTherapee/ART, Digikam, RapclaiuidRAW, Digikam, Shotwell. But to me, none of them had exactly the user experience and workflow that I really wanted. So after a couple of years of threatening myself to build my own tool: I did. 
+I designed this for myself because I dislike the user experience and functionality that exists on GNU/Linux for managing and editing photos. For me, this gap it fills the gap between DAM and raw editing and honestly an experience I have been pining for since the great Apple Aperture bit the dust a decade ago. There are some great tools out there already like RawTherapee/ART, Digikam, RapiddRAW, Digikam, Shotwell. But to me, none of them had exactly the user experience and workflow that I really wanted. So after a couple of years of threatening myself to build my own tool: I did. 
+
+While this tool uses LLMs to generate code, the concept, requirements, and testing is performed by the author. I absolutely hate the term 'vibe coding'. This is Human Reqs --> LLM Coding --> Human Testing.
+
+If you disagree, take your neo-luddite principles elsewhere.
 
 If you decide to use this, please read the warnings below.
 
 **What does it do?**
+_Background (the inspiration):_
+For those of you who have actually used a real light table and loupe to view transparency film you will understand the purpose of this tool. Light tables to me were the most enjoyable part of my photography workflow back when I shot film: heading to my local pro film label, getting that processed film back and sticking it on their light table to view the goods. It was fun, and tactile.
+
+As I entered the digital world in 2005 I intially used tools like Pixmantec Rawshooter (Asbove bought them out and it became Lightroom), and later the great Apple Aperture. Aperture was a rare tool that had a great user experience and brought it all together.
+
+_How it works:_
 
 - The library: Uses Immich and the Immich API as a self hosted asset manager backend. It will not work without Immich!
-
 - Processing: Uses open source RAW editors for photo processing e.g. ART, RawTherapee. 
-
 - The light table (this app): A front end app that uses the above, and creates a (I think) great user experience for editing your photos.
-
-- Tested on GNU/Linux only. While it technically could be extended to Mac or Windows, I don't have either platform to test and to be honest life is way better on Linux. 
 
 **Warning!**
 
@@ -30,30 +37,47 @@ If you decide to use this, please read the warnings below.
 
 - I may or may not address bugs reported by the community. I have a full time job and this is very much a side project in my spare time. I  don't have the time to deep dive bugs encountered because of differences in your setup. Sorry.
 
-- Features are the enemy of quality! In the interest of keeping it simple I am unlikely to respond to new feature requests.
+- Features are the enemy of quality! In the interest of keeping it simple I am unlikely to respond to new feature requests. You are welcome to submit a pull request with a bug fix, or a feature request that you are willing to implement yourself. However I want to keep this application primarily a simple, quality-focused tool with a user experience that is easy to use and understand. I therefore may reject pull requests for new features if I don't feel they fit the project's goals.
 
-- Please, please - fork the code! Add your own features to it, repackage it, do something completely different, submit a pull request with a bug fix. Consider this a concept and take it in the direction you want it to go. 
+- That said you are welcome to fork the code! Add your own features to it, repackage it, do something completely different. Consider this a concept and take it in the direction you want it to go. 
 
 **Usage**
 
-Requires Node.js, Rust/Cargo, and the Tauri CLI (`cargo install tauri-cli`) installed.
+For a basic user manual read this [USAGE.md](USAGE.md)
+
+_System requirements:_
+
+- Designed and tested on GNU/Linux only. While it technically could be extended to Mac or Windows, I don't have either platform to test and to be honest life is way better on Linux. 
+- Requires Node.js, Rust/Cargo, and the Tauri CLI (`cargo install tauri-cli`) installed.
+
+_How to use:_
+
+- Executable: An AppImmage is included in the folder /app/src-tauri/target/release/bundle/appimage . I recommend using GearLever to manage your AppImages.
+
+_Developers:_
 
 - Run in dev mode (hot-reloading frontend + native window): `cd BrightTable && cargo tauri dev`
-- AppImmage is included in the folder /app/src-tauri/target/release/bundle/appimage . I recommend using GearLever to manage your AppImages.
-- To build a distributable AppImage: `cd BrightTable && npm run build:appimage`
+- To build a distributable AppImage: 
+  - navigate to `/app/`
+  - run `npm run build:appimage`
+  - script will ask which Immich server version it was tested against, and the version of the app you would like to make this:
+    - Convention: 0.0.0 - First.Second.Third
+    - First: Sweeping changes to the app
+    - Second: New Features. Number keeps incrementing so e.g. you can have a large middle number e.g 1.101.0 
+    - Third: Bug fix
   - Output lands at `BrightTable/src-tauri/target/release/bundle/appimage/BrightTable_<version>_amd64.AppImage`.
 
-  Note: on some distros with very new glibc/binutils, the bundled `linuxdeploy` tool's `strip` binary can't parse newer libraries and fails the build — `build:appimage` already sets `NO_STRIP=1` to work around this.
+- If you tested this build against a specific Immich server version, set `TESTED_IMMICH_VERSION` so the version bump also updates the About dialog's compatibility line, e.g. `TESTED_IMMICH_VERSION=3.0.1 npm run build:appimage`. Still update [COMPATIBILITY.md](COMPATIBILITY.md) by hand — that isn't automated.
 
-  Each run of `build:appimage` auto-bumps the patch version in `src-tauri/Cargo.toml` first (e.g. `0.1.0` → `0.1.1`) — that's the single source of truth for the app version; `tauri.conf.json` and the AppImage filename both inherit it. Nothing is committed automatically — commit the version bump yourself (`git add BrightTable/src-tauri/Cargo.toml BrightTable/src-tauri/Cargo.lock`) if/when you want it in history. Bump major/minor by hand by editing the `version` line in `Cargo.toml` directly.
+## Troubleshooting:
 
-  If you tested this build against a specific Immich server version, set `TESTED_IMMICH_VERSION` so the version bump also updates the About dialog's compatibility line, e.g. `TESTED_IMMICH_VERSION=3.0.1 npm run build:appimage`. Still update [COMPATIBILITY.md](COMPATIBILITY.md) by hand — that isn't automated.
-
-- Seeing `Permission denied` errors when BrightTable writes metadata over NFS (e.g. Immich + Unraid)? See [Troubleshooting: NFS Permission Errors](#troubleshooting-nfs-permission-errors-immich--unraid) below.
+_Compatibility_
 
 - Not sure if your Immich server version is supported? See [COMPATIBILITY.md](COMPATIBILITY.md) for which Immich version each BrightTable release has actually been tested against.
+- On some distros with very new glibc/binutils, the bundled `linuxdeploy` tool's `strip` binary can't parse newer libraries and fails the build — `build:appimage` already sets `NO_STRIP=1` to work around this.
 
-## Troubleshooting: NFS Permission Errors (Immich + Unraid)
+_NFS Permission Errors (Immich + Unraid)_
+Seeing `Permission denied` errors when BrightTable writes metadata over NFS (e.g. Immich + Unraid)?
 
 **Symptom:** BrightTable throws a permission error writing metadata (ratings, tags, etc.) to photos — either in an **external library** mounted into Immich, or in **Immich's own managed upload library** — even though the Docker mount shows `rw`, the Immich container runs as root, and the folder looks writable when checked directly on the Unraid host.
 
@@ -76,13 +100,18 @@ Plain POSIX permission bits transmit reliably over NFS even though ACLs don't. S
 **Why it breaks again, and the permanent fix:** a one-off `chmod -R 777` only fixes files that exist at that moment — any file Immich creates afterward gets its default ownership/permissions again, so the error recurs on new photos. The official `ghcr.io/immich-app/immich-server` image doesn't support `PUID`/`PGID`/`UMASK` (that's a linuxserver.io convention, not used here), so there's no simple env-var fix. Instead, set up a recurring fix via Unraid's **User Scripts** plugin:
 
 1. Install **User Scripts** from Community Applications, if not already installed.
+
 2. **User Scripts** tab → **Add New Script** (e.g. `fix-immich-library-perms`).
+
 3. Script contents:
+   
    ```bash
    #!/bin/bash
    chmod -R 777 /mnt/bigdisk/Rob/Immich_Uploaded/library
    ```
+   
    Add more `chmod -R 777 ...` lines for any external library path(s) too.
+
 4. Schedule it (e.g. nightly, or a cron expression like `0 3 * * *`), and optionally run it once manually to confirm it works immediately.
 
 *Higher-risk alternative, not recommended without testing:* run the Immich container as your own UID (`--user 1000:100` in the Unraid Docker template) so new files are owned correctly from creation. This avoids the recurring script but risks breaking permissions on `/config` (appdata) and other mounted paths that may currently be owned by root or a different UID.

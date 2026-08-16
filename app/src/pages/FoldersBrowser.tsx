@@ -1,3 +1,20 @@
+/*
+ * BrightTable // Copyright (C) 2026 Rob Brown
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import { forwardRef, useCallback, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
@@ -41,6 +58,7 @@ import ExportToFolderDialog from '../components/ExportToFolderDialog';
 import PrintDialog from '../components/PrintDialog';
 import ExportToFlickrDialog from '../components/ExportToFlickrDialog';
 import MetadataPanel from '../components/MetadataPanel';
+import GridLoupePane from '../components/GridLoupePane';
 import ConfirmDialog from '../components/ConfirmDialog';
 import NoSidecarDialog from '../components/NoSidecarDialog';
 import InlineWarningBanner from '../components/InlineWarningBanner';
@@ -61,6 +79,7 @@ import { useProcessingJobReconciliation } from '../lib/useProcessingJobReconcili
 import { useBucketMemo } from '../lib/bucketMemo';
 import { ingestRoundTripExport, subscribeLateRoundTripOutcome, type RoundTripIngestOutcome } from '../lib/roundTrip';
 import { useNoSidecarChoice } from '../lib/useNoSidecarChoice';
+import { centerAssetInContainerSoon } from '../lib/scrollCenter';
 
 // See PhotosBrowser.tsx's identical helper for the full explanation -
 // snapshots whichever AssetSummary fields a patch is about to touch, so a
@@ -110,7 +129,11 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // Grid thumbnail size - controlled from MenuBar's slider (App.tsx owns
   // the state) since it moved out of this view's own bottom status bar.
   thumbSize: number;
-}>(function FoldersBrowser({ metaOpen, onCloseMetadata, filters, onOpenApplicationsPreferences, active = true, thumbSize }, ref) {
+  // Grid loupe mode - see PhotosBrowser.tsx's identical prop for the full
+  // explanation. App.tsx owns the boolean, shared across both grid views.
+  loupeOn: boolean;
+  onToggleLoupe: () => void;
+}>(function FoldersBrowser({ metaOpen, onCloseMetadata, filters, onOpenApplicationsPreferences, active = true, thumbSize, loupeOn, onToggleLoupe }, ref) {
   const [folderPaths, setFolderPaths] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // See PhotosBrowser.tsx's identical state - set only when
@@ -130,6 +153,25 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // all when openAsset exists.
   const viewerRef = useRef<ViewerHandle>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // See PhotosBrowser.tsx's identical state/effect/ref - which tile the
+  // cursor is currently over while loupeOn, driving GridLoupePane's preview
+  // (cleared on loupe off), plus a never-cleared mirror ref used only to
+  // re-center the grid on that tile at the instant loupeOn toggles.
+  const [hoveredAssetId, setHoveredAssetId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!loupeOn) setHoveredAssetId(null);
+  }, [loupeOn]);
+  const lastHoveredAssetId = useRef<string | null>(null);
+  const handleHoverAsset = useCallback((id: string | null) => {
+    if (id) lastHoveredAssetId.current = id;
+    setHoveredAssetId(id);
+  }, []);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !lastHoveredAssetId.current) return;
+    centerAssetInContainerSoon(container, lastHoveredAssetId.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loupeOn]);
   const lastClickedId = useRef<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [confirmDeleteSelection, setConfirmDeleteSelection] = useState(false);
@@ -763,12 +805,25 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // See PhotosBrowser.tsx's identical callbacks for the full explanation.
   const handleCopyImageProcessing = useCallback(
     (asset: AssetSummary) => {
-      if (!asset.originalPath || !asset.hasProcessingSidecar) return;
+      if (!asset.originalPath) return;
       const originalPath = asset.originalPath;
-      setCopiedProcessingSource({ assetId: asset.id, originalPath, fileName: asset.fileName, tools: asset.processingSidecarTools ?? [] });
+      // `asset.hasProcessingSidecar` is only a passive cache (populated once
+      // per bucket load - see its own comment) - it's used here for instant
+      // optimistic UI when already known-true, but never to *rule out* a
+      // copy: a stale-false read (the bucket's own scan resolved after this
+      // asset's cached snapshot was taken, or the asset was reached via a
+      // path - e.g. a stack member - that never independently ran the scan)
+      // would otherwise silently and permanently block Copy Image Processing
+      // even with a real sidecar on disk. The live re-check below is the
+      // actual source of truth and always runs, cache or no cache.
+      if (asset.hasProcessingSidecar) {
+        setCopiedProcessingSource({ assetId: asset.id, originalPath, fileName: asset.fileName, tools: asset.processingSidecarTools ?? [] });
+      }
       checkSidecarMetadata([{ assetId: asset.id, originalPath, currentRating: asset.rating, currentDescription: asset.description }])
         .then(([result]) => {
-          if (result) setCopiedProcessingSource({ assetId: asset.id, originalPath, fileName: asset.fileName, tools: result.processingSidecarTools });
+          if (result?.hasProcessingSidecar) {
+            setCopiedProcessingSource({ assetId: asset.id, originalPath, fileName: asset.fileName, tools: result.processingSidecarTools });
+          }
         })
         .catch(() => {});
     },
@@ -1062,6 +1117,11 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   const selectAll = useCallback(() => setSelected(new Set(flatIds)), [flatIds]);
   const deselectAll = useCallback(() => setSelected(new Set()), []);
 
+  // See PhotosBrowser.tsx's identical effect - loupe mode is browse-only.
+  useEffect(() => {
+    if (loupeOn) deselectAll();
+  }, [loupeOn, deselectAll]);
+
   // Scoped to whichever selected assets are actually .tif/.tiff (the only
   // extension this override is meaningful for) - toggles them all to match
   // whatever the majority state isn't, mirroring the favorite-toggle
@@ -1169,7 +1229,10 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     if (openId || !active) return;
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(e) || capturing) return;
-      if (matchesShortcut(e, shortcuts.open) && lastClickedId.current) {
+      if (matchesShortcut(e, shortcuts.loupe)) {
+        e.preventDefault();
+        onToggleLoupe();
+      } else if (matchesShortcut(e, shortcuts.open) && lastClickedId.current) {
         e.preventDefault();
         setOpenId(lastClickedId.current);
       } else if (matchesShortcut(e, shortcuts.selectAll)) {
@@ -1183,6 +1246,10 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       } else if (matchesShortcut(e, shortcuts.favorite) && selected.size > 0) {
         e.preventDefault();
         toggleFavoriteForSelection();
+      } else if (matchesShortcut(e, shortcuts.favorite) && loupeOn && hoveredAssetId) {
+        e.preventDefault();
+        const hovered = assetByIdAll.get(hoveredAssetId);
+        commitEdit(hoveredAssetId, { isFavorite: !hovered?.isFavorite }).catch(() => {});
       } else if (matchesShortcut(e, shortcuts.stack) && selected.size >= 2) {
         e.preventDefault();
         createStackForSelection([...selected]).catch(() => {});
@@ -1195,13 +1262,20 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       } else if (matchesShortcut(e, shortcuts.copyImageProcessing) && selectedAssets.length === 1) {
         e.preventDefault();
         handleCopyImageProcessing(selectedAssets[0]);
+      } else if (matchesShortcut(e, shortcuts.copyImageProcessing) && loupeOn && hoveredAssetId) {
+        e.preventDefault();
+        const hovered = assetByIdAll.get(hoveredAssetId);
+        if (hovered) handleCopyImageProcessing(hovered);
       } else if (matchesShortcut(e, shortcuts.pasteImageProcessing) && selected.size > 0 && copiedProcessingSource) {
         e.preventDefault();
         requestPasteImageProcessing([...selected]);
+      } else if (matchesShortcut(e, shortcuts.pasteImageProcessing) && loupeOn && hoveredAssetId && copiedProcessingSource) {
+        e.preventDefault();
+        requestPasteImageProcessing([hoveredAssetId]);
       } else if (matchesShortcut(e, shortcuts.addToTag) && selected.size > 0 && !TAG_ASSIGN_DISABLED_REASON) {
         e.preventDefault();
         setAddToTagTargets([...selected]);
-      } else if (selected.size > 0) {
+      } else if (selected.size > 0 || (loupeOn && hoveredAssetId)) {
         const ratingByShortcut: [ShortcutId, number][] = [
           ['rate0', 0],
           ['rate1', 1],
@@ -1214,7 +1288,11 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         for (const [id, rating] of ratingByShortcut) {
           if (matchesShortcut(e, shortcuts[id])) {
             e.preventDefault();
-            commitEditMany([...selected], { rating }).catch(() => {});
+            if (loupeOn && hoveredAssetId) {
+              commitEdit(hoveredAssetId, { rating }).catch(() => {});
+            } else {
+              commitEditMany([...selected], { rating }).catch(() => {});
+            }
             break;
           }
         }
@@ -1230,6 +1308,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     selected,
     shortcuts,
     capturing,
+    commitEdit,
     commitEditMany,
     createStackForSelection,
     toggleFavoriteForSelection,
@@ -1241,6 +1320,10 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     copiedMetadata,
     copiedProcessingSource,
     setAddToTagTargets,
+    onToggleLoupe,
+    loupeOn,
+    hoveredAssetId,
+    assetByIdAll,
   ]);
 
   const selectExclusive = useCallback((id: string) => {
@@ -1302,6 +1385,12 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   }, [activeBucketKeys]);
 
   useEffect(() => {
+    // See PhotosBrowser.tsx's identical guard - also skipped while inactive
+    // (kept mounted but hidden behind another tab), otherwise this keeps
+    // consuming checkSidecarMetadata's shared, concurrency-limited permit
+    // pool for a tab nobody's looking at, starving out permits for whichever
+    // tab is actually in front of the user.
+    if (!active) return;
     for (const item of virtualizer.getVirtualItems()) {
       const key = activeBucketKeys[item.index];
       if (!key || assetCache[key] || inFlight.current.has(key)) continue;
@@ -1405,28 +1494,30 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         />
       )}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ width: 208, flexShrink: 0, borderRight: '1px solid rgba(0,0,0,0.35)', padding: '10px 8px', overflow: 'auto', background: 'var(--canvas)' }}>
-          <TreeRow
-            label="All Originals"
-            depth={0}
-            selected={selectedNode === 'all'}
-            hasChildren={false}
-            onSelect={() => setSelectedNode('all')}
-          />
-          {tree.children.map((node) => (
-            <FolderTreeRows
-              key={node.path}
-              node={node}
+        {!loupeOn && (
+          <div style={{ width: 208, flexShrink: 0, borderRight: '1px solid rgba(0,0,0,0.35)', padding: '10px 8px', overflow: 'auto', background: 'var(--canvas)' }}>
+            <TreeRow
+              label="All Originals"
               depth={0}
-              selectedNode={selectedNode}
-              expandedPaths={expandedPaths}
-              onSelect={setSelectedNode}
-              onToggle={(path) => setExpandedPaths((e) => ({ ...e, [path]: !e[path] }))}
+              selected={selectedNode === 'all'}
+              hasChildren={false}
+              onSelect={() => setSelectedNode('all')}
             />
-          ))}
-        </div>
+            {tree.children.map((node) => (
+              <FolderTreeRows
+                key={node.path}
+                node={node}
+                depth={0}
+                selectedNode={selectedNode}
+                expandedPaths={expandedPaths}
+                onSelect={setSelectedNode}
+                onToggle={(path) => setExpandedPaths((e) => ({ ...e, [path]: !e[path] }))}
+              />
+            ))}
+          </div>
+        )}
 
-        <div ref={containerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 16, background: 'var(--canvas)', ...pendingStyle(isFiltering) }}>
+        <div ref={containerRef} style={{ flex: loupeOn ? '0 0 33.333%' : 1, overflow: 'auto', minHeight: 0, padding: 16, background: 'var(--canvas)', ...pendingStyle(isFiltering) }}>
           {activeBucketKeys.length === 0 ? (
             <div style={{ color: 'var(--text-dimmer)', fontSize: 12.5 }}>No assets in this folder.</div>
           ) : (
@@ -1466,6 +1557,8 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
                                 onRate={(id, rating) => commitEdit(id, { rating })}
                                 onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
                                 resolveAsset={(id) => assetByIdAll.get(id)}
+                                loupeMode={loupeOn}
+                                onHoverAsset={handleHoverAsset}
                               />
                             );
                           }
@@ -1480,6 +1573,8 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
                               onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
                               onToggleStackExpand={toggleStackExpand}
                               onRate={(id, rating) => commitEdit(id, { rating })}
+                              loupeMode={loupeOn}
+                              onHoverAsset={handleHoverAsset}
                             />
                           );
                         })}
@@ -1493,7 +1588,8 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
             </div>
           )}
         </div>
-        {metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
+        {loupeOn && <GridLoupePane assetId={hoveredAssetId} />}
+        {!loupeOn && metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
       </div>
 
       {openAsset && (

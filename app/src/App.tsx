@@ -1,3 +1,20 @@
+/*
+ * BrightTable // Copyright (C) 2026 Rob Brown
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import { useEffect, useRef, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
@@ -140,6 +157,27 @@ function AppShell() {
   // Timeline silently did nothing while looking at the Folders tab.
   const [dataKey, setDataKey] = useState(0);
   const [metaOpen, setMetaOpen] = useState(false);
+  // Grid loupe mode (every thumbnail-grid view, see showLoupe below) - a
+  // hover-preview split pane that needs the sidebar and metadata panel out
+  // of the way to make room. Entering it remembers whatever metaOpen was so
+  // leaving restores exactly that, rather than always landing back closed.
+  const [gridLoupeOn, setGridLoupeOn] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const metaOpenBeforeLoupe = useRef(false);
+  const toggleGridLoupe = () => {
+    setGridLoupeOn((v) => {
+      const next = !v;
+      if (next) {
+        metaOpenBeforeLoupe.current = metaOpen;
+        setMetaOpen(false);
+        setSidebarCollapsed(true);
+      } else {
+        setMetaOpen(metaOpenBeforeLoupe.current);
+        setSidebarCollapsed(false);
+      }
+      return next;
+    });
+  };
   const [trashCount, setTrashCount] = useState(0);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [activityOpen, setActivityOpen] = useState(false);
@@ -158,6 +196,13 @@ function AppShell() {
   const { shortcuts, capturing } = useShortcuts();
 
   const refreshTimeline = () => setDataKey((k) => k + 1);
+  // Every tab with a thumbnail grid has a size to zoom - Photos/Folders plus
+  // Tags/People/Albums/Trash (i.e. every LeftTab).
+  const showThumbSize = !activeSearch;
+  // Grid loupe mode is available on every view with a thumbnail grid except
+  // Trash, which has its own hover actions (restore/delete) instead of the
+  // loupe's hover-preview interaction.
+  const showLoupe = !activeSearch && (leftTab === 'photos' || leftTab === 'folders' || leftTab === 'tags' || leftTab === 'people' || leftTab === 'albums');
 
   useEffect(() => {
     const unlisten = listen<number>('queue-close-blocked', (e) => setCloseBlockedCount(e.payload));
@@ -178,11 +223,17 @@ function AppShell() {
       } else if (matchesShortcut(e, shortcuts.openPreferences)) {
         e.preventDefault();
         setPrefsOpen(true);
+      } else if (showThumbSize && (matchesShortcut(e, 'Ctrl++') || matchesShortcut(e, 'Ctrl+='))) {
+        e.preventDefault();
+        setThumbSize((n) => Math.min(320, n + 24));
+      } else if (showThumbSize && matchesShortcut(e, 'Ctrl+-')) {
+        e.preventDefault();
+        setThumbSize((n) => Math.max(100, n - 24));
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [prefsOpen, shortcuts, capturing]);
+  }, [prefsOpen, shortcuts, capturing, showThumbSize]);
 
   return (
     <div
@@ -206,6 +257,8 @@ function AppShell() {
         onQuit={() => getCurrentWindow().close()}
         metaOpen={metaOpen}
         onToggleMetadata={() => setMetaOpen((v) => !v)}
+        loupeOn={gridLoupeOn}
+        onToggleLoupe={toggleGridLoupe}
         onSelectAll={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.selectAll()}
         onDeselectAll={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.deselectAll()}
         onStackSelected={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.stackSelected()}
@@ -240,22 +293,25 @@ function AppShell() {
         onClearSearch={clearSearch}
         thumbSize={thumbSize}
         onThumbSizeChange={setThumbSize}
-        showThumbSize={!activeSearch && (leftTab === 'photos' || leftTab === 'folders')}
+        showThumbSize={showThumbSize}
+        showLoupe={showLoupe}
       />
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0, background: 'var(--panel-2)', position: 'relative' }}>
-        <Sidebar
-          active={leftTab}
-          onSelect={(tab) => {
-            clearSearch();
-            setLeftTab(tab);
-          }}
-          photosCount={photosCount}
-          trashCount={trashCount}
-          albumsCount={albumsCount}
-          peopleCount={peopleCount}
-          tagsCount={tagsCount}
-        />
+        {!sidebarCollapsed && (
+          <Sidebar
+            active={leftTab}
+            onSelect={(tab) => {
+              clearSearch();
+              setLeftTab(tab);
+            }}
+            photosCount={photosCount}
+            trashCount={trashCount}
+            albumsCount={albumsCount}
+            peopleCount={peopleCount}
+            tagsCount={tagsCount}
+          />
+        )}
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--canvas)', position: 'relative' }}>
           {/* Photos and Folders stay mounted (just hidden) once visited, rather
@@ -291,6 +347,8 @@ function AppShell() {
               filters={filters}
               onOpenApplicationsPreferences={() => openPreferencesTab('applications')}
               thumbSize={thumbSize}
+              loupeOn={gridLoupeOn}
+              onToggleLoupe={toggleGridLoupe}
             />
           </div>
           {albumsVisited && (
@@ -301,6 +359,9 @@ function AppShell() {
                 onCloseMetadata={() => setMetaOpen(false)}
                 onCount={setAlbumsCount}
                 active={!activeSearch && leftTab === 'albums'}
+                loupeOn={gridLoupeOn}
+                onToggleLoupe={toggleGridLoupe}
+                thumbSize={thumbSize}
               />
             </div>
           )}
@@ -312,6 +373,9 @@ function AppShell() {
                 onCloseMetadata={() => setMetaOpen(false)}
                 onCount={setPeopleCount}
                 active={!activeSearch && leftTab === 'people'}
+                loupeOn={gridLoupeOn}
+                onToggleLoupe={toggleGridLoupe}
+                thumbSize={thumbSize}
               />
             </div>
           )}
@@ -323,6 +387,9 @@ function AppShell() {
                 onCloseMetadata={() => setMetaOpen(false)}
                 onCount={setTagsCount}
                 active={!activeSearch && leftTab === 'tags'}
+                loupeOn={gridLoupeOn}
+                onToggleLoupe={toggleGridLoupe}
+                thumbSize={thumbSize}
               />
             </div>
           )}
@@ -337,11 +404,12 @@ function AppShell() {
                 filters={filters}
                 onOpenApplicationsPreferences={() => openPreferencesTab('applications')}
                 thumbSize={thumbSize}
-                onThumbSizeChange={setThumbSize}
+                loupeOn={gridLoupeOn}
+                onToggleLoupe={toggleGridLoupe}
               />
             </div>
           )}
-          {!activeSearch && leftTab === 'trash' && <TrashBrowser onCount={setTrashCount} />}
+          {!activeSearch && leftTab === 'trash' && <TrashBrowser onCount={setTrashCount} thumbSize={thumbSize} />}
         </div>
       </div>
 

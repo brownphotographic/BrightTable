@@ -1,3 +1,20 @@
+/*
+ * BrightTable // Copyright (C) 2026 Rob Brown
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { prettyShortcut, useShortcuts } from '../lib/shortcuts';
 import { activeFilterCount, DEFAULT_FILTERS, type FileTypeFilter, type Filters, type MediaTypeFilter } from '../lib/filters';
@@ -14,6 +31,8 @@ export default function MenuBar({
   onOpenActivity,
   metaOpen,
   onToggleMetadata,
+  loupeOn,
+  onToggleLoupe,
   onSelectAll,
   onDeselectAll,
   onStackSelected,
@@ -39,6 +58,7 @@ export default function MenuBar({
   thumbSize,
   onThumbSizeChange,
   showThumbSize,
+  showLoupe,
 }: {
   onOpenPreferences: () => void;
   onRefreshTimeline: () => void;
@@ -47,6 +67,10 @@ export default function MenuBar({
   onOpenActivity: () => void;
   metaOpen: boolean;
   onToggleMetadata: () => void;
+  // Grid loupe mode - only relevant while a thumbnail grid view is showing
+  // (see showLoupe below, the gate for this button).
+  loupeOn: boolean;
+  onToggleLoupe: () => void;
   onSelectAll: () => void;
   onDeselectAll: () => void;
   onStackSelected: () => void;
@@ -80,6 +104,10 @@ export default function MenuBar({
   thumbSize: number;
   onThumbSizeChange: (n: number) => void;
   showThumbSize: boolean;
+  // Grid loupe mode's own gate - true on every view with a thumbnail grid
+  // except Trash (Photos/Folders/Tags/People/Albums), which instead uses
+  // hover actions for restore/delete.
+  showLoupe: boolean;
 }) {
   const [open, setOpen] = useState<MenuKey>(null);
   const { shortcuts } = useShortcuts();
@@ -109,7 +137,6 @@ export default function MenuBar({
       onMouseLeave={close}
     >
       <TopMenu label="File" isOpen={open === 'file'} onClick={() => toggle('file')} onEnter={() => hoverTo('file')}>
-        <MenuItem label="Upload…" shortcut="Ctrl+U" onClick={close} />
         <MenuItem
           label="Refresh Timeline"
           shortcut={prettyShortcut(shortcuts.refreshTimeline)}
@@ -119,7 +146,7 @@ export default function MenuBar({
           }}
         />
         <MenuItem
-          label="Import from SD Card/Disk…"
+          label="Import…"
           onClick={() => {
             close();
             onOpenImport();
@@ -282,8 +309,22 @@ export default function MenuBar({
         {/* <MenuItem label="Show Filmstrip" onClick={close} />
         <MenuItem label="Show Info Panel" onClick={close} />
         <Divider /> */}
-        <MenuItem label="Zoom In" shortcut="Ctrl++" onClick={close} />
-        <MenuItem label="Zoom Out" shortcut="Ctrl+-" onClick={close} />
+        <MenuItem
+          label="Zoom In"
+          shortcut="Ctrl++"
+          onClick={() => {
+            close();
+            onThumbSizeChange(Math.min(320, thumbSize + 24));
+          }}
+        />
+        <MenuItem
+          label="Zoom Out"
+          shortcut="Ctrl+-"
+          onClick={() => {
+            close();
+            onThumbSizeChange(Math.max(100, thumbSize - 24));
+          }}
+        />
         {/* Sort Photos By disabled - none of these are wired to anything, so
             picking any of them had no effect and the grid stayed on its
             current (always-on) order regardless. */}
@@ -389,7 +430,7 @@ export default function MenuBar({
                   onClick={() => onFiltersChange({ ...filters, minRating: filters.minRating === v ? 0 : v })}
                   style={{ cursor: 'default' }}
                 >
-                  <Star filled={v <= filters.minRating} size={18} />
+                  <Star filled={v <= filters.minRating} size={18} color="var(--text)" dimColor="var(--text-faint)" />
                 </div>
               ))}
               <div style={{ flex: 1 }} />
@@ -576,6 +617,30 @@ export default function MenuBar({
 
       <div style={{ width: 1, height: 18, background: 'var(--overlay-medium)', margin: '0 6px' }} />
 
+      {showLoupe && (
+        <div
+          onClick={onToggleLoupe}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 7,
+            height: 30,
+            padding: '0 13px',
+            borderRadius: 8,
+            fontSize: 12.5,
+            cursor: 'default',
+            color: loupeOn ? '#fff' : 'var(--text)',
+            background: loupeOn ? '#3584e4' : 'var(--overlay-medium)',
+          }}
+        >
+          <div style={{ position: 'relative', width: 13, height: 13, flexShrink: 0 }}>
+            <div style={{ position: 'absolute', left: 0, top: 0, width: 9, height: 9, border: '1.7px solid currentColor', borderRadius: '50%' }} />
+            <div style={{ position: 'absolute', left: 8, top: 8, width: 5, height: 1.7, background: 'currentColor', borderRadius: 1, transformOrigin: 'left center', transform: 'rotate(45deg)' }} />
+          </div>
+          Loupe
+        </div>
+      )}
+
       <div
         onClick={onToggleMetadata}
         style={{
@@ -587,6 +652,7 @@ export default function MenuBar({
           borderRadius: 8,
           fontSize: 12.5,
           cursor: 'default',
+          color: metaOpen ? '#fff' : 'var(--text)',
           background: metaOpen ? '#3584e4' : 'var(--overlay-medium)',
         }}
       >
@@ -663,8 +729,14 @@ function MenuItem({ label, shortcut, onClick }: { label: string; shortcut?: stri
         fontSize: 13.5,
         cursor: 'default',
       }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = '#3584e4')}
-      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = '#3584e4';
+        e.currentTarget.style.color = '#fff';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = 'transparent';
+        e.currentTarget.style.color = '';
+      }}
     >
       {label}
       {shortcut && <span style={{ opacity: 0.45, fontSize: 12 }}>{shortcut}</span>}

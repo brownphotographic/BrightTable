@@ -1,5 +1,22 @@
+/*
+ * BrightTable // Copyright (C) 2026 Rob Brown
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import { useEffect, useState } from 'react';
-import { getStack, type AssetSummary } from '../lib/api';
+import { checkSidecarMetadata, getStack, type AssetSummary } from '../lib/api';
 import { overlayRawOverrides, useRawOverrides } from '../lib/rawOverrides';
 import AssetTile from './AssetTile';
 
@@ -20,6 +37,8 @@ export default function StackBand({
   onRate,
   onContextMenu,
   resolveAsset,
+  loupeMode,
+  onHoverAsset,
 }: {
   stackId: string;
   selected: Set<string>;
@@ -46,6 +65,11 @@ export default function StackBand({
   // directly, bypassing this component entirely) - shows up immediately
   // instead of only after the stack is collapsed and re-expanded.
   resolveAsset: (id: string) => AssetSummary | undefined;
+  // Grid loupe mode: members stay hoverable into the loupe pane and the
+  // Collapse button (the requirement-4 "close stacks" exception) stays live,
+  // but Unstack/Set Pick and each member's own select/open/rate are hidden.
+  loupeMode?: boolean;
+  onHoverAsset?: (id: string | null) => void;
 }) {
   const [memberIds, setMemberIds] = useState<string[] | null>(null);
   const [fallbackById, setFallbackById] = useState<Map<string, AssetSummary>>(new Map());
@@ -63,6 +87,41 @@ export default function StackBand({
         setMemberIds(overlaid.map((a) => a.id));
         setFallbackById(new Map(overlaid.map((a) => [a.id, a])));
         setFallbackPrimaryId(stack.primaryAssetId);
+        // getStack() returns Immich's own asset data, which has no notion of
+        // hasProcessingSidecar - that's this app's own local-disk scan, only
+        // ever run by the main per-bucket fetch. A member whose own
+        // folder/bucket hasn't independently loaded (so `resolveAsset` can't
+        // find it and every member here falls back to this snapshot) would
+        // otherwise permanently read as "no processing sidecar" - Copy Image
+        // Processing silently hidden for a member with a real .arp/.pp3 on
+        // disk. Re-runs the same scan here, scoped to just this stack.
+        checkSidecarMetadata(
+          overlaid
+            .filter((a) => a.originalPath)
+            .map((a) => ({
+              assetId: a.id,
+              originalPath: a.originalPath,
+              currentRating: a.rating,
+              currentDescription: a.description,
+            })),
+        )
+          .then((results) => {
+            if (cancelled || !results.length) return;
+            setFallbackById((m) => {
+              const next = new Map(m);
+              for (const r of results) {
+                const existing = next.get(r.assetId);
+                if (!existing) continue;
+                next.set(r.assetId, {
+                  ...existing,
+                  hasProcessingSidecar: r.hasProcessingSidecar,
+                  processingSidecarTools: r.processingSidecarTools,
+                });
+              }
+              return next;
+            });
+          })
+          .catch(() => {});
       })
       .catch((e) => !cancelled && setError(String(e)));
     return () => {
@@ -132,26 +191,28 @@ export default function StackBand({
           Stack · {members?.length ?? '…'} · Set Pick sets the pick
         </span>
         <div style={{ flex: 1 }} />
-        <button
-          onClick={handleUnstack}
-          disabled={busy || !members}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            height: 28,
-            padding: '0 12px',
-            border: '1px solid var(--border-strong)',
-            borderRadius: 8,
-            background: 'var(--overlay-weak)',
-            color: 'var(--text)',
-            fontSize: 12,
-            cursor: 'default',
-            opacity: busy ? 0.6 : 1,
-          }}
-        >
-          Unstack
-        </button>
+        {!loupeMode && (
+          <button
+            onClick={handleUnstack}
+            disabled={busy || !members}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              height: 28,
+              padding: '0 12px',
+              border: '1px solid var(--border-strong)',
+              borderRadius: 8,
+              background: 'var(--overlay-weak)',
+              color: 'var(--text)',
+              fontSize: 12,
+              cursor: 'default',
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            Unstack
+          </button>
+        )}
         <button
           onClick={onCollapse}
           style={{
@@ -198,36 +259,40 @@ export default function StackBand({
                   onOpen={onOpen}
                   onRate={handleRate}
                   onContextMenu={onContextMenu}
+                  loupeMode={loupeMode}
+                  onHoverAsset={onHoverAsset}
                 />
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleSetPick(m.id);
-                  }}
-                  disabled={isPick}
-                  title={isPick ? 'Stack pick' : 'Set as stack pick'}
-                  style={{
-                    position: 'absolute',
-                    top: 4,
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    height: 20,
-                    padding: '0 8px',
-                    borderRadius: 10,
-                    border: 'none',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: 'default',
-                    fontSize: 10.5,
-                    fontWeight: 700,
-                    whiteSpace: 'nowrap',
-                    background: isPick ? '#f5c518' : 'rgba(0,0,0,0.6)',
-                    color: isPick ? '#1c1c1c' : '#fff',
-                  }}
-                >
-                  {isPick ? 'Pick' : 'Set Pick'}
-                </button>
+                {!loupeMode && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSetPick(m.id);
+                    }}
+                    disabled={isPick}
+                    title={isPick ? 'Stack pick' : 'Set as stack pick'}
+                    style={{
+                      position: 'absolute',
+                      top: 4,
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      height: 20,
+                      padding: '0 8px',
+                      borderRadius: 10,
+                      border: 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'default',
+                      fontSize: 10.5,
+                      fontWeight: 700,
+                      whiteSpace: 'nowrap',
+                      background: isPick ? '#f5c518' : 'rgba(0,0,0,0.6)',
+                      color: isPick ? '#1c1c1c' : '#fff',
+                    }}
+                  >
+                    {isPick ? 'Pick' : 'Set Pick'}
+                  </button>
+                )}
               </div>
             );
           })}

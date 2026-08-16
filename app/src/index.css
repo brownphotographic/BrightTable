@@ -1,3 +1,20 @@
+/*
+ * BrightTable // Copyright (C) 2026 Rob Brown
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 :root {
   --canvas: #1c1c1c;
   --panel: #303030;
@@ -10,6 +27,7 @@
   --text: #ffffff;
   --text-dim: rgba(255, 255, 255, 0.7);
   --text-dimmer: rgba(255, 255, 255, 0.45);
+  --text-faint: rgba(255, 255, 255, 0.225);
   --accent: #3584e4;
   --accent-hover: #3987e5;
   /* Status text (e.g. "Syncing…") sitting on a translucent accent tint -
@@ -37,6 +55,7 @@
   --text: #1c1c1c;
   --text-dim: rgba(0, 0, 0, 0.65);
   --text-dimmer: rgba(0, 0, 0, 0.45);
+  --text-faint: rgba(0, 0, 0, 0.225);
   --accent: #3584e4;
   --accent-hover: #1c71d8;
   --accent-text: #1a5fb4;

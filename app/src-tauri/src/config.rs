@@ -1,3 +1,20 @@
+/*
+ * BrightTable // Copyright (C) 2026 Rob Brown
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -468,7 +485,7 @@ fn config_path(app: &AppHandle, cfg: &AppConfig) -> Result<PathBuf, String> {
     Ok(dir.join("config.json"))
 }
 
-pub fn load(app: &AppHandle) -> AppConfig {
+pub fn load(app: &AppHandle, vault: Option<&crate::secure_store::SecretVault>) -> AppConfig {
     let default_cfg = AppConfig::default();
     let Ok(path) = config_path(app, &default_cfg) else {
         return default_cfg;
@@ -532,15 +549,47 @@ pub fn load(app: &AppHandle) -> AppConfig {
     {
         cfg.applications.active_raw_converter = Some(RawConverterKind::Art);
     }
+
+    // Immich/Flickr credentials live in the encrypted Stronghold vault, not
+    // config.json - see `secure_store.rs`. `vault` is `None` when opening it
+    // failed at startup (no writable app-local-data dir); that just leaves
+    // whatever config.json already had in place, same as before the vault
+    // existed.
+    if let Some(vault) = vault {
+        if vault.read_into(&mut cfg) {
+            // config.json still had these fields in plaintext (an old save
+            // from before the vault existed) and the vault had no entry of
+            // its own yet - migrate them in and rewrite config.json with
+            // them blanked right now, rather than waiting for the user's
+            // next Preferences save.
+            let _ = save(app, &cfg, Some(vault));
+        }
+    }
+
     cfg
 }
 
-pub fn save(app: &AppHandle, cfg: &AppConfig) -> Result<(), String> {
+pub fn save(app: &AppHandle, cfg: &AppConfig, vault: Option<&crate::secure_store::SecretVault>) -> Result<(), String> {
     let path = config_path(app, cfg)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Could not create settings folder: {e}"))?;
     }
-    let raw = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
+    let mut on_disk = cfg.clone();
+    if let Some(vault) = vault {
+        if vault.write_secrets(cfg).is_ok() {
+            on_disk.library.api_key.clear();
+            on_disk.sharing.flickr.api_key.clear();
+            on_disk.sharing.flickr.api_secret.clear();
+            on_disk.sharing.flickr.oauth_token.clear();
+            on_disk.sharing.flickr.oauth_token_secret.clear();
+        }
+        // Vault write failed (rather than vault being unavailable, which
+        // never got here at all): fall through and let config.json keep
+        // carrying these fields in plaintext, same as before the vault
+        // existed - better than silently blanking them on disk with
+        // nowhere else they got saved.
+    }
+    let raw = serde_json::to_string_pretty(&on_disk).map_err(|e| e.to_string())?;
     fs::write(&path, raw).map_err(|e| format!("Could not write config.json: {e}"))
 }
 

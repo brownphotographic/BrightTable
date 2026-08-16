@@ -1,3 +1,20 @@
+/*
+ * BrightTable // Copyright (C) 2026 Rob Brown
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 mod apps;
 mod art;
 mod art_queue;
@@ -24,6 +41,7 @@ mod rawtherapee;
 mod reveal;
 mod rotate;
 mod round_trip;
+mod secure_store;
 mod state;
 #[cfg(target_os = "linux")]
 mod suspend_guard;
@@ -77,7 +95,14 @@ pub fn run() {
                     "app-config",
                 );
             }
-            let cfg = config::load(app.handle());
+            // Opened once for the app's lifetime and handed to AppState -
+            // each Stronghold snapshot open/commit is a fixed ~1s cost in a
+            // release build, not something to pay on every `config::load`/
+            // `save` call. `.ok()` degrades to config.json-only (this app's
+            // behavior before the vault existed) if it fails to open, e.g.
+            // no writable app-local-data dir.
+            let secret_vault = secure_store::SecretVault::open(app.handle()).ok();
+            let cfg = config::load(app.handle(), secret_vault.as_ref());
             // Shared between EditQueue and ProcessingQueue - see
             // `asset_locks.rs`'s own doc comment for why the two queues need
             // to serialize against each other now, not just against
@@ -118,7 +143,7 @@ pub fn run() {
             let (processing_queue, processing_queue_rx) = processing_queue::ProcessingQueue::new(asset_locks.clone());
             let (art_queue, art_queue_rx) = art_queue::ArtQueue::new();
             let (export_queue, export_queue_rx) = export_queue::ExportQueue::new();
-            app.manage(AppState::new(cfg, edit_queue, import_queue, round_trip.clone(), processing_queue, art_queue, export_queue));
+            app.manage(AppState::new(cfg, secret_vault, edit_queue, import_queue, round_trip.clone(), processing_queue, art_queue, export_queue));
 
             tauri::async_runtime::spawn(edit_queue::run(app.handle().clone(), edit_queue_rx));
             tauri::async_runtime::spawn(import::queue::run(app.handle().clone(), import_queue_rx, max_concurrent_import_jobs));

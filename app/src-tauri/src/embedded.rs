@@ -1,3 +1,20 @@
+/*
+ * BrightTable // Copyright (C) 2026 Rob Brown
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 // Locates metadata embedded directly inside a JPEG/TIFF's own bytes (as
 // opposed to a separate sidecar file) - digiKam and similar tools write
 // straight into these formats when they can, rather than creating a `.xmp`.
@@ -7,6 +24,7 @@
 // `xmp.rs`'s field parsers, which don't care whether it came from a sidecar
 // or an embedded packet.
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 
 const XMP_SIGNATURE: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
@@ -15,8 +33,28 @@ const IPTC_RESOURCE_ID: u16 = 0x0404;
 const IPTC_RECORD_APPLICATION: u8 = 2;
 const IPTC_DATASET_CAPTION: u8 = 120;
 
+// Every marker segment this module looks for (APP1/XMP, APP13/IPTC) lives in
+// a JPEG's header, before the SOS marker starts the entropy-coded scan data -
+// a hard format guarantee, not a heuristic. Reading the *whole* file (often
+// tens of megabytes for a camera JPEG) just to inspect a few KB of header was
+// found live to seriously contend with concurrent NFS reads during a passive
+// library scan (many JPEGs scanned at once each pulling their full bytes over
+// the network/disk) - confirmed via stuck `read()`/`statx` syscalls on
+// blocking-pool threads while the underlying mount itself tested fast for
+// both metadata and full-file reads done one at a time. 4 MiB comfortably
+// covers realistic header sizes (a handful of 64KB-capped APP segments plus
+// an ICC profile) while still being a small fraction of a typical file.
+const JPEG_HEADER_READ_CAP: u64 = 4 * 1024 * 1024;
+
 fn extension_lower(path: &Path) -> Option<String> {
     Some(path.extension()?.to_str()?.to_ascii_lowercase())
+}
+
+fn read_prefix(path: &Path, cap: u64) -> Option<Vec<u8>> {
+    let file = fs::File::open(path).ok()?;
+    let mut buf = Vec::new();
+    file.take(cap).read_to_end(&mut buf).ok()?;
+    Some(buf)
 }
 
 /// The XMP XML packet embedded in a JPEG's APP1 segment or a TIFF's tag
@@ -25,13 +63,16 @@ fn extension_lower(path: &Path) -> Option<String> {
 pub fn find_embedded_xmp(path: &Path) -> Option<String> {
     match extension_lower(path)?.as_str() {
         "jpg" | "jpeg" => {
-            let bytes = fs::read(path).ok()?;
+            let bytes = read_prefix(path, JPEG_HEADER_READ_CAP)?;
             let (_, payload) = jpeg_segments(&bytes)
                 .into_iter()
                 .find(|(marker, payload)| *marker == 0xE1 && payload.starts_with(XMP_SIGNATURE))?;
             std::str::from_utf8(&payload[XMP_SIGNATURE.len()..]).ok().map(str::to_string)
         }
         "tif" | "tiff" => {
+            // Unlike JPEG's marker stream, a TIFF tag's value can point
+            // anywhere in the file via an absolute offset - no safe fixed
+            // prefix covers every case, so this one still reads in full.
             let bytes = fs::read(path).ok()?;
             find_tiff_xmp(&bytes)
         }
@@ -51,7 +92,7 @@ pub fn find_embedded_iptc_caption(path: &Path) -> Option<String> {
     if extension_lower(path)?.as_str() != "jpg" && extension_lower(path)?.as_str() != "jpeg" {
         return None;
     }
-    let bytes = fs::read(path).ok()?;
+    let bytes = read_prefix(path, JPEG_HEADER_READ_CAP)?;
     let (_, payload) = jpeg_segments(&bytes)
         .into_iter()
         .find(|(marker, payload)| *marker == 0xED && payload.starts_with(PHOTOSHOP_SIGNATURE))?;

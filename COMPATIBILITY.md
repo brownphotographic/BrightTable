@@ -10,6 +10,7 @@ actually been verified live, not a guarantee about untested versions.
 | 0.2.3 | 2.7.5 (floor), 3.0.1 (confirmed) | `MIN_TESTED_SERVER_VERSION` in `immich/models.rs` is `2.7.5` — not a hard block, just the floor `Test Connection` warns below (Preferences → Library, and an amber sidebar status dot). 3.0.1 was separately confirmed to behave identically for this build. See `requirements.md` §2.7 for the detailed per-version findings log (e.g. confirmed quirks in `/search/metadata` and `/timeline/bucket`). |
 | 0.2.4 | 2.7.5 (floor), 3.0.1 (confirmed) | Same floor and confirmed server version as 0.2.3 — no compatibility-relevant server-facing changes since. |
 | 0.2.6 | 3.1.0 (floor and confirmed) | Floor raised to match the confirmed version — backward compatibility with pre-3.1.0 servers is no longer being tested, so the floor now tracks whatever's actually verified instead of trailing it. |
+| 1.0.0 | 3.1.0 (floor and confirmed) | v1.0 launch release — same tested server version as 0.2.6, no compatibility-relevant server-facing changes since. |
 
 ## Keeping this current
 

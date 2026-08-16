@@ -1,3 +1,20 @@
+/*
+ * BrightTable // Copyright (C) 2026 Rob Brown
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import { useEffect, useState } from 'react';
 import { getAsset, type AssetMetadataPatch, type AssetSummary, type TagSummary } from '../lib/api';
 import { formatCamera, formatDims, formatExposure, formatSize, formatTaken } from '../lib/exifFormat';
@@ -51,7 +68,7 @@ export default function MetadataRows({
           title={onEdit ? (asset.isFavorite ? 'Remove from favorites' : 'Add to favorites') : undefined}
           style={{ cursor: 'default', opacity: busy ? 0.5 : 1 }}
         >
-          <Heart filled={asset.isFavorite} size={16} />
+          <Heart filled={asset.isFavorite} size={16} filledColor="var(--text)" dimColor="var(--text-faint)" />
         </div>
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '9px 0', marginTop: 2 }}>
@@ -60,7 +77,7 @@ export default function MetadataRows({
           <div style={{ display: 'flex', gap: 4 }}>
             {[1, 2, 3, 4, 5].map((v) => (
               <div key={v} onClick={() => apply({ rating: v === (asset.rating || 0) ? 0 : v })} style={{ cursor: 'default' }}>
-                <Star filled={v <= (asset.rating || 0)} size={18} />
+                <Star filled={v <= (asset.rating || 0)} size={18} color="var(--text)" dimColor="var(--text-faint)" />
               </div>
             ))}
           </div>
@@ -128,7 +145,17 @@ export function InfoRow({ label, value, last }: { label: string; value: string; 
 // dim-text var, but callers that render these on a fixed (non-theme)
 // background - e.g. SelectionBar's permanently dark bar - pass an explicit
 // fixed color instead so they don't go invisible when the app theme flips.
-export function Star({ filled, size = 14, dimColor = 'var(--text-dimmer)' }: { filled: boolean; size?: number; dimColor?: string }) {
+export function Star({
+  filled,
+  size = 14,
+  dimColor = 'var(--text-dimmer)',
+  color = '#fff',
+}: {
+  filled: boolean;
+  size?: number;
+  dimColor?: string;
+  color?: string;
+}) {
   return (
     <div
       style={{
@@ -136,7 +163,7 @@ export function Star({ filled, size = 14, dimColor = 'var(--text-dimmer)' }: { f
         height: size,
         flexShrink: 0,
         clipPath: 'polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%)',
-        background: filled ? '#fff' : dimColor,
+        background: filled ? color : dimColor,
       }}
     />
   );
@@ -153,9 +180,19 @@ export function RejectIcon({ active, size = 14, dimColor = 'var(--text-dimmer)' 
   );
 }
 
-export function Heart({ filled, size = 13, dimColor = 'var(--text-dimmer)' }: { filled: boolean; size?: number; dimColor?: string }) {
+export function Heart({
+  filled,
+  size = 13,
+  dimColor = 'var(--text-dimmer)',
+  filledColor = '#ff6b6b',
+}: {
+  filled: boolean;
+  size?: number;
+  dimColor?: string;
+  filledColor?: string;
+}) {
   const s = size * (7 / 13);
-  const color = filled ? '#ff6b6b' : dimColor;
+  const color = filled ? filledColor : dimColor;
   return (
     <div style={{ position: 'relative', width: size, height: size * (12 / 13) }}>
       <div style={{ width: s, height: s, background: color, transform: 'rotate(45deg)', position: 'absolute', left: s * 0.43, top: s * 0.43 }} />

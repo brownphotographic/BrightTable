@@ -1,3 +1,20 @@
+/*
+ * BrightTable // Copyright (C) 2026 Rob Brown
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -35,10 +52,13 @@ pub fn save_library_config(
     state: State<AppState>,
     cfg: LibraryConfig,
 ) -> Result<AppConfig, String> {
-    let mut guard = state.config.lock().unwrap();
-    guard.library = cfg;
-    config::save(&app, &guard)?;
-    Ok(guard.clone())
+    let snapshot = {
+        let mut guard = state.config.lock().unwrap();
+        guard.library = cfg;
+        guard.clone()
+    };
+    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -47,10 +67,13 @@ pub fn save_shortcuts(
     state: State<AppState>,
     shortcuts: HashMap<String, String>,
 ) -> Result<AppConfig, String> {
-    let mut guard = state.config.lock().unwrap();
-    guard.shortcuts = shortcuts;
-    config::save(&app, &guard)?;
-    Ok(guard.clone())
+    let snapshot = {
+        let mut guard = state.config.lock().unwrap();
+        guard.shortcuts = shortcuts;
+        guard.clone()
+    };
+    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -59,10 +82,13 @@ pub fn save_smart_stack_settings(
     state: State<AppState>,
     settings: SmartStackSettings,
 ) -> Result<AppConfig, String> {
-    let mut guard = state.config.lock().unwrap();
-    guard.smart_stack = settings;
-    config::save(&app, &guard)?;
-    Ok(guard.clone())
+    let snapshot = {
+        let mut guard = state.config.lock().unwrap();
+        guard.smart_stack = settings;
+        guard.clone()
+    };
+    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -71,10 +97,13 @@ pub fn save_window_controls_position(
     state: State<AppState>,
     position: WindowControlsPosition,
 ) -> Result<AppConfig, String> {
-    let mut guard = state.config.lock().unwrap();
-    guard.window_controls_position = position;
-    config::save(&app, &guard)?;
-    Ok(guard.clone())
+    let snapshot = {
+        let mut guard = state.config.lock().unwrap();
+        guard.window_controls_position = position;
+        guard.clone()
+    };
+    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -83,10 +112,13 @@ pub fn save_theme_mode(
     state: State<AppState>,
     mode: ThemeMode,
 ) -> Result<AppConfig, String> {
-    let mut guard = state.config.lock().unwrap();
-    guard.theme_mode = mode;
-    config::save(&app, &guard)?;
-    Ok(guard.clone())
+    let snapshot = {
+        let mut guard = state.config.lock().unwrap();
+        guard.theme_mode = mode;
+        guard.clone()
+    };
+    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -96,16 +128,19 @@ pub fn set_raw_overrides(
     asset_ids: Vec<String>,
     is_raw: bool,
 ) -> Result<AppConfig, String> {
-    let mut guard = state.config.lock().unwrap();
-    for id in asset_ids {
-        if is_raw {
-            guard.raw_overrides.insert(id);
-        } else {
-            guard.raw_overrides.remove(&id);
+    let snapshot = {
+        let mut guard = state.config.lock().unwrap();
+        for id in asset_ids {
+            if is_raw {
+                guard.raw_overrides.insert(id);
+            } else {
+                guard.raw_overrides.remove(&id);
+            }
         }
-    }
-    config::save(&app, &guard)?;
-    Ok(guard.clone())
+        guard.clone()
+    };
+    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -114,10 +149,13 @@ pub fn save_applications_config(
     state: State<AppState>,
     cfg: ApplicationsConfig,
 ) -> Result<AppConfig, String> {
-    let mut guard = state.config.lock().unwrap();
-    guard.applications = cfg;
-    config::save(&app, &guard)?;
-    Ok(guard.clone())
+    let snapshot = {
+        let mut guard = state.config.lock().unwrap();
+        guard.applications = cfg;
+        guard.clone()
+    };
+    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    Ok(snapshot)
 }
 
 /// Best-effort scan of installed native/Flatpak/Snap apps for the app
@@ -1318,10 +1356,13 @@ pub fn save_import_settings(
     state: State<AppState>,
     settings: ImportSettings,
 ) -> Result<AppConfig, String> {
-    let mut guard = state.config.lock().unwrap();
-    guard.import = settings;
-    config::save(&app, &guard)?;
-    Ok(guard.clone())
+    let snapshot = {
+        let mut guard = state.config.lock().unwrap();
+        guard.import = settings;
+        guard.clone()
+    };
+    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    Ok(snapshot)
 }
 
 #[derive(Debug, Serialize)]
@@ -1812,10 +1853,13 @@ pub async fn clear_thumb_cache(
 
 #[tauri::command]
 pub fn save_sharing_config(app: AppHandle, state: State<AppState>, cfg: SharingConfig) -> Result<AppConfig, String> {
-    let mut guard = state.config.lock().unwrap();
-    guard.sharing = cfg;
-    config::save(&app, &guard)?;
-    Ok(guard.clone())
+    let snapshot = {
+        let mut guard = state.config.lock().unwrap();
+        guard.sharing = cfg;
+        guard.clone()
+    };
+    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    Ok(snapshot)
 }
 
 #[derive(Debug, Serialize)]
@@ -1856,24 +1900,30 @@ pub async fn flickr_complete_auth(
     verifier: String,
 ) -> Result<AppConfig, String> {
     let auth = flickr::access_token(&state.http, &api_key, &api_secret, &oauth_token, &oauth_token_secret, &verifier).await?;
-    let mut guard = state.config.lock().unwrap();
-    guard.sharing.flickr.api_key = api_key;
-    guard.sharing.flickr.api_secret = api_secret;
-    guard.sharing.flickr.oauth_token = auth.oauth_token;
-    guard.sharing.flickr.oauth_token_secret = auth.oauth_token_secret;
-    guard.sharing.flickr.user_nsid = auth.user_nsid;
-    guard.sharing.flickr.username = auth.username;
-    guard.sharing.flickr.connected = true;
-    config::save(&app, &guard)?;
-    Ok(guard.clone())
+    let snapshot = {
+        let mut guard = state.config.lock().unwrap();
+        guard.sharing.flickr.api_key = api_key;
+        guard.sharing.flickr.api_secret = api_secret;
+        guard.sharing.flickr.oauth_token = auth.oauth_token;
+        guard.sharing.flickr.oauth_token_secret = auth.oauth_token_secret;
+        guard.sharing.flickr.user_nsid = auth.user_nsid;
+        guard.sharing.flickr.username = auth.username;
+        guard.sharing.flickr.connected = true;
+        guard.clone()
+    };
+    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    Ok(snapshot)
 }
 
 #[tauri::command]
 pub fn flickr_disconnect(app: AppHandle, state: State<AppState>) -> Result<AppConfig, String> {
-    let mut guard = state.config.lock().unwrap();
-    guard.sharing.flickr = Default::default();
-    config::save(&app, &guard)?;
-    Ok(guard.clone())
+    let snapshot = {
+        let mut guard = state.config.lock().unwrap();
+        guard.sharing.flickr = Default::default();
+        guard.clone()
+    };
+    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    Ok(snapshot)
 }
 
 #[tauri::command]

@@ -1,3 +1,20 @@
+/*
+ * BrightTable // Copyright (C) 2026 Rob Brown
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
@@ -19,6 +36,7 @@ import {
   type MetadataEditTarget,
 } from '../lib/api';
 import AssetTile, { type ClickMods } from '../components/AssetTile';
+import GridLoupePane from '../components/GridLoupePane';
 import SelectionBar from '../components/SelectionBar';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import AddToAlbumDialog from '../components/AddToAlbumDialog';
@@ -33,6 +51,7 @@ import Viewer from '../components/Viewer';
 import { isTypingTarget, matchesShortcut, useShortcuts, type ShortcutId } from '../lib/shortcuts';
 import { useEditQueue } from '../lib/editQueue';
 import { useEditJobReconciliation } from '../lib/useEditJobReconciliation';
+import { centerAssetInContainerSoon } from '../lib/scrollCenter';
 
 // See PhotosBrowser.tsx/FoldersBrowser.tsx's identical helper.
 function prevValuesFor(asset: AssetSummary | undefined, patch: AssetMetadataPatch): Partial<AssetSummary> {
@@ -72,11 +91,21 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
   // Number of albums, for the sidebar row - only meaningful in the list view.
   onCount?: (n: number) => void;
   active?: boolean;
+  // Grid loupe mode - see PhotosBrowser.tsx's identical prop for the full
+  // explanation. App.tsx owns the boolean, shared across every grid view.
+  loupeOn: boolean;
+  onToggleLoupe: () => void;
+  // Grid thumbnail size, in px - shared across every grid view. See
+  // App.tsx's `thumbSize` state and MenuBar's slider.
+  thumbSize: number;
 }>(function AlbumsBrowser({
   metaOpen,
   onCloseMetadata,
   onCount,
   active = true,
+  loupeOn,
+  onToggleLoupe,
+  thumbSize,
 }, ref) {
   const [albums, setAlbums] = useState<AlbumSummary[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -96,6 +125,19 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; assetId: string } | null>(null);
   const [confirmDeleteSelection, setConfirmDeleteSelection] = useState(false);
   const [confirmRemoveSelection, setConfirmRemoveSelection] = useState(false);
+  // See FoldersBrowser.tsx's identical state/effect/ref - which tile the
+  // cursor is currently over while loupeOn, driving GridLoupePane's preview
+  // (cleared on loupe off), plus a never-cleared mirror ref used only to
+  // re-center the grid on that tile at the instant loupeOn toggles.
+  const [hoveredAssetId, setHoveredAssetId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!loupeOn) setHoveredAssetId(null);
+  }, [loupeOn]);
+  const lastHoveredAssetId = useRef<string | null>(null);
+  const handleHoverAsset = useCallback((id: string | null) => {
+    if (id) lastHoveredAssetId.current = id;
+    setHoveredAssetId(id);
+  }, []);
   const [addToAlbumTargets, setAddToAlbumTargets] = useState<string[] | null>(null);
   const [addToTagTargets, setAddToTagTargets] = useState<string[] | null>(null);
   const [exportFolderAssets, setExportFolderAssets] = useState<AssetSummary[] | null>(null);
@@ -171,6 +213,13 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
     gridVirtualizer.measure();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openAlbumId]);
+
+  useEffect(() => {
+    const container = gridContainerRef.current;
+    if (!container || !lastHoveredAssetId.current) return;
+    centerAssetInContainerSoon(container, lastHoveredAssetId.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loupeOn]);
 
   const selectedAssets = useMemo(
     () => [...selected].map((id) => assetById.get(id)).filter((a): a is AssetSummary => !!a),
@@ -391,7 +440,10 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
     if (!openAlbumId || openId || !active) return;
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(e) || capturing) return;
-      if (matchesShortcut(e, shortcuts.open) && lastClickedId.current) {
+      if (matchesShortcut(e, shortcuts.loupe)) {
+        e.preventDefault();
+        onToggleLoupe();
+      } else if (matchesShortcut(e, shortcuts.open) && lastClickedId.current) {
         e.preventDefault();
         setOpenId(lastClickedId.current);
       } else if (matchesShortcut(e, shortcuts.selectAll)) {
@@ -405,10 +457,14 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
       } else if (matchesShortcut(e, shortcuts.favorite) && selected.size > 0) {
         e.preventDefault();
         toggleFavoriteForSelection();
+      } else if (matchesShortcut(e, shortcuts.favorite) && loupeOn && hoveredAssetId) {
+        e.preventDefault();
+        const hovered = assetById.get(hoveredAssetId);
+        commitEdit(hoveredAssetId, { isFavorite: !hovered?.isFavorite }).catch(() => {});
       } else if (matchesShortcut(e, shortcuts.addToTag) && selected.size > 0 && !TAG_ASSIGN_DISABLED_REASON) {
         e.preventDefault();
         setAddToTagTargets([...selected]);
-      } else if (selected.size > 0) {
+      } else if (selected.size > 0 || (loupeOn && hoveredAssetId)) {
         const ratingByShortcut: [ShortcutId, number][] = [
           ['rate0', 0],
           ['rate1', 1],
@@ -421,7 +477,11 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
         for (const [id, rating] of ratingByShortcut) {
           if (matchesShortcut(e, shortcuts[id])) {
             e.preventDefault();
-            commitEditMany([...selected], { rating }).catch(() => {});
+            if (loupeOn && hoveredAssetId) {
+              commitEdit(hoveredAssetId, { rating }).catch(() => {});
+            } else {
+              commitEditMany([...selected], { rating }).catch(() => {});
+            }
             break;
           }
         }
@@ -429,7 +489,24 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openAlbumId, openId, active, selectAll, deselectAll, selected, shortcuts, capturing, commitEditMany, toggleFavoriteForSelection, setAddToTagTargets]);
+  }, [
+    openAlbumId,
+    openId,
+    active,
+    onToggleLoupe,
+    selectAll,
+    deselectAll,
+    selected,
+    shortcuts,
+    capturing,
+    commitEdit,
+    commitEditMany,
+    toggleFavoriteForSelection,
+    setAddToTagTargets,
+    loupeOn,
+    hoveredAssetId,
+    assetById,
+  ]);
 
   async function handleCreateAlbum() {
     const name = newAlbumName.trim();
@@ -583,7 +660,7 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
       )}
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div ref={gridContainerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 16, background: 'var(--canvas)' }}>
+        <div ref={gridContainerRef} style={{ flex: loupeOn ? '0 0 33.333%' : 1, overflow: 'auto', minHeight: 0, padding: 16, background: 'var(--canvas)' }}>
           {album.assets.length === 0 ? (
             <div style={{ color: 'var(--text-dimmer)', fontSize: 12.5 }}>
               No photos in this album yet — select photos in Photos or Folders and use "Add to Album".
@@ -597,7 +674,7 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
                   data-index={item.index}
                   style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${item.start}px)` }}
                 >
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: 12, paddingBottom: 12 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${thumbSize}px, 1fr))`, gap: 12, paddingBottom: 12 }}>
                     {assetChunks[item.index].map((a) => (
                       <AssetTile
                         key={a.id}
@@ -608,6 +685,8 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
                         onOpen={setOpenId}
                         onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
                         onRate={(id, rating) => commitEdit(id, { rating })}
+                        loupeMode={loupeOn}
+                        onHoverAsset={handleHoverAsset}
                       />
                     ))}
                   </div>
@@ -616,7 +695,8 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
             </div>
           )}
         </div>
-        {metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
+        {loupeOn && <GridLoupePane assetId={hoveredAssetId} />}
+        {!loupeOn && metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
       </div>
 
       {openAsset && (

@@ -1,3 +1,20 @@
+/*
+ * BrightTable // Copyright (C) 2026 Rob Brown
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import { memo, useState } from 'react';
 import AssetThumbImage from './AssetThumb';
 import { RejectIcon, Star } from './MetadataRows';
@@ -29,6 +46,8 @@ const AssetTile = memo(function AssetTile({
   onContextMenu,
   onToggleStackExpand,
   onRate,
+  loupeMode,
+  onHoverAsset,
 }: {
   asset: AssetSummary;
   selected: boolean;
@@ -42,6 +61,13 @@ const AssetTile = memo(function AssetTile({
   // Lets rating be set directly on the tile instead of only via the Metadata
   // panel or a keyboard shortcut on the open/selected asset.
   onRate: (id: string, rating: number) => void;
+  // Grid loupe mode: browse-only (hover previews into a separate pane, no
+  // clickable select/open/rate) except for expanding/collapsing a stack,
+  // which stays live via onToggleStackExpand above. The rating/reject badge
+  // stays visible but read-only, since rating can still be set via keyboard
+  // shortcut on whichever asset is hovered.
+  loupeMode?: boolean;
+  onHoverAsset?: (id: string | null) => void;
 }) {
   const isStackPrimary = !!asset.stack && asset.stack.primaryAssetId === asset.id && asset.stack.assetCount > 1;
   const isRaw = isRawAsset(asset);
@@ -66,6 +92,11 @@ const AssetTile = memo(function AssetTile({
   const [hovered, setHovered] = useState(false);
 
   const handleClick = (e: React.MouseEvent) => {
+    // Loupe mode is browse-only - hovering drives the preview pane, and
+    // nothing else on the tile (select, open, rate) is reachable except the
+    // stack-expand badge, which has its own onClick with stopPropagation so
+    // it never reaches here.
+    if (loupeMode) return;
     const mods: ClickMods = { shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey };
     const plain = !e.shiftKey && !e.ctrlKey && !e.metaKey;
 
@@ -82,14 +113,21 @@ const AssetTile = memo(function AssetTile({
 
   return (
     <div
+      data-asset-id={asset.id}
       onClick={handleClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onMouseEnter={() => {
+        setHovered(true);
+        onHoverAsset?.(asset.id);
+      }}
+      onMouseLeave={() => {
+        setHovered(false);
+        onHoverAsset?.(null);
+      }}
       onMouseDown={(e) => {
         if (e.shiftKey) e.preventDefault();
       }}
       onContextMenu={(e) => {
-        if (!onContextMenu) return;
+        if (!onContextMenu || loupeMode) return;
         e.preventDefault();
         onContextMenu(asset.id, e.clientX, e.clientY);
       }}
@@ -99,7 +137,13 @@ const AssetTile = memo(function AssetTile({
         overflow: 'hidden',
         cursor: 'default',
         background: 'var(--surface-sunken)',
-        boxShadow: selected ? '0 0 0 2px #3584e4, 0 2px 10px rgba(0,0,0,.45)' : '0 0 0 1px var(--border)',
+        boxShadow: loupeMode
+          ? hovered
+            ? '0 0 0 3px #808080'
+            : '0 0 0 1px var(--border)'
+          : selected
+            ? '0 0 0 2px #3584e4, 0 2px 10px rgba(0,0,0,.45)'
+            : '0 0 0 1px var(--border)',
         position: 'relative',
         // Without this, the browser's own double-tap-to-zoom gesture
         // recognizer swallows both taps of a touchpad/touch double-tap
@@ -114,7 +158,7 @@ const AssetTile = memo(function AssetTile({
     >
       <AssetThumbImage asset={asset} />
 
-      {hovered && (
+      {hovered && !loupeMode && (
         // A single, reliable click to open - doesn't depend on double-click/
         // double-tap gesture detection working at all, for touchpads where
         // that gesture doesn't reach the browser as two distinct clicks.
@@ -157,7 +201,7 @@ const AssetTile = memo(function AssetTile({
           style={{
             position: 'absolute',
             top: 7,
-            right: hovered ? 33 : 7,
+            right: hovered && !loupeMode ? 33 : 7,
             display: 'flex',
             alignItems: 'center',
             gap: 4,
@@ -177,41 +221,50 @@ const AssetTile = memo(function AssetTile({
         </div>
       )}
 
-      <div
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggleOne(asset.id);
-        }}
-        style={{
-          position: 'absolute',
-          top: 7,
-          left: 7,
-          width: 10,
-          height: 10,
-          borderRadius: '50%',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'default',
-          background: selected ? '#3584e4' : 'rgba(0,0,0,0.35)',
-          boxShadow: selected ? '0 1px 3px rgba(0,0,0,.4)' : 'inset 0 0 0 1px rgba(255,255,255,0.7)',
-        }}
-      >
-        {selected && (
-          <div
-            style={{
-              width: 4,
-              height: 2.5,
-              borderLeft: '1.2px solid #fff',
-              borderBottom: '1.2px solid #fff',
-              transform: 'rotate(-45deg) translateY(-0.5px)',
-            }}
-          />
-        )}
-      </div>
+      {!loupeMode && (
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleOne(asset.id);
+          }}
+          style={{
+            position: 'absolute',
+            top: 5,
+            left: 5,
+            width: 16,
+            height: 16,
+            borderRadius: '50%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'default',
+            background: selected ? '#3584e4' : 'rgba(0,0,0,0.35)',
+            boxShadow: selected ? '0 1px 3px rgba(0,0,0,.4)' : 'inset 0 0 0 1px rgba(255,255,255,0.7)',
+          }}
+        >
+          {selected && (
+            <div
+              style={{
+                width: 6,
+                height: 3.5,
+                borderLeft: '1.8px solid #fff',
+                borderBottom: '1.8px solid #fff',
+                transform: 'rotate(-45deg) translateY(-1px)',
+              }}
+            />
+          )}
+        </div>
+      )}
 
+      {
+        // Loupe mode drops the click handlers (mouse-driven rating isn't
+        // reachable there - see the loupeMode doc above) but the badge itself
+        // stays visible read-only, same as the favorite heart below, so a
+        // rating set via keyboard shortcut while hovering in loupe mode has
+        // somewhere to show up.
+      }
       <div
-        onClick={(e) => e.stopPropagation()}
+        onClick={loupeMode ? undefined : (e) => e.stopPropagation()}
         style={{ position: 'absolute', left: 6, bottom: 6, display: 'flex', gap: 4, padding: '3px 4px', borderRadius: 5, background: 'rgba(0,0,0,0.5)' }}
       >
         {[1, 2, 3, 4, 5].map((v) => (
@@ -223,27 +276,35 @@ const AssetTile = memo(function AssetTile({
           // and info panel.
           <div
             key={v}
-            onClick={(e) => {
-              e.stopPropagation();
-              onRate(asset.id, v === (asset.rating || 0) ? 0 : v);
-            }}
-            title={`Rate ${v}`}
+            onClick={
+              loupeMode
+                ? undefined
+                : (e) => {
+                    e.stopPropagation();
+                    onRate(asset.id, v === (asset.rating || 0) ? 0 : v);
+                  }
+            }
+            title={loupeMode ? undefined : `Rate ${v}`}
             style={{ width: 12, height: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default' }}
           >
             <Star filled={v <= (asset.rating || 0)} size={8} dimColor="rgba(255,255,255,0.3)" />
           </div>
         ))}
         <div
-          onClick={(e) => {
-            e.stopPropagation();
-            onRate(asset.id, asset.rating === -1 ? 0 : -1);
-          }}
-          title="Reject"
+          onClick={
+            loupeMode
+              ? undefined
+              : (e) => {
+                  e.stopPropagation();
+                  onRate(asset.id, asset.rating === -1 ? 0 : -1);
+                }
+          }
+          title={loupeMode ? undefined : 'Reject'}
           style={{ width: 12, height: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default' }}
         >
           <RejectIcon active={asset.rating === -1} size={9} dimColor="rgba(255,255,255,0.3)" />
         </div>
-        {asset.unsyncedMetadata && (
+        {!loupeMode && asset.unsyncedMetadata && (
           // A local sidecar/embedded file has a rating and/or description
           // Immich doesn't have yet (see checkSidecarMetadata) - purely
           // informational here, synced via the context menu / SelectionBar /

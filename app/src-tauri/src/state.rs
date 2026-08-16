@@ -1,3 +1,20 @@
+/*
+ * BrightTable // Copyright (C) 2026 Rob Brown
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 use crate::art_queue::ArtQueue;
 use crate::config::{AppConfig, AutoResolution};
 use crate::edit_queue::EditQueue;
@@ -6,11 +23,21 @@ use crate::import::ImportQueue;
 use crate::io_guard::IoGuard;
 use crate::processing_queue::ProcessingQueue;
 use crate::round_trip::RoundTripWatcher;
+use crate::secure_store::SecretVault;
 use std::sync::{Arc, Mutex};
 use sysinfo::System;
 
 pub struct AppState {
     pub config: Mutex<AppConfig>,
+    /// The encrypted Stronghold vault backing the Immich/Flickr credential
+    /// fields inside `config` - see `secure_store.rs`. Opened once here
+    /// (not per `config::load`/`save` call) since each open/commit is a
+    /// fixed ~1s cost in a release build (Stronghold's snapshot
+    /// encryption), not something to pay repeatedly across a session.
+    /// `None` if opening it failed (e.g. no writable app-local-data dir) -
+    /// `config::load`/`save` both degrade to config.json-only in that case,
+    /// same as before this vault existed.
+    pub secret_vault: Option<SecretVault>,
     /// Shared, connection-pooling HTTP client. Reused across every request
     /// (including per-thumbnail fetches) instead of paying a fresh TCP/TLS
     /// handshake per call - this is what makes the Photos grid load fast.
@@ -65,6 +92,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(
         config: AppConfig,
+        secret_vault: Option<SecretVault>,
         edit_queue: Arc<EditQueue>,
         import_queue: Arc<ImportQueue>,
         round_trip: Arc<RoundTripWatcher>,
@@ -79,6 +107,7 @@ impl AppState {
         let max_concurrent_metadata_scans = config.library.max_concurrent_metadata_scans;
         Self {
             config: Mutex::new(config),
+            secret_vault,
             http: reqwest::Client::new(),
             auto_resolution: Arc::new(Mutex::new(None)),
             io_guard: IoGuard::new(max_concurrent_metadata_scans),

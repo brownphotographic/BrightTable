@@ -45,6 +45,9 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 hmac = "0.12"
 sha1 = "0.10"
 base64 = "0.22"
+tauri-plugin-stronghold = "2"
+iota_stronghold = "2"
+rand = "0.8"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5.12", default-features = false, features = ["tokio", "blocking-api"] }
@@ -56,3 +59,59 @@ webkit2gtk = "2.0"
 # tests exercise real multi-minute waits without actually waiting minutes of
 # wall-clock time in the suite. Dev-only so it never reaches the release build.
 tokio = { version = "1", features = ["test-util"] }
+
+# Stronghold's snapshot crypto (Argon2 key derivation + the actual vault
+# encryption, run unconditionally on every real commit even for our own
+# high-entropy machine-generated key - see secure_store.rs's own doc comment)
+# is brutal without codegen optimizations: measured directly via `cargo test`
+# at 60+ seconds per commit in an unoptimized `cargo tauri dev` build, against
+# the ~1s this crate's own docs promise for a release build. Worse, every
+# credential save held the app-wide config `Mutex` for that whole stretch
+# (fixed separately in commands.rs), stalling every other command that reads
+# config - found live: this alone explained hours of "why does
+# check_sidecar_metadata never resolve" symptoms during dev testing.
+# Optimizing just these crypto-heavy dependencies keeps the rest of the app at
+# normal debug-build speed (fast iteration, full debug info) while making this
+# one hot path tolerable in dev builds too.
+[profile.dev.package.iota_stronghold]
+opt-level = 3
+[profile.dev.package.stronghold_engine]
+opt-level = 3
+[profile.dev.package."iota-crypto"]
+opt-level = 3
+[profile.dev.package."rust-argon2"]
+opt-level = 3
+[profile.dev.package."curve25519-dalek"]
+opt-level = 3
+[profile.dev.package."curve25519-dalek-derive"]
+opt-level = 3
+[profile.dev.package."fiat-crypto"]
+opt-level = 3
+[profile.dev.package."x25519-dalek"]
+opt-level = 3
+[profile.dev.package."ed25519-zebra"]
+opt-level = 3
+[profile.dev.package."blake2b_simd"]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+[profile.dev.package.blake3]
+opt-level = 3
+[profile.dev.package.chacha20]
+opt-level = 3
+[profile.dev.package.chacha20poly1305]
+opt-level = 3
+[profile.dev.package.poly1305]
+opt-level = 3
+[profile.dev.package.aes]
+opt-level = 3
+[profile.dev.package."aes-gcm"]
+opt-level = 3
+[profile.dev.package."crypto-bigint"]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.hkdf]
+opt-level = 3
+[profile.dev.package.ghash]
+opt-level = 3

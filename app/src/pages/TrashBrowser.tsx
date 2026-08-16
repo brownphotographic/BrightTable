@@ -1,3 +1,20 @@
+/*
+ * BrightTable // Copyright (C) 2026 Rob Brown
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import { useEffect, useState, type CSSProperties } from 'react';
 import { deleteAssets, emptyTrash, getTrashedAssets, restoreAssets, type AssetSummary } from '../lib/api';
 import AssetThumbImage from '../components/AssetThumb';
@@ -7,7 +24,15 @@ import ConfirmDialog from '../components/ConfirmDialog';
 // at a time via hover actions, or all at once via Empty Trash. A much
 // smaller surface than PhotosBrowser's selection model, which didn't seem
 // worth duplicating for what's normally a short-lived, low-traffic view.
-export default function TrashBrowser({ onCount }: { onCount?: (n: number) => void }) {
+export default function TrashBrowser({
+  onCount,
+  thumbSize,
+}: {
+  onCount?: (n: number) => void;
+  // Grid thumbnail size, in px - shared across every grid view. See
+  // App.tsx's `thumbSize` state and MenuBar's slider.
+  thumbSize: number;
+}) {
   const [assets, setAssets] = useState<AssetSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmEmpty, setConfirmEmpty] = useState(false);
@@ -61,7 +86,7 @@ export default function TrashBrowser({ onCount }: { onCount?: (n: number) => voi
         {assets.length === 0 ? (
           <div style={{ color: 'var(--text-dimmer)', fontSize: 13 }}>Trash is empty.</div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${thumbSize}px, 1fr))`, gap: 12 }}>
             {assets.map((a) => (
               <TrashTile
                 key={a.id}

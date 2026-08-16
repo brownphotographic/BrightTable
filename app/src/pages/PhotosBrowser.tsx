@@ -1,4 +1,21 @@
-import { forwardRef, memo, useCallback, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+/*
+ * BrightTable // Copyright (C) 2026 Rob Brown
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+import { forwardRef, memo, useCallback, useDeferredValue, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { listen } from '@tauri-apps/api/event';
 import {
@@ -43,6 +60,7 @@ import ExportToFolderDialog from '../components/ExportToFolderDialog';
 import PrintDialog from '../components/PrintDialog';
 import ExportToFlickrDialog from '../components/ExportToFlickrDialog';
 import MetadataPanel from '../components/MetadataPanel';
+import GridLoupePane from '../components/GridLoupePane';
 import TimelineRail from '../components/TimelineRail';
 import ConfirmDialog from '../components/ConfirmDialog';
 import NoSidecarDialog from '../components/NoSidecarDialog';
@@ -145,7 +163,12 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // Grid thumbnail size - controlled from MenuBar's slider (App.tsx owns
   // the state) since it moved out of this view's own bottom status bar.
   thumbSize: number;
-}>(function PhotosBrowser({ onTotalCount, metaOpen, onCloseMetadata, filters, onOpenApplicationsPreferences, active = true, thumbSize }, ref) {
+  // Grid loupe mode - App.tsx owns the boolean (shared with the MenuBar
+  // button/shortcut and with hiding the sidebar/metadata panel), this view
+  // just reacts to it: browse-only grid + hover-preview split pane.
+  loupeOn: boolean;
+  onToggleLoupe: () => void;
+}>(function PhotosBrowser({ onTotalCount, metaOpen, onCloseMetadata, filters, onOpenApplicationsPreferences, active = true, thumbSize, loupeOn, onToggleLoupe }, ref) {
   const [buckets, setBuckets] = useState<TimeBucketInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Set only when update_asset_metadata itself rejects synchronously (read-
@@ -188,6 +211,32 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // all when openAsset exists.
   const viewerRef = useRef<ViewerHandle>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Which tile the cursor is currently over while loupeOn - drives
+  // GridLoupePane's preview. Cleared whenever loupe mode turns off so a
+  // stale preview doesn't linger for next time it's turned on.
+  const [hoveredAssetId, setHoveredAssetId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!loupeOn) setHoveredAssetId(null);
+  }, [loupeOn]);
+  // Mirrors hoveredAssetId but is never cleared - only ever overwritten by
+  // the next hover - so the centering effect below still knows which tile
+  // to re-center on at the instant loupeOn flips off, even though the
+  // reset effect above (same render, runs after this ref is already set)
+  // is about to null out the display state itself.
+  const lastHoveredAssetId = useRef<string | null>(null);
+  const handleHoverAsset = useCallback((id: string | null) => {
+    if (id) lastHoveredAssetId.current = id;
+    setHoveredAssetId(id);
+  }, []);
+  // Which asset to re-center on next time `rows` actually reflects the
+  // post-toggle column count - see the layout effect after `rows`/
+  // `virtualizer` below. Captured with its own layout effect (not folded
+  // into the one above) so it's set *before* the ResizeObserver driving
+  // contentWidth can possibly fire, rather than racing it.
+  const pendingCenterAssetId = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    pendingCenterAssetId.current = lastHoveredAssetId.current;
+  }, [loupeOn]);
   const lastClickedId = useRef<string | null>(null);
   const [, setTotalCount] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -918,12 +967,23 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // specific dialog message, never an incorrect paste.
   const handleCopyImageProcessing = useCallback(
     (asset: AssetSummary) => {
-      if (!asset.originalPath || !asset.hasProcessingSidecar) return;
+      if (!asset.originalPath) return;
       const originalPath = asset.originalPath;
-      setCopiedProcessingSource({ assetId: asset.id, originalPath, fileName: asset.fileName, tools: asset.processingSidecarTools ?? [] });
+      // `asset.hasProcessingSidecar` is only a passive cache (populated once
+      // per bucket load - see its own comment) - used here for instant
+      // optimistic UI when already known-true, but never to *rule out* a
+      // copy: a stale-false read would otherwise silently and permanently
+      // block Copy Image Processing even with a real sidecar on disk. The
+      // live re-check below is the actual source of truth and always runs,
+      // cache or no cache.
+      if (asset.hasProcessingSidecar) {
+        setCopiedProcessingSource({ assetId: asset.id, originalPath, fileName: asset.fileName, tools: asset.processingSidecarTools ?? [] });
+      }
       checkSidecarMetadata([{ assetId: asset.id, originalPath, currentRating: asset.rating, currentDescription: asset.description }])
         .then(([result]) => {
-          if (result) setCopiedProcessingSource({ assetId: asset.id, originalPath, fileName: asset.fileName, tools: result.processingSidecarTools });
+          if (result?.hasProcessingSidecar) {
+            setCopiedProcessingSource({ assetId: asset.id, originalPath, fileName: asset.fileName, tools: result.processingSidecarTools });
+          }
         })
         .catch(() => {});
     },
@@ -1255,6 +1315,12 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   const selectAll = useCallback(() => setSelected(new Set(flatIds)), [flatIds]);
   const deselectAll = useCallback(() => setSelected(new Set()), []);
 
+  // Loupe mode is browse-only - nothing should still show as selected (and
+  // SelectionBar shouldn't pop up) once it's on.
+  useEffect(() => {
+    if (loupeOn) deselectAll();
+  }, [loupeOn, deselectAll]);
+
   // Scoped to whichever selected assets are actually .tif/.tiff (the only
   // extension this override is meaningful for) - toggles them all to match
   // whatever the majority state isn't, mirroring the favorite-toggle
@@ -1371,7 +1437,10 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     if (openId || !active) return;
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(e) || capturing) return;
-      if (matchesShortcut(e, shortcuts.open) && lastClickedId.current) {
+      if (matchesShortcut(e, shortcuts.loupe)) {
+        e.preventDefault();
+        onToggleLoupe();
+      } else if (matchesShortcut(e, shortcuts.open) && lastClickedId.current) {
         e.preventDefault();
         setOpenId(lastClickedId.current);
       } else if (matchesShortcut(e, shortcuts.selectAll)) {
@@ -1385,6 +1454,10 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       } else if (matchesShortcut(e, shortcuts.favorite) && selected.size > 0) {
         e.preventDefault();
         toggleFavoriteForSelection();
+      } else if (matchesShortcut(e, shortcuts.favorite) && loupeOn && hoveredAssetId) {
+        e.preventDefault();
+        const hovered = assetByIdAll.get(hoveredAssetId);
+        commitEdit(hoveredAssetId, { isFavorite: !hovered?.isFavorite }).catch(() => {});
       } else if (matchesShortcut(e, shortcuts.stack) && selected.size >= 2) {
         e.preventDefault();
         createStackForSelection([...selected]).catch(() => {});
@@ -1397,13 +1470,20 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       } else if (matchesShortcut(e, shortcuts.copyImageProcessing) && selectedAssets.length === 1) {
         e.preventDefault();
         handleCopyImageProcessing(selectedAssets[0]);
+      } else if (matchesShortcut(e, shortcuts.copyImageProcessing) && loupeOn && hoveredAssetId) {
+        e.preventDefault();
+        const hovered = assetByIdAll.get(hoveredAssetId);
+        if (hovered) handleCopyImageProcessing(hovered);
       } else if (matchesShortcut(e, shortcuts.pasteImageProcessing) && selected.size > 0 && copiedProcessingSource) {
         e.preventDefault();
         requestPasteImageProcessing([...selected]);
+      } else if (matchesShortcut(e, shortcuts.pasteImageProcessing) && loupeOn && hoveredAssetId && copiedProcessingSource) {
+        e.preventDefault();
+        requestPasteImageProcessing([hoveredAssetId]);
       } else if (matchesShortcut(e, shortcuts.addToTag) && selected.size > 0 && !TAG_ASSIGN_DISABLED_REASON) {
         e.preventDefault();
         setAddToTagTargets([...selected]);
-      } else if (selected.size > 0) {
+      } else if (selected.size > 0 || (loupeOn && hoveredAssetId)) {
         const ratingByShortcut: [ShortcutId, number][] = [
           ['rate0', 0],
           ['rate1', 1],
@@ -1416,7 +1496,11 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
         for (const [id, rating] of ratingByShortcut) {
           if (matchesShortcut(e, shortcuts[id])) {
             e.preventDefault();
-            commitEditMany([...selected], { rating }).catch(() => {});
+            if (loupeOn && hoveredAssetId) {
+              commitEdit(hoveredAssetId, { rating }).catch(() => {});
+            } else {
+              commitEditMany([...selected], { rating }).catch(() => {});
+            }
             break;
           }
         }
@@ -1432,6 +1516,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     selected,
     shortcuts,
     capturing,
+    commitEdit,
     commitEditMany,
     createStackForSelection,
     toggleFavoriteForSelection,
@@ -1443,6 +1528,10 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     copiedMetadata,
     copiedProcessingSource,
     setAddToTagTargets,
+    onToggleLoupe,
+    loupeOn,
+    hoveredAssetId,
+    assetByIdAll,
   ]);
 
   // Plain click: select only this one, clearing everything else (standard
@@ -1582,6 +1671,20 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     estimateSize: (index) => rows[index].height,
     overscan: 12,
   });
+  // Not a real options field in this tanstack-virtual version (only a
+  // settable instance property - assigning it here every render is cheap
+  // and idempotent). The library's own default behavior nudges scrollTop
+  // by itself whenever a row's *measured* size differs even slightly from
+  // estimateSize's guess (e.g. sub-pixel rounding between assetRowHeight's
+  // Math.round and the browser's actual `aspect-ratio: 3/2` layout) -
+  // individually tiny, but summed across the thousands of rows above the
+  // viewport that all get (re-)measured right after loupeOn reshuffles
+  // `rows`, it silently dragged our explicit re-centering scrollTop write
+  // (see the layout effect below) off to an unrelated position a frame or
+  // two later - confirmed live via console logging: our write landed
+  // correctly, then jumped on its own with no other code touching
+  // scrollTop in between.
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
 
   // `rows` changing shape (a thumbnail-size drag changes `columns`, which
   // changes how many items land in each row, which shifts what every row
@@ -1593,14 +1696,57 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // could lag a frame. `measure()` (same fix FoldersBrowser's own
   // virtualizer already applies when its bucket keys change) clears that
   // cache outright so every row - visible or not - is sized fresh off the
-  // new `estimateSize` the moment it's actually rendered.
-  useEffect(() => {
+  // new `estimateSize` the moment it's actually rendered. A *layout* effect,
+  // not a passive one - otherwise the browser paints one frame with rows
+  // positioned off the stale cache (visibly wrong/jumping) before this runs
+  // and corrects it a frame later.
+  useLayoutEffect(() => {
     virtualizer.measure();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows]);
 
+  // Re-centers the grid on whichever tile was hovered right as loupeOn
+  // toggled (captured into pendingCenterAssetId above) once `rows` has
+  // actually been rebuilt for the post-toggle column count. Computes the
+  // target's offset analytically by summing `rows[i].height` up to its row
+  // index, rather than reading the virtualizer's rendered `translateY`/
+  // measurement cache - that cache is only guaranteed fresh *after* the
+  // `measure()` layout effect above has run and forced a further
+  // re-render, which hasn't happened yet at this point in the same commit,
+  // so reading it here would still be one render behind (the actual cause
+  // of the grid "jumping to a completely different spot" bug - not a
+  // timing/frame-count problem at all, a stale-cache-read problem). Row
+  // heights are exact here (assetRowHeight is derived from the same
+  // formula `estimateSize` uses, and every tile has a fixed 3:2 aspect
+  // ratio), so this lands on the same pixel offset the virtualizer will
+  // itself settle on - no dependency on its cache or timing.
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const targetId = pendingCenterAssetId.current;
+    if (!container || !targetId) return;
+    const idx = rows.findIndex(
+      (row) =>
+        (row.kind === 'assets' && row.items.some((a) => a.id === targetId)) ||
+        (row.kind === 'stackband' && row.assetId === targetId),
+    );
+    if (idx === -1) return;
+    let offset = 0;
+    for (let i = 0; i < idx; i++) offset += rows[i].height;
+    container.scrollTop = Math.max(0, offset + rows[idx].height / 2 - container.clientHeight / 2);
+    pendingCenterAssetId.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contentWidth, rows]);
+
   useEffect(() => {
-    if (!buckets) return;
+    // Also skipped while inactive (kept mounted but hidden behind another
+    // tab) - otherwise this keeps consuming checkSidecarMetadata's shared,
+    // concurrency-limited permit pool (io_guard.acquire_metadata_scan_permit,
+    // capped at maxConcurrentMetadataScans) for a tab nobody's looking at,
+    // starving out permits for the tab actually in front of the user - found
+    // live: a manual check_sidecar_metadata call from Folders never resolved
+    // at all because Photos, left mounted in the background, kept queuing
+    // new bucket scans indefinitely as it re-rendered.
+    if (!buckets || !active) return;
     const seenBuckets = new Set<number>();
     for (const item of virtualizer.getVirtualItems()) {
       const row = rows[item.index];
@@ -1719,8 +1865,27 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
         />
       )}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
-          <div ref={containerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: '0 76px 0 24px', background: 'var(--canvas)', ...pendingStyle(isFiltering) }}>
+        <div style={{ flex: loupeOn ? '0 0 33.333%' : 1, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
+          <div
+            ref={containerRef}
+            style={{
+              flex: 1,
+              overflow: 'auto',
+              // The browser's own CSS scroll anchoring otherwise fights our
+              // explicit scrollTop writes below whenever the virtualized
+              // rows reshuffle (loupeOn changing column count) - it tries to
+              // "keep whatever was in view in view" using its own
+              // first-visible-descendant heuristic, which gets badly
+              // confused by absolutely-positioned/transformed virtual rows
+              // and can silently override the scrollTop we just set to a
+              // effectively arbitrary one.
+              overflowAnchor: 'none',
+              minHeight: 0,
+              padding: loupeOn ? '0 24px' : '0 76px 0 24px',
+              background: 'var(--canvas)',
+              ...pendingStyle(isFiltering),
+            }}
+          >
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
               {virtualizer.getVirtualItems().map((item) => {
                 const row = rows[item.index];
@@ -1746,17 +1911,20 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
                       onSetPick={setStackPickAction}
                       onRate={handleRowRate}
                       resolveAsset={resolveAsset}
+                      loupeMode={loupeOn}
+                      onHoverAsset={handleHoverAsset}
                     />
                   </div>
                 );
               })}
             </div>
           </div>
-          {selected.size === 0 && (
+          {!loupeOn && selected.size === 0 && (
             <TimelineRail buckets={buckets} virtualizer={virtualizer} bucketFirstRowIndex={bucketFirstRowIndex} />
           )}
         </div>
-        {metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
+        {loupeOn && <GridLoupePane assetId={hoveredAssetId} />}
+        {!loupeOn && metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
       </div>
       {openAsset && (
         <Viewer
@@ -1925,6 +2093,8 @@ const PhotoRowView = memo(function PhotoRowView({
   onSetPick,
   onRate,
   resolveAsset,
+  loupeMode,
+  onHoverAsset,
 }: {
   row: PhotoRow;
   bucket: TimeBucketInfo;
@@ -1939,6 +2109,8 @@ const PhotoRowView = memo(function PhotoRowView({
   onSetPick: (stackId: string, assetId: string, memberIds: string[]) => Promise<void>;
   onRate: (assetId: string, rating: number) => Promise<void>;
   resolveAsset: (id: string) => AssetSummary | undefined;
+  loupeMode: boolean;
+  onHoverAsset: (id: string | null) => void;
 }) {
   switch (row.kind) {
     case 'loading': {
@@ -1992,6 +2164,8 @@ const PhotoRowView = memo(function PhotoRowView({
               onContextMenu={onContextMenu}
               onToggleStackExpand={onToggleStackExpand}
               onRate={onRate}
+              loupeMode={loupeMode}
+              onHoverAsset={onHoverAsset}
             />
           ))}
         </div>
@@ -2016,6 +2190,8 @@ const PhotoRowView = memo(function PhotoRowView({
             onRate={onRate}
             onContextMenu={onContextMenu}
             resolveAsset={resolveAsset}
+            loupeMode={loupeMode}
+            onHoverAsset={onHoverAsset}
           />
         </div>
       );

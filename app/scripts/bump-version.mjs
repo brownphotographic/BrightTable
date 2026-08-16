@@ -1,6 +1,9 @@
 #!/usr/bin/env node
-// Bumps the patch version in src-tauri/Cargo.toml, which tauri.conf.json
+// Sets the version in src-tauri/Cargo.toml, which tauri.conf.json
 // (no "version" field of its own) inherits as the app/AppImage version.
+// The new version is set manually (prompted for, or via APP_VERSION) rather
+// than auto-incremented, so the person cutting the build makes a deliberate
+// call about major/minor/patch.
 //
 // Also requires an Immich server version this build was tested against.
 // Policy: no backward-compat testing, so that version is used as both the
@@ -60,10 +63,36 @@ const match = cargoToml.match(versionLine);
 if (!match) {
   throw new Error(`Could not find a "version = \"x.y.z\"" line in ${cargoTomlPath}`);
 }
-const [, major, minor, patch] = match;
-const nextVersion = `${major}.${minor}.${Number(patch) + 1}`;
+const currentVersion = match[0].match(/"(.+)"/)[1];
+
+let nextVersion = process.env.APP_VERSION;
+if (nextVersion && !versionFormat.test(nextVersion)) {
+  throw new Error(`APP_VERSION "${nextVersion}" isn't in x.y.z form.`);
+}
+
+if (!nextVersion) {
+  if (!stdin.isTTY) {
+    throw new Error(
+      "No APP_VERSION set and this isn't a TTY to prompt on. " +
+        "Set APP_VERSION=x.y.z (the new app version) and re-run.",
+    );
+  }
+  const rl = createInterface({ input: stdin, output: stdout });
+  while (!nextVersion) {
+    const answer = (await rl.question(`App version (current: ${currentVersion}, x.y.z): `)).trim();
+    if (!versionFormat.test(answer)) {
+      console.log(`"${answer}" isn't in x.y.z form, try again.`);
+    } else if (answer === currentVersion) {
+      console.log(`"${answer}" is the current version, enter a new one.`);
+    } else {
+      nextVersion = answer;
+    }
+  }
+  rl.close();
+}
+
 writeFileSync(cargoTomlPath, cargoToml.replace(versionLine, `version = "${nextVersion}"`));
-console.log(`Bumped version: ${major}.${minor}.${patch} -> ${nextVersion}`);
+console.log(`Set version: ${currentVersion} -> ${nextVersion}`);
 
 const modelsRsPath = join(scriptDir, "..", "src-tauri", "src", "immich", "models.rs");
 const modelsRs = readFileSync(modelsRsPath, "utf8");
