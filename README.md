@@ -17,7 +17,16 @@ If you decide to use this, please read the warnings below.
 _Background (the inspiration):_
 For those of you who have actually used a real light table and loupe to view transparency film you will understand the purpose of this tool. Light tables to me were the most enjoyable part of my photography workflow back when I shot film: heading to my local pro film label, getting that processed film back and sticking it on their light table to view the goods. It was fun, and tactile.
 
-As I entered the digital world in 2005 I intially used tools like Pixmantec Rawshooter (Asbove bought them out and it became Lightroom), and later the great Apple Aperture. Aperture was a rare tool that had a great user experience and brought it all together.
+As I entered the digital world in 2005 I intially used tools like Pixmantec Rawshooter (Adobe bought them out and it became Lightroom), and in 2006 the great Apple Aperture. Aperture was a rare tool that had a great user experience and brought it all together.
+
+Since moving over to Linux I have been trying to find the perfect experience, but could not find it all in one package. Where I ended up before this tool...
+- Shotwell for desktop DAM, printing? culling. Great UX. But struggled with larger libraries. Round trip experience to raw editor basic. Also didn't play nice with my network share connected to Immich. 
+- ART for raw editing. As a fork of RawTherapee this has the quality and look and feel I wanted with great film like rendering, and a simple UX.
+- Immich. A self hosted DAM with API and great phone app for auto upload and viewing. Super snappy. It just never played well with my dedicated camera RAW editing workflow.
+
+So really what I was yearning for was a tool to tie the raw editing and  server based DAM together, with a first class user experience like Shotwell has. 
+
+Let's call this need a 'digital light table'.
 
 _How it works:_
 
