@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=BrightTable
+Comment=Connect an Immich library to external RAW editors
+Exec=brighttable %U
+Icon=io.github.brownphotographic.BrightTable
+Categories=Graphics;Photography;
+Terminal=false

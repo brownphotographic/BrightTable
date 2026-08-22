@@ -29,6 +29,8 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::watch;
 
+use crate::flatpak::host_command_tokio;
+
 /// The exact error text `run_cli_with_progress` returns when `cancel` fires -
 /// `art_queue.rs`'s `finish` and `commands.rs`'s round-trip handlers both just
 /// thread this straight through as the job's `error`, same as any other CLI
@@ -119,7 +121,7 @@ where
     F: FnMut(u8) + Send,
     C: FnOnce(std::process::ExitStatus, &[u8]) -> Result<(), String>,
 {
-    let mut child = tokio::process::Command::new(cli_path)
+    let mut child = host_command_tokio(cli_path)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

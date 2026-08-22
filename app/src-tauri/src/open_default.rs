@@ -29,11 +29,15 @@
 //! double-clicking the file in a file manager would.
 
 use std::path::Path;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::process::Command;
 
 #[cfg(target_os = "linux")]
 pub fn open(path: &Path) -> Result<(), String> {
-    Command::new("xdg-open").arg(path).spawn().map_err(|e| format!("Couldn't open a video player: {e}"))?;
+    crate::flatpak::host_command("xdg-open")
+        .arg(path)
+        .spawn()
+        .map_err(|e| format!("Couldn't open a video player: {e}"))?;
     Ok(())
 }
 

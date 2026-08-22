@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# flatpak-builder's own build/repo state (see scripts/build-flatpak.mjs) -
+# regenerated on every build, not source.
+flatpak-build
+flatpak-repo
+.flatpak-builder
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

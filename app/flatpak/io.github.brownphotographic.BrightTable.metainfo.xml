@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.brownphotographic.BrightTable</id>
+  <name>BrightTable</name>
+  <summary>Connect an Immich library to external RAW editors</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <developer id="io.github.brownphotographic">
+    <name>Rob Brown</name>
+  </developer>
+
+  <description>
+    <p>
+      BrightTable is a desktop viewer for Linux, connecting a self-hosted
+      Immich photo library with open-source RAW editors (ART, RawTherapee,
+      darktable) into a single round-trip workflow: browse your library,
+      send a RAW to an external editor, and have the edited result picked
+      back up automatically.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">io.github.brownphotographic.BrightTable.desktop</launchable>
+
+  <content_rating type="oars-1.1" />
+
+  <url type="homepage">https://github.com/brownphotographic/BrightTable</url>
+  <url type="bugtracker">https://github.com/brownphotographic/BrightTable/issues</url>
+
+  <releases>
+    <release version="1.0.1" date="2026-08-18" />
+  </releases>
+</component>

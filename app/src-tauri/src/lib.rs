@@ -28,6 +28,7 @@ mod embedded;
 mod export_naming;
 mod export_queue;
 mod exiftool;
+mod flatpak;
 mod flickr;
 mod immich;
 mod import;
