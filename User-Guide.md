@@ -19,12 +19,7 @@ This guide walks through setup first, then every feature, in the order you'll ac
 
 ## 2. Installing BrightTable
 
-BrightTable ships as an **AppImage** — a single file, no installer needed.
-
-1. Get the `BrightTable_<version>_amd64.AppImage` file.
-2. Make it executable and run it, or — recommended — use **[GearLever](https://github.com/mijorus/gearlever)** to integrate it into your app menu and keep it updated.
-
-That's it. No dependencies to install separately for running the app.
+Visit the Readme file for installation instructions.
 
 ---
 
@@ -37,7 +32,7 @@ The first time you open BrightTable, head to **Preferences** (gear icon, or `Ctr
 This connects BrightTable to your photos.
 
 1. **Connection** — enter your Immich server URL and API key. Choose a connection mode (LAN, Tailscale, or Auto) and click **Test Connection** to confirm it works.
-2. **Originals on Disk** — tell BrightTable where your Immich photos live on your local filesystem. Pick the share type (NFS or SMB) and map the local folder to the matching Immich library root. There's a separate mapping for an external library vs. Immich's own upload folder — fill in whichever applies to you.
+2. **Originals on Disk** — tell BrightTable where your Immich photos live on your local filesystem. Pick the share type (NFS or SMB) and map the local folder to the matching Immich library root. There's a separate mapping for an external library vs. Immich's own upload folder — fill in whichever applies to you. The reason for this is to allow for successful round-trip editing of your photos. Without it, BrightTable will not be able to read/write your photos on disk when you want edit them in your external editor or RAW editor.
 3. **Read Only** — this is **on by default** for safety. Turn it off once you're happy with your setup and ready to let BrightTable write ratings, tags, and edits to your files.
 4. There are also safety limits here (max writes per batch, max concurrent scans) — the defaults are sensible, no need to touch them unless you know why you want to.
 
@@ -46,7 +41,7 @@ This connects BrightTable to your photos.
 This is where you tell BrightTable which programs to use.
 
 - **External Editor** — pick any general image editor you like (for quick touch-ups outside the RAW workflow).
-- **RAW Converter** — pick ART, RawTherapee, or darktable, and point BrightTable at both the app itself and its command-line tool (e.g. `ART-cli`). Mark one converter as **active** — that's the one the round-trip buttons will use.
+- **RAW Converter** — pick ART, RawTherapee, or darktable, and point BrightTable at both the app itself and its command-line tool (e.g. `ART-cli`). Mark one converter as **active** — that's the one the round-trip buttons will use. Note: depending on how you installed these apps, how you access the CLI folders will vary. Rather than spelling this out here, please refer to the user guides for those apps for details of how to get access to that path.
 - **exiftool** path — needed if you want exports to keep or selectively strip metadata like GPS.
 
 Use the built-in **app picker** here — it finds apps installed as Flatpak, Snap, AppImage, or native packages automatically.
@@ -59,7 +54,8 @@ Connect a Flickr account if you want to upload photos straight from BrightTable.
 
 ### Configuration tab
 
-Cosmetic and housekeeping options: window control position (left/right), Dark or Light theme, and thumbnail cache size with a **Clear Cache** button.
+1. Cosmetic and housekeeping options: window control position (left/right), Dark or Light theme, and thumbnail cache size with a **Clear Cache** button.
+2. Change the default location for storing the configuration file for the app. Useful if you distro-hop a lot - so you can keep your settings consistent across different distros. Note there is a separate checkbox for storing the sign in credentials / keys in the same folder.
 
 ### Shortcuts tab
 

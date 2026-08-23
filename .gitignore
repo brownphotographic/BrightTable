@@ -4,3 +4,10 @@ screenshots/
 .claude/
 design/
 scan-secrets.sh
+
+# Stray credential-vault files - only ever land here if Preferences ->
+# Configuration's folder picker gets pointed at the repo itself by mistake
+# (e.g. picking .../Documents/GitHub/BrightTable instead of
+# .../Documents/BrightTable) - never intentional repo content.
+secrets.key
+secrets.stronghold*

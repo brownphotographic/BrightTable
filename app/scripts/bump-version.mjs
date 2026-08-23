@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Sets the version in src-tauri/Cargo.toml, which tauri.conf.json
-// (no "version" field of its own) inherits as the app/AppImage version.
+// (no "version" field of its own) inherits as the app/Flatpak version.
 // The new version is set manually (prompted for, or via APP_VERSION) rather
 // than auto-incremented, so the person cutting the build makes a deliberate
 // call about major/minor/patch.
@@ -11,7 +11,7 @@
 // "below floor" warning in Preferences/sidebar) and the confirmed version
 // shown in the About dialog (AboutDialog.tsx) - they're always the same
 // value now. Set TESTED_IMMICH_VERSION to skip the prompt (e.g.
-// `TESTED_IMMICH_VERSION=3.1.0 npm run build:appimage`); otherwise this
+// `TESTED_IMMICH_VERSION=3.1.0 npm run build:flatpak`); otherwise this
 // prompts on a TTY, or fails outright when run non-interactively, rather
 // than silently shipping a stale compatibility claim.
 //
@@ -32,7 +32,7 @@ const versionFormat = /^\d+\.\d+\.\d+$/;
 
 // Escape hatch for local iteration builds (e.g. chasing a packaging bug,
 // not cutting a real release): skips both prompts and leaves Cargo.toml,
-// models.rs, and AboutDialog.tsx untouched.
+// models.rs, AboutDialog.tsx, and the Flatpak metainfo.xml untouched.
 if (process.env.SKIP_VERSION_BUMP) {
   console.log("SKIP_VERSION_BUMP set - leaving version/tested-server-version untouched.");
   process.exit(0);
@@ -127,4 +127,25 @@ writeFileSync(
 );
 
 console.log(`Set tested Immich server version (floor and confirmed) to ${testedVersion}.`);
+
+// The Flatpak's AppStream metadata carries its own separate `<release>`
+// version - nothing else in the build reads or writes it, so without this
+// it just sits frozen at whatever it was last hand-edited to forever. That's
+// not cosmetic: `flatpak info` and Flatseal both read *this* field as "the
+// version", not the actual binary's, which makes every build after the
+// first look like the same never-updated release no matter how many times
+// you actually bump Cargo.toml and rebuild.
+const metainfoPath = join(scriptDir, "..", "flatpak", "io.github.brownphotographic.BrightTable.metainfo.xml");
+const metainfo = readFileSync(metainfoPath, "utf8");
+const releaseLine = /<release version="[^"]*" date="[^"]*" \/>/;
+if (!releaseLine.test(metainfo)) {
+  throw new Error(`Could not find a "<release version=... date=.../>" line in ${metainfoPath}`);
+}
+const releaseDate = new Date().toISOString().slice(0, 10);
+writeFileSync(
+  metainfoPath,
+  metainfo.replace(releaseLine, `<release version="${nextVersion}" date="${releaseDate}" />`),
+);
+console.log(`Set Flatpak metainfo release to ${nextVersion} (${releaseDate}).`);
+
 console.log("Remember to also add a row for this build to COMPATIBILITY.md by hand.");

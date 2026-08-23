@@ -12,7 +12,7 @@ linked below, or in the corresponding file under `node_modules/<pkg>/LICENSE`
 or the crate's source on crates.io.
 
 This file is generated automatically by `app/scripts/gen-third-party-licenses.mjs`
-as part of `npm run build:appimage` - do not edit it by hand.
+as part of `npm run build:flatpak` - do not edit it by hand.
 
 ## Frontend dependencies (npm)
 

@@ -17,6 +17,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { getConfig, saveSmartStackSettings, type SmartStackSettings } from './api';
+import { onConfigReloaded } from './configEvents';
 
 const DEFAULT_SETTINGS: SmartStackSettings = { mode: 'name', suffix: '*converted*', tolerance: 10 };
 
@@ -35,9 +36,13 @@ export function SmartStackSettingsProvider({ children }: { children: ReactNode }
   const [settings, setSettingsState] = useState<SmartStackSettings>(DEFAULT_SETTINGS);
 
   useEffect(() => {
-    getConfig()
-      .then((cfg) => setSettingsState({ ...DEFAULT_SETTINGS, ...cfg.smartStack }))
-      .catch(() => {});
+    function load() {
+      getConfig()
+        .then((cfg) => setSettingsState({ ...DEFAULT_SETTINGS, ...cfg.smartStack }))
+        .catch(() => {});
+    }
+    load();
+    return onConfigReloaded(load);
   }, []);
 
   const setSettings = useCallback((next: SmartStackSettings) => {

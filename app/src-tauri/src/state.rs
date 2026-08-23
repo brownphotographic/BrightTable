@@ -24,26 +24,37 @@ use crate::io_guard::IoGuard;
 use crate::processing_queue::ProcessingQueue;
 use crate::round_trip::RoundTripWatcher;
 use crate::secure_store::SecretVault;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, RwLock};
 use sysinfo::System;
 
 pub struct AppState {
     pub config: Mutex<AppConfig>,
     /// The encrypted Stronghold vault backing the Immich/Flickr credential
-    /// fields inside `config` - see `secure_store.rs`. Opened once (not per
-    /// `config::load`/`save` call) since each open/commit is a fixed ~1s
-    /// cost in a release build (Stronghold's snapshot encryption), not
-    /// something to pay repeatedly across a session - but opened on a
-    /// background thread from `lib.rs`'s `.setup()` rather than inline,
-    /// since that cost is far from fixed in an unoptimized debug build and
-    /// blocking `.setup()` on it blocks the window's first paint too (see
-    /// `lib.rs`'s own comment). Starts empty and is filled in exactly once
-    /// by that thread; every reader just wants "is it ready yet" via
-    /// `.get()`, which degrades to `config::load`/`save`'s existing
-    /// config.json-only fallback (same as before this vault existed, or if
-    /// opening it fails outright - e.g. no writable app-local-data dir)
-    /// until it is.
-    pub secret_vault: Arc<OnceLock<SecretVault>>,
+    /// fields inside `config` - see `secure_store.rs`. Opened once at
+    /// startup (not per `config::load`/`save` call) - fast since
+    /// `use_low_encrypt_work_factor` (a few ms), but still off the main
+    /// thread via a background thread from `lib.rs`'s `.setup()` rather
+    /// than inline, both as a safety margin (an existing vault from before
+    /// that fix still pays its old, much slower cost the one time it's
+    /// migrated - see that function's own doc comment) and so opening it
+    /// is never something that can block the window's first paint (see
+    /// `lib.rs`'s own comment). Starts empty and is filled in by that
+    /// thread once it finishes; every reader just wants "is it ready yet",
+    /// which degrades to `config::load`/`save`'s existing config.json-only
+    /// fallback (same as before this vault existed, or if opening it fails
+    /// outright - e.g. no writable app-local-data dir) until it is.
+    ///
+    /// `RwLock<Option<_>>` rather than `OnceLock` because this can also be
+    /// *replaced* mid-session: `config::set_settings_folder`/
+    /// `set_share_vault` reopen a fresh vault at the newly-resolved location
+    /// (adopting whatever's already sitting there, mirroring how they
+    /// already adopt an existing `config.json`) and swap it in immediately,
+    /// rather than leaving the old location's vault live until next launch -
+    /// a stale live handle would otherwise mean any secret edited in that
+    /// same session (e.g. re-entering the API key right after moving the
+    /// vault) silently writes to the old, no-longer-read location and gets
+    /// orphaned there.
+    pub secret_vault: Arc<RwLock<Option<SecretVault>>>,
     /// Shared, connection-pooling HTTP client. Reused across every request
     /// (including per-thumbnail fetches) instead of paying a fresh TCP/TLS
     /// handshake per call - this is what makes the Photos grid load fast.
@@ -98,7 +109,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(
         config: AppConfig,
-        secret_vault: Arc<OnceLock<SecretVault>>,
+        secret_vault: Arc<RwLock<Option<SecretVault>>>,
         edit_queue: Arc<EditQueue>,
         import_queue: Arc<ImportQueue>,
         round_trip: Arc<RoundTripWatcher>,

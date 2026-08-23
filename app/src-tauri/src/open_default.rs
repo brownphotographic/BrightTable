@@ -21,12 +21,12 @@
 //!
 //! That embedded playback goes through WebKitGTK's bundled GStreamer
 //! pipeline, which - unlike every dedicated video app on the system - runs
-//! inside an AppImage whose GStreamer plugin discovery is fragile (see the
-//! AppImage build's `apprun-hooks` env patch) and, even once that's fixed,
-//! still renders inside a sandboxed WebProcess. Rather than keep chasing
-//! packaging issues to make in-app playback as reliable as the system's own
-//! video player, this just launches that player directly - same as
-//! double-clicking the file in a file manager would.
+//! packaged (GStreamer plugin discovery is fragile across packaging
+//! formats) and, even once that's sorted out, still renders inside a
+//! sandboxed WebProcess. Rather than keep chasing packaging issues to make
+//! in-app playback as reliable as the system's own video player, this just
+//! launches that player directly - same as double-clicking the file in a
+//! file manager would.
 
 use std::path::Path;
 #[cfg(any(target_os = "macos", target_os = "windows"))]

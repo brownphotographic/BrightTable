@@ -16,6 +16,7 @@
  */
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { retryOnVaultReady } from '../lib/vaultReadyRetry';
 import {
   createTag,
   deleteAssets,
@@ -151,6 +152,7 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
       .then((t) => {
         setTags(t);
         onCount?.(t.length);
+        setListError(null);
       })
       .catch((e) => setListError(String(e)));
     // onCount's identity changing on re-renders shouldn't retrigger this.
@@ -160,6 +162,10 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
   useEffect(() => {
     refreshTagList();
   }, [refreshTagList]);
+
+  // See `vaultReadyRetry.ts` - the fetch above can fire and fail with "No
+  // API key configured" before the credential vault has actually opened.
+  useEffect(() => retryOnVaultReady(refreshTagList), [refreshTagList]);
 
   // Re-fetches the tag list whenever navigating back from a detail view -
   // deleting the open tag from within it should be reflected on return.

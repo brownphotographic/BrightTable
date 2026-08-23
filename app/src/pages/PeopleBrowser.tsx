@@ -17,6 +17,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { retryOnVaultReady } from '../lib/vaultReadyRetry';
 import {
   deleteAssets,
   getPerson,
@@ -147,6 +148,7 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
       .then((p) => {
         setPeople(p);
         onCount?.(p.length);
+        setListError(null);
       })
       .catch((e) => setListError(String(e)));
     // onCount's identity changing on re-renders shouldn't retrigger this.
@@ -156,6 +158,10 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
   useEffect(() => {
     refreshPeopleList();
   }, [refreshPeopleList]);
+
+  // See `vaultReadyRetry.ts` - the fetch above can fire and fail with "No
+  // API key configured" before the credential vault has actually opened.
+  useEffect(() => retryOnVaultReady(refreshPeopleList), [refreshPeopleList]);
 
   // Re-fetches the people list whenever navigating back from a detail view -
   // a rename while inside one can change a name the list needs to reflect on

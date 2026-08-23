@@ -36,8 +36,9 @@
 //! (`open_default.rs`, `reveal.rs`'s fallback) - goes through
 //! [`host_command`]/[`host_command_tokio`] instead of `Command::new`
 //! directly, so the same code path works unmodified whether this build is
-//! running as the AppImage (unsandboxed - `is_flatpak_sandboxed()` is false,
-//! these are no-ops) or as the Flatpak.
+//! running unsandboxed (`is_flatpak_sandboxed()` is false, these are
+//! no-ops - a dev build, or anything else outside the Flatpak sandbox) or
+//! as the Flatpak.
 //!
 //! D-Bus calls (`reveal.rs`'s `FileManager1` proxy, `suspend_guard.rs`'s
 //! `logind` proxy) don't go through here - they cross the sandbox boundary

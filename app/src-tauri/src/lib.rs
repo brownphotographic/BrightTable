@@ -155,27 +155,28 @@ pub fn run() {
             let (art_queue, art_queue_rx) = art_queue::ArtQueue::new();
             let (export_queue, export_queue_rx) = export_queue::ExportQueue::new();
             // Starts empty - filled in by the background thread below once
-            // the vault finishes opening. `Arc<OnceLock<_>>` rather than
-            // `Mutex<Option<_>>`: every command that reads it (`config::save`'s
-            // vault parameter, via `state.secret_vault.get()`) only ever wants
-            // "is it ready yet", never needs to wait for or replace it after
-            // that one write.
-            let secret_vault: std::sync::Arc<std::sync::OnceLock<secure_store::SecretVault>> =
-                std::sync::Arc::new(std::sync::OnceLock::new());
+            // the vault finishes opening, and swapped for a freshly-reopened
+            // one later if `config::set_settings_folder`/`set_share_vault`
+            // moves it - see `AppState::secret_vault`'s own doc comment for
+            // why this needs to be replaceable rather than write-once.
+            let secret_vault: std::sync::Arc<std::sync::RwLock<Option<secure_store::SecretVault>>> =
+                std::sync::Arc::new(std::sync::RwLock::new(None));
             app.manage(AppState::new(cfg, secret_vault.clone(), edit_queue, import_queue, round_trip.clone(), processing_queue, art_queue, export_queue));
 
-            // Stronghold's snapshot decrypt (password-based `scrypt` key
-            // derivation) is deliberately expensive - a fixed ~1s cost in a
-            // release build, worse still unoptimized. Running it synchronously
-            // here like every other setup step would block this whole
-            // closure's return, which blocks the window's first paint and the
-            // event loop's first pump - long enough in a debug build to trip
-            // the desktop's own "not responding" watchdog even though nothing
-            // is actually deadlocked (confirmed via `gdb`: the main thread was
-            // sitting in exactly this call, then moved on once it finished).
-            // Opened on its own thread instead, so the window shows up and
-            // stays responsive immediately - see `cfg`'s own comment above for
-            // what happens to secret fields in the meantime.
+            // Stronghold's snapshot decrypt is fast now (see
+            // `secure_store::use_low_encrypt_work_factor`), but a vault
+            // written before that fix still pays its old, much-worse cost
+            // the one time it gets migrated - and running even the fast
+            // path synchronously here would block this whole closure's
+            // return, which blocks the window's first paint and the event
+            // loop's first pump. That's what originally tripped the
+            // desktop's own "not responding" watchdog in a debug build
+            // (confirmed via `gdb`: the main thread was sitting in exactly
+            // this call, then moved on once it finished) before either fix
+            // existed. Opened on its own thread instead, so the window
+            // shows up and stays responsive immediately regardless - see
+            // `cfg`'s own comment above for what happens to secret fields
+            // in the meantime.
             {
                 let app_handle = app.handle().clone();
                 let target_vault = secret_vault;
@@ -190,10 +191,7 @@ pub fn run() {
                             let _ = config::save(&app_handle, &guard, Some(&vault));
                         }
                     }
-                    // Can't actually fail in practice - this is the only place
-                    // that ever opens the vault - but `OnceLock::set` returning
-                    // `Err` just means "already set" rather than panicking.
-                    let _ = target_vault.set(vault);
+                    *target_vault.write().unwrap() = Some(vault);
                     let _ = app_handle.emit("vault-ready", ());
                 });
             }

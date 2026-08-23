@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::apps::{self, AppChoice};
 use crate::art_queue::{self, ArtJob, ArtJobStatus, ArtQueue};
@@ -46,10 +46,20 @@ pub fn get_config(state: State<AppState>) -> AppConfig {
     state.config.lock().unwrap().clone()
 }
 
+// Note: these are `async fn` (not the plain sync `fn` a Tauri command could
+// otherwise be) specifically so `config::save` runs inside
+// `tokio::task::spawn_blocking` rather than inline. A sync command body runs
+// directly on whatever thread dispatches its IPC call - the main/UI thread on
+// desktop - with no thread pool involved, and `config::save` calls
+// `vault.write_secrets()`, which is cheap now (see
+// `secure_store::use_low_encrypt_work_factor`) but wasn't always - keeping
+// this off the main thread is cheap insurance against that class of freeze
+// (the one `SecretVault::open` used to cause at startup - see its own
+// comment) regardless of how fast any one Stronghold call happens to be.
 #[tauri::command]
-pub fn save_library_config(
+pub async fn save_library_config(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     cfg: LibraryConfig,
 ) -> Result<AppConfig, String> {
     let snapshot = {
@@ -57,14 +67,18 @@ pub fn save_library_config(
         guard.library = cfg;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.get())?;
+    let vault = state.secret_vault.clone();
+    let to_save = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save(&app, &to_save, vault.read().unwrap().as_ref()))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(snapshot)
 }
 
 #[tauri::command]
-pub fn save_shortcuts(
+pub async fn save_shortcuts(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     shortcuts: HashMap<String, String>,
 ) -> Result<AppConfig, String> {
     let snapshot = {
@@ -72,14 +86,18 @@ pub fn save_shortcuts(
         guard.shortcuts = shortcuts;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.get())?;
+    let vault = state.secret_vault.clone();
+    let to_save = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save(&app, &to_save, vault.read().unwrap().as_ref()))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(snapshot)
 }
 
 #[tauri::command]
-pub fn save_smart_stack_settings(
+pub async fn save_smart_stack_settings(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     settings: SmartStackSettings,
 ) -> Result<AppConfig, String> {
     let snapshot = {
@@ -87,14 +105,18 @@ pub fn save_smart_stack_settings(
         guard.smart_stack = settings;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.get())?;
+    let vault = state.secret_vault.clone();
+    let to_save = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save(&app, &to_save, vault.read().unwrap().as_ref()))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(snapshot)
 }
 
 #[tauri::command]
-pub fn save_window_controls_position(
+pub async fn save_window_controls_position(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     position: WindowControlsPosition,
 ) -> Result<AppConfig, String> {
     let snapshot = {
@@ -102,14 +124,18 @@ pub fn save_window_controls_position(
         guard.window_controls_position = position;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.get())?;
+    let vault = state.secret_vault.clone();
+    let to_save = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save(&app, &to_save, vault.read().unwrap().as_ref()))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(snapshot)
 }
 
 #[tauri::command]
-pub fn save_theme_mode(
+pub async fn save_theme_mode(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     mode: ThemeMode,
 ) -> Result<AppConfig, String> {
     let snapshot = {
@@ -117,38 +143,71 @@ pub fn save_theme_mode(
         guard.theme_mode = mode;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.get())?;
+    let vault = state.secret_vault.clone();
+    let to_save = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save(&app, &to_save, vault.read().unwrap().as_ref()))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(snapshot)
 }
 
+// Async for the same reason as `save_library_config` above - reopening the
+// vault at its new location (when moving it alongside the settings folder,
+// see `config::reopen_vault_if_moved`) and the trailing `config::save` are
+// blocking filesystem/Stronghold work that shouldn't run on the main thread.
+//
+// Unlike every other `save_*` command, this one can wholesale *replace*
+// `state.config` with something adopted from a different file entirely
+// (see `set_settings_folder`'s own doc comment) - not just update the one
+// field the frontend caller already knows it just changed. Every
+// long-lived provider that loads its own slice of config once at startup
+// (Theme, WindowControls, Applications, Shortcuts, SmartStackSettings,
+// RawOverrides, LibraryStatus - all mounted once at the app root, never
+// remounted) has no way to notice that on its own, so it emits
+// `config-reloaded` for them to re-fetch and pick up whatever the adopted
+// config actually says - otherwise those panes keep showing whatever was
+// loaded at startup until the user restarts the app.
 #[tauri::command]
-pub fn save_settings_folder(
+pub async fn save_settings_folder(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     folder: Option<String>,
 ) -> Result<AppConfig, String> {
     let current = state.config.lock().unwrap().clone();
-    let next = config::set_settings_folder(&app, &current, folder, state.secret_vault.get())?;
+    let vault = state.secret_vault.clone();
+    let app_for_emit = app.clone();
+    let next = tokio::task::spawn_blocking(move || config::set_settings_folder(&app, &current, folder, &vault))
+        .await
+        .map_err(|e| e.to_string())??;
     *state.config.lock().unwrap() = next.clone();
+    let _ = app_for_emit.emit("config-reloaded", ());
     Ok(next)
 }
 
+// Async for the same reason - reopening the vault at (or back from) the
+// shared folder, and the trailing `config::save`, are blocking work. Emits
+// `config-reloaded` for the same reason `save_settings_folder` does above.
 #[tauri::command]
-pub fn save_share_vault(
+pub async fn save_share_vault(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     share: bool,
 ) -> Result<AppConfig, String> {
     let current = state.config.lock().unwrap().clone();
-    let next = config::set_share_vault(&app, &current, share, state.secret_vault.get())?;
+    let vault = state.secret_vault.clone();
+    let app_for_emit = app.clone();
+    let next = tokio::task::spawn_blocking(move || config::set_share_vault(&app, &current, share, &vault))
+        .await
+        .map_err(|e| e.to_string())??;
     *state.config.lock().unwrap() = next.clone();
+    let _ = app_for_emit.emit("config-reloaded", ());
     Ok(next)
 }
 
 #[tauri::command]
-pub fn set_raw_overrides(
+pub async fn set_raw_overrides(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     asset_ids: Vec<String>,
     is_raw: bool,
 ) -> Result<AppConfig, String> {
@@ -163,14 +222,18 @@ pub fn set_raw_overrides(
         }
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.get())?;
+    let vault = state.secret_vault.clone();
+    let to_save = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save(&app, &to_save, vault.read().unwrap().as_ref()))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(snapshot)
 }
 
 #[tauri::command]
-pub fn save_applications_config(
+pub async fn save_applications_config(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     cfg: ApplicationsConfig,
 ) -> Result<AppConfig, String> {
     let snapshot = {
@@ -178,7 +241,11 @@ pub fn save_applications_config(
         guard.applications = cfg;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.get())?;
+    let vault = state.secret_vault.clone();
+    let to_save = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save(&app, &to_save, vault.read().unwrap().as_ref()))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(snapshot)
 }
 
@@ -1375,9 +1442,9 @@ pub async fn get_asset(state: State<'_, AppState>, asset_id: String) -> Result<A
 }
 
 #[tauri::command]
-pub fn save_import_settings(
+pub async fn save_import_settings(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     settings: ImportSettings,
 ) -> Result<AppConfig, String> {
     let snapshot = {
@@ -1385,7 +1452,11 @@ pub fn save_import_settings(
         guard.import = settings;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.get())?;
+    let vault = state.secret_vault.clone();
+    let to_save = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save(&app, &to_save, vault.read().unwrap().as_ref()))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(snapshot)
 }
 
@@ -1876,13 +1947,17 @@ pub async fn clear_thumb_cache(
 // ---------------------------------------------------------------------
 
 #[tauri::command]
-pub fn save_sharing_config(app: AppHandle, state: State<AppState>, cfg: SharingConfig) -> Result<AppConfig, String> {
+pub async fn save_sharing_config(app: AppHandle, state: State<'_, AppState>, cfg: SharingConfig) -> Result<AppConfig, String> {
     let snapshot = {
         let mut guard = state.config.lock().unwrap();
         guard.sharing = cfg;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.get())?;
+    let vault = state.secret_vault.clone();
+    let to_save = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save(&app, &to_save, vault.read().unwrap().as_ref()))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(snapshot)
 }
 
@@ -1935,18 +2010,26 @@ pub async fn flickr_complete_auth(
         guard.sharing.flickr.connected = true;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.get())?;
+    let vault = state.secret_vault.clone();
+    let to_save = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save(&app, &to_save, vault.read().unwrap().as_ref()))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(snapshot)
 }
 
 #[tauri::command]
-pub fn flickr_disconnect(app: AppHandle, state: State<AppState>) -> Result<AppConfig, String> {
+pub async fn flickr_disconnect(app: AppHandle, state: State<'_, AppState>) -> Result<AppConfig, String> {
     let snapshot = {
         let mut guard = state.config.lock().unwrap();
         guard.sharing.flickr = Default::default();
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.get())?;
+    let vault = state.secret_vault.clone();
+    let to_save = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save(&app, &to_save, vault.read().unwrap().as_ref()))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(snapshot)
 }
 

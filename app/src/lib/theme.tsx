@@ -17,6 +17,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { getConfig, saveThemeMode, type ThemeMode } from './api';
+import { onConfigReloaded } from './configEvents';
 
 interface ThemeContextValue {
   themeMode: ThemeMode;
@@ -35,11 +36,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [themeMode, setThemeModeState] = useState<ThemeMode>('dark');
 
   useEffect(() => {
-    getConfig()
-      .then((cfg) => {
-        setThemeModeState(cfg.themeMode ?? 'dark');
-      })
-      .catch(() => {});
+    function load() {
+      getConfig()
+        .then((cfg) => {
+          setThemeModeState(cfg.themeMode ?? 'dark');
+        })
+        .catch(() => {});
+    }
+    load();
+    return onConfigReloaded(load);
   }, []);
 
   useEffect(() => {

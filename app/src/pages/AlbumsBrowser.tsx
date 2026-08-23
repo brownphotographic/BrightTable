@@ -17,6 +17,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { retryOnVaultReady } from '../lib/vaultReadyRetry';
 import {
   createAlbum,
   deleteAlbum,
@@ -149,6 +150,7 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
       .then((a) => {
         setAlbums(a);
         onCount?.(a.length);
+        setListError(null);
       })
       .catch((e) => setListError(String(e)));
     // onCount's identity changing on re-renders shouldn't retrigger this.
@@ -158,6 +160,10 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
   useEffect(() => {
     refreshAlbumList();
   }, [refreshAlbumList]);
+
+  // See `vaultReadyRetry.ts` - the fetch above can fire and fail with "No
+  // API key configured" before the credential vault has actually opened.
+  useEffect(() => retryOnVaultReady(refreshAlbumList), [refreshAlbumList]);
 
   // Re-fetches the album list whenever navigating back from a detail view -
   // adding/removing assets or renaming while inside one can change a cover/

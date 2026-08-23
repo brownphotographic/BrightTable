@@ -171,7 +171,7 @@ export default function Sidebar({
         <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: dotColor }} />
         {statusText}
       </div>
-      <ResourceChart />
+      {import.meta.env.DEV && <ResourceChart />}
     </div>
   );
 }

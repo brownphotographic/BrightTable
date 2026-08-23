@@ -2,7 +2,7 @@
 // Regenerates THIRD-PARTY-LICENSES.md at the repo root by scanning every
 // runtime/build dependency in Cargo.lock (via the `cargo-license` cargo
 // subcommand: `cargo install cargo-license`) and package-lock.json (via the
-// `license-checker` npm package). Run as part of `npm run build:appimage` so
+// `license-checker` npm package). Run as part of `npm run build:flatpak` so
 // the file can't drift from the actual dependency tree.
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
@@ -102,7 +102,7 @@ linked below, or in the corresponding file under \`node_modules/<pkg>/LICENSE\`
 or the crate's source on crates.io.
 
 This file is generated automatically by \`app/scripts/gen-third-party-licenses.mjs\`
-as part of \`npm run build:appimage\` - do not edit it by hand.
+as part of \`npm run build:flatpak\` - do not edit it by hand.
 
 ## Frontend dependencies (npm)
 

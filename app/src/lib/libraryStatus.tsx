@@ -16,8 +16,9 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { listen } from '@tauri-apps/api/event';
 import { getConfig, testConnection, type ConnectionStatus } from './api';
+import { retryOnVaultReady } from './vaultReadyRetry';
+import { onConfigReloaded } from './configEvents';
 
 interface LibraryStatusValue {
   status: ConnectionStatus | null;
@@ -52,20 +53,16 @@ export function LibraryStatusProvider({ children }: { children: ReactNode }) {
     refresh();
   }, [refresh]);
 
-  // The credential vault (Immich API key, if it hasn't migrated into
-  // config.json's own plaintext fields) opens on a background thread on the
-  // Rust side rather than blocking startup - see `lib.rs`'s `.setup()`. The
-  // very first `refresh()` above can therefore run before it's ready and see
-  // a blank/stale key, which looks like (and is reported as) a real
-  // connection failure. Once the vault backend emits this, the real value is
-  // already in place - re-checking clears a failure that was never actually
-  // about the library being unreachable.
-  useEffect(() => {
-    const unlisten = listen('vault-ready', () => refresh());
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [refresh]);
+  // See `vaultReadyRetry.ts` - the very first `refresh()` above can run
+  // before the credential vault has actually opened and see a blank/stale
+  // key, which looks like (and is reported as) a real connection failure.
+  useEffect(() => retryOnVaultReady(refresh), [refresh]);
+
+  // See `configEvents.ts` - Preferences → Configuration adopting a
+  // different settings folder can wholesale-replace `library`'s connection
+  // details (URL, API key), which this provider would otherwise have no way
+  // to notice until the app restarts.
+  useEffect(() => onConfigReloaded(refresh), [refresh]);
 
   const value = useMemo(() => ({ status, error, checking, refresh }), [status, error, checking, refresh]);
 

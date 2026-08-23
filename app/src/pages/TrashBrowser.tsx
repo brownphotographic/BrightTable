@@ -15,7 +15,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useState, type CSSProperties } from 'react';
+import { retryOnVaultReady } from '../lib/vaultReadyRetry';
 import { deleteAssets, emptyTrash, getTrashedAssets, restoreAssets, type AssetSummary } from '../lib/api';
 import AssetThumbImage from '../components/AssetThumb';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -38,17 +39,26 @@ export default function TrashBrowser({
   const [confirmEmpty, setConfirmEmpty] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  useEffect(() => {
+  const refreshTrash = useCallback(() => {
     getTrashedAssets()
       .then((a) => {
         setAssets(a);
         onCount?.(a.length);
+        setError(null);
       })
       .catch((e) => setError(String(e)));
-    // Deliberately runs once on mount only, matching PhotosBrowser's pattern -
-    // onCount's identity changing on re-renders shouldn't refetch.
+    // onCount's identity changing on re-renders shouldn't retrigger this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    refreshTrash();
+    // Deliberately runs once on mount only, matching PhotosBrowser's pattern.
+  }, [refreshTrash]);
+
+  // See `vaultReadyRetry.ts` - the fetch above can fire and fail with "No
+  // API key configured" before the credential vault has actually opened.
+  useEffect(() => retryOnVaultReady(refreshTrash), [refreshTrash]);
 
   async function handleRestore(id: string) {
     await restoreAssets([id]);

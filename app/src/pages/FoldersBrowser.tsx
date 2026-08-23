@@ -17,6 +17,7 @@
 
 import { forwardRef, useCallback, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { retryOnVaultReady } from '../lib/vaultReadyRetry';
 import {
   batchRawCliRoundTrip,
   checkSidecarMetadata,
@@ -215,14 +216,29 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       .catch(() => {});
   }, []);
 
+  // See `vaultReadyRetry.ts` - same startup race as `PhotosBrowser`'s
+  // timeline fetch.
   useEffect(() => {
-    getFolderPaths()
-      .then((paths) => {
-        setFolderPaths(paths);
-        const tree = buildFolderTree(paths);
-        if (tree.children.length === 1) setExpandedPaths({ [tree.children[0].path]: true });
-      })
-      .catch((e) => setError(String(e)));
+    let cancelled = false;
+    function load() {
+      getFolderPaths()
+        .then((paths) => {
+          if (cancelled) return;
+          setFolderPaths(paths);
+          const tree = buildFolderTree(paths);
+          if (tree.children.length === 1) setExpandedPaths({ [tree.children[0].path]: true });
+          setError(null);
+        })
+        .catch((e) => {
+          if (!cancelled) setError(String(e));
+        });
+    }
+    load();
+    const cleanup = retryOnVaultReady(load);
+    return () => {
+      cancelled = true;
+      cleanup();
+    };
   }, []);
 
   const tree = useMemo(() => buildFolderTree(folderPaths ?? []), [folderPaths]);

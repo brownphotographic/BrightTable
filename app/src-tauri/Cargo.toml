@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "1.0.1"
+version = "1.0.3"
 description = "A Tauri App"
 authors = ["you"]
 license = "GPL-3.0-or-later"
@@ -60,19 +60,20 @@ webkit2gtk = "2.0"
 # wall-clock time in the suite. Dev-only so it never reaches the release build.
 tokio = { version = "1", features = ["test-util"] }
 
-# Stronghold's snapshot crypto (Argon2 key derivation + the actual vault
-# encryption, run unconditionally on every real commit even for our own
-# high-entropy machine-generated key - see secure_store.rs's own doc comment)
-# is brutal without codegen optimizations: measured directly via `cargo test`
-# at 60+ seconds per commit in an unoptimized `cargo tauri dev` build, against
-# the ~1s this crate's own docs promise for a release build. Worse, every
-# credential save held the app-wide config `Mutex` for that whole stretch
-# (fixed separately in commands.rs), stalling every other command that reads
-# config - found live: this alone explained hours of "why does
-# check_sidecar_metadata never resolve" symptoms during dev testing.
-# Optimizing just these crypto-heavy dependencies keeps the rest of the app at
-# normal debug-build speed (fast iteration, full debug info) while making this
-# one hot path tolerable in dev builds too.
+# Originally added because Stronghold's snapshot crypto measured at 60+
+# seconds per open/commit in an unoptimized `cargo tauri dev` build - these
+# opt-level overrides brought that down to ~40s, not the ~1s the surrounding
+# code assumed, which turned out to mean this alone wasn't the real fix: the
+# actual cause was Stronghold's file-level `age` work factor applying its
+# default weak-password KDF stretch unconditionally, regardless of our
+# already-strong machine-generated key - see
+# `secure_store::use_low_encrypt_work_factor`, which fixes that directly and
+# brings the whole thing under a second even unoptimized. Kept here anyway as
+# a low-cost safety net for whatever other crypto work these dependencies
+# still do (Stronghold's own internal vault-record encryption, sync/hashing
+# primitives, etc.) - optimizing just these crypto-heavy dependencies keeps
+# the rest of the app at normal debug-build speed (fast iteration, full debug
+# info) regardless.
 [profile.dev.package.iota_stronghold]
 opt-level = 3
 [profile.dev.package.stronghold_engine]

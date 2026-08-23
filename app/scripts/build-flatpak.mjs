@@ -1,21 +1,18 @@
 #!/usr/bin/env node
-// Builds and bundles the Flatpak distribution - the second, additive
-// distribution channel alongside the AppImage (see build:appimage:only).
+// Builds and bundles the Flatpak distribution - BrightTable's only packaged
+// distribution channel (an earlier AppImage build was retired since this
+// covers it - see git history if that's ever worth revisiting).
 //
-// Unlike the AppImage build, this does a real *source* build inside
-// flatpak-builder's own sandbox, compiled against the GNOME runtime/SDK's
-// own toolchain and glibc - not whatever host/distrobox container this
-// script happens to run in. That's the whole point: the resulting binary's
-// glibc-symbol floor is the runtime's, identical for every user regardless
-// of the build machine, sidestepping the entire "build on an old enough
-// host" dance the AppImage path needs. See flatpak/*.yml's own comments for
-// the manifest-level detail (permissions granted, the --share=network
-// build-time trade-off, etc).
+// Does a real *source* build inside flatpak-builder's own sandbox, compiled
+// against the GNOME runtime/SDK's own toolchain and glibc - not whatever
+// host this script happens to run on. That's the whole point: the
+// resulting binary's glibc-symbol floor is the runtime's, identical for
+// every user regardless of the build machine. See flatpak/*.yml's own
+// comments for the manifest-level detail (permissions granted, the
+// --share=network build-time trade-off, etc).
 //
-// Must run on the host, not inside the Ubuntu 24.04 distrobox used for the
-// AppImage build - flatpak-builder needs its own sandboxing (bubblewrap)
-// and the GNOME runtime/SDK/extensions installed via `flatpak install`,
-// which is unrelated to that container's glibc-floor purpose. See
+// Runs on the host - flatpak-builder needs its own sandboxing (bubblewrap)
+// and the GNOME runtime/SDK/extensions installed via `flatpak install`. See
 // README.md's Flatpak section for one-time host setup.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";

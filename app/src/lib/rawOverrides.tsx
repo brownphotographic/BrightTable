@@ -17,6 +17,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { getConfig, setRawOverrides, type AssetSummary } from './api';
+import { onConfigReloaded } from './configEvents';
 
 interface RawOverridesContextValue {
   overrideIds: Set<string>;
@@ -34,9 +35,13 @@ export function RawOverridesProvider({ children }: { children: ReactNode }) {
   const [overrideIds, setOverrideIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    getConfig()
-      .then((cfg) => setOverrideIds(new Set(cfg.rawOverrides)))
-      .catch(() => {});
+    function load() {
+      getConfig()
+        .then((cfg) => setOverrideIds(new Set(cfg.rawOverrides)))
+        .catch(() => {});
+    }
+    load();
+    return onConfigReloaded(load);
   }, []);
 
   const setOverride = useCallback((assetIds: string[], isRaw: boolean) => {

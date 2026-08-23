@@ -17,6 +17,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { getConfig, saveWindowControlsPosition, type WindowControlsPosition } from './api';
+import { onConfigReloaded } from './configEvents';
 
 interface WindowControlsContextValue {
   position: WindowControlsPosition;
@@ -33,9 +34,13 @@ export function WindowControlsProvider({ children }: { children: ReactNode }) {
   const [position, setPositionState] = useState<WindowControlsPosition>('right');
 
   useEffect(() => {
-    getConfig()
-      .then((cfg) => setPositionState(cfg.windowControlsPosition ?? 'right'))
-      .catch(() => {});
+    function load() {
+      getConfig()
+        .then((cfg) => setPositionState(cfg.windowControlsPosition ?? 'right'))
+        .catch(() => {});
+    }
+    load();
+    return onConfigReloaded(load);
   }, []);
 
   const setPosition = useCallback((next: WindowControlsPosition) => {

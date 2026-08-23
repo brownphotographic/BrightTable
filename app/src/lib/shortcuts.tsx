@@ -17,6 +17,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { getConfig, saveShortcuts } from './api';
+import { onConfigReloaded } from './configEvents';
 
 export type ShortcutId =
   | 'open'
@@ -198,9 +199,13 @@ export function ShortcutsProvider({ children }: { children: ReactNode }) {
   const [capturing, setCapturing] = useState<ShortcutId | null>(null);
 
   useEffect(() => {
-    getConfig()
-      .then((cfg) => setShortcuts({ ...DEFAULT_SHORTCUTS, ...(cfg.shortcuts as Partial<Record<ShortcutId, string>>) }))
-      .catch(() => {});
+    function load() {
+      getConfig()
+        .then((cfg) => setShortcuts({ ...DEFAULT_SHORTCUTS, ...(cfg.shortcuts as Partial<Record<ShortcutId, string>>) }))
+        .catch(() => {});
+    }
+    load();
+    return onConfigReloaded(load);
   }, []);
 
   const commitCapture = useCallback((id: ShortcutId, key: string) => {

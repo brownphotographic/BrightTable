@@ -25,10 +25,9 @@ add-build-extensions:
 
 # Build-time only - this build compiles the app from source inside
 # flatpak-builder's own sandbox (against the runtime's own toolchain/glibc,
-# not whatever host ran `flatpak-builder`), which is the whole point: unlike
-# the AppImage build (see ../README.md's "Building a distributable AppImage"
-# section), the resulting binary's glibc-symbol floor is the *runtime's* own
-# glibc, identical for every user regardless of which machine built it.
+# not whatever host ran `flatpak-builder`), which is the whole point: the
+# resulting binary's glibc-symbol floor is the *runtime's* own glibc,
+# identical for every user regardless of which machine built it.
 #
 # --share=network here is an explicit, deliberate trade-off: `cargo`/`npm`
 # resolve crates.io/the npm registry live during the build, rather than this
@@ -95,6 +94,21 @@ finish-args:
   # inside the sandbox. See src-tauri/src/flatpak.rs for the wrapper this
   # backs, and every call site it's used from.
   - --talk-name=org.freedesktop.Flatpak
+  # The sandbox's own /tmp is private (a fresh tmpfs, not the host's real
+  # /tmp) unless explicitly shared - a problem specifically because of the
+  # flatpak-spawn grant just above: several call sites write a temp file
+  # in-process (art.rs's Exiv2-crash Mode=0 sidecar fallback,
+  # export_queue.rs's RAW-to-JPEG temp export and exiftool source/target
+  # temps, commands.rs's temp print PDF) and then hand its path to a tool
+  # actually running *outside* the sandbox via flatpak-spawn --host - which
+  # can't see a path under the sandbox's private /tmp at all. Confirmed live:
+  # without this, the Exiv2-crash fallback in art.rs silently fails to find
+  # its own patched sidecar and re-surfaces the original crash error instead
+  # (each retry attempt still costs its own ~30-60s, so this reads as a long
+  # stall before the same error reappears) - identical RAW file, sidecar,
+  # and fallback code all worked correctly under `cargo tauri dev`, where
+  # there's no sandbox and /tmp is just /tmp.
+  - --filesystem=/tmp
 
   # "Show in File Manager" (reveal.rs) - the primary org.freedesktop.FileManager1
   # D-Bus call, not its xdg-open fallback (that goes through flatpak-spawn above).

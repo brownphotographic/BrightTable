@@ -18,6 +18,7 @@
 import { forwardRef, memo, useCallback, useDeferredValue, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { listen } from '@tauri-apps/api/event';
+import { retryOnVaultReady } from '../lib/vaultReadyRetry';
 import {
   batchRawCliRoundTrip,
   checkSidecarMetadata,
@@ -1299,15 +1300,32 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     };
   }, [contextMenu, assetByIdAll]);
 
+  // See `vaultReadyRetry.ts` - the credential vault can still be opening in
+  // the background when this first fires, so it retries until the fetch
+  // actually succeeds instead of leaving a permanent "Couldn't load the
+  // library" screen up.
   useEffect(() => {
-    getTimelineBuckets()
-      .then((b) => {
-        setBuckets(b);
-        const total = b.reduce((sum, x) => sum + x.count, 0);
-        setTotalCount(total);
-        onTotalCount?.(total);
-      })
-      .catch((e) => setError(String(e)));
+    let cancelled = false;
+    function load() {
+      getTimelineBuckets()
+        .then((b) => {
+          if (cancelled) return;
+          setBuckets(b);
+          const total = b.reduce((sum, x) => sum + x.count, 0);
+          setTotalCount(total);
+          onTotalCount?.(total);
+          setError(null);
+        })
+        .catch((e) => {
+          if (!cancelled) setError(String(e));
+        });
+    }
+    load();
+    const cleanup = retryOnVaultReady(load);
+    return () => {
+      cancelled = true;
+      cleanup();
+    };
     // Deliberately runs once on mount only - onTotalCount's identity changing
     // on re-renders shouldn't refetch the whole timeline.
   }, []);

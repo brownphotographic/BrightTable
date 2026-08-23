@@ -543,9 +543,9 @@ pub fn load(app: &AppHandle, vault: Option<&crate::secure_store::SecretVault>) -
     };
 
     // A `settingsFolder` override (Preferences -> Configuration) moves
-    // config.json to a folder of the user's choosing - e.g. so a dev build,
-    // an AppImage, and a Flatpak install can all share one file. Which
-    // folder that is can't be known until config.json itself has been read,
+    // config.json to a folder of the user's choosing - e.g. so a dev build
+    // and a Flatpak install can share one file. Which folder that is can't
+    // be known until config.json itself has been read,
     // so `save` always keeps a stub containing just this one field at the
     // OS-default location - read that first, purely to find the redirect,
     // then load the real file from wherever it points.
@@ -678,6 +678,43 @@ pub fn save(app: &AppHandle, cfg: &AppConfig, vault: Option<&crate::secure_store
     Ok(())
 }
 
+/// Where the credential vault should live for a given config - `Some` only
+/// when `share_vault` is on and a real `settings_folder` is set. Mirrors
+/// `resolve_early_config`'s early-boot version of the same formula (that one
+/// works off a raw `serde_json::Value` since it runs before `AppConfig` can
+/// be deserialized at all - see its own doc comment).
+fn vault_dir_for(cfg: &AppConfig) -> Option<PathBuf> {
+    if cfg.share_vault {
+        cfg.settings_folder.as_deref().map(str::trim).filter(|f| !f.is_empty()).map(PathBuf::from)
+    } else {
+        None
+    }
+}
+
+/// Reopens the credential vault at wherever `next` says it should now live
+/// (a no-op if that's unchanged from `current`) and swaps it into
+/// `secret_vault` immediately, adopting whatever secrets are already sitting
+/// there into `next` - the same "adopt what's already at the destination"
+/// treatment `set_settings_folder` below already gives an existing
+/// `config.json`. Without this, the old location's vault would stay the live
+/// one until the next restart, so any secret edited in the meantime (e.g.
+/// re-entering the API key right after moving the vault) would silently land
+/// in the old, no-longer-read location and get orphaned there.
+fn reopen_vault_if_moved(
+    app: &AppHandle,
+    current: &AppConfig,
+    next: &mut AppConfig,
+    secret_vault: &std::sync::RwLock<Option<crate::secure_store::SecretVault>>,
+) -> Result<(), String> {
+    if vault_dir_for(current) == vault_dir_for(next) {
+        return Ok(());
+    }
+    let reopened = crate::secure_store::SecretVault::open(app, vault_dir_for(next).as_deref())?;
+    reopened.read_into(next);
+    *secret_vault.write().unwrap() = Some(reopened);
+    Ok(())
+}
+
 /// Redirects config.json to `folder` (or back to the OS-default location if
 /// `None`/empty) - Preferences -> Configuration. If `folder` already holds
 /// its own full config.json (e.g. a shared folder another install of this
@@ -687,14 +724,14 @@ pub fn save(app: &AppHandle, cfg: &AppConfig, vault: Option<&crate::secure_store
 /// with whatever this install currently has loaded; otherwise (nothing there
 /// yet, or just the `settingsFolder`-only pointer stub `save` leaves behind)
 /// the current in-memory config is written there instead, effectively moving
-/// it. Note this only moves config.json itself - Immich/Flickr credentials
-/// live in the per-install encrypted Stronghold vault (`secure_store.rs`)
-/// and are never shared this way, so each install still needs its own login.
+/// it. If vault-sharing is (or, via an adopted config.json above, now is) on,
+/// the credential vault moves right along with it - see
+/// `reopen_vault_if_moved`.
 pub fn set_settings_folder(
     app: &AppHandle,
     current: &AppConfig,
     folder: Option<String>,
-    vault: Option<&crate::secure_store::SecretVault>,
+    secret_vault: &std::sync::RwLock<Option<crate::secure_store::SecretVault>>,
 ) -> Result<AppConfig, String> {
     let folder = folder.map(|f| f.trim().to_string()).filter(|f| !f.is_empty());
     let target_dir = match &folder {
@@ -712,57 +749,31 @@ pub fn set_settings_folder(
         .unwrap_or_else(|| current.clone());
     next.settings_folder = folder;
 
-    // If vault-sharing is (or, via an adopted config.json above, now is)
-    // turned on, prepare the new folder for it too - best-effort, and only
-    // ever copies into `target_dir`, never overwrites a vault already
-    // sitting there (see `secure_store::relocate`'s own doc comment). The
-    // running session's already-open vault is untouched either way; this
-    // just gets the destination ready for the next launch.
-    if next.share_vault {
-        let from_dir = match &current.settings_folder {
-            Some(f) if current.share_vault && !f.trim().is_empty() => PathBuf::from(f.trim()),
-            _ => app
-                .path()
-                .app_local_data_dir()
-                .map_err(|e| format!("Could not resolve app local data dir: {e}"))?,
-        };
-        crate::secure_store::relocate(&from_dir, &target_dir)?;
-    }
+    reopen_vault_if_moved(app, current, &mut next, secret_vault)?;
 
-    save(app, &next, vault)?;
+    save(app, &next, secret_vault.read().unwrap().as_ref())?;
     Ok(next)
 }
 
 /// Toggles whether the credential vault follows `settings_folder` - see
-/// `AppConfig::share_vault`'s doc comment. Best-effort relocates the vault's
-/// on-disk files right now (adopting whatever's already at the destination
-/// rather than overwriting it) so it's ready for pickup, but - like
-/// `set_settings_folder`'s own vault handling above - the currently-open
-/// vault doesn't move: this only takes effect the next time the app starts.
-/// Turning sharing back off leaves the shared copy in place rather than
-/// copying it back; the OS-local dir picks up wherever it already was
-/// (nothing, for an install that always shared) on the next launch.
+/// `AppConfig::share_vault`'s doc comment and `reopen_vault_if_moved`, which
+/// does the actual work: reopening the vault at (or back from) the shared
+/// folder right now, adopting whatever's already there, rather than waiting
+/// for the next launch. Turning sharing back off leaves the shared copy in
+/// place rather than copying it back; the OS-local dir picks up wherever it
+/// already was (nothing, for an install that always shared).
 pub fn set_share_vault(
     app: &AppHandle,
     current: &AppConfig,
     share: bool,
-    vault: Option<&crate::secure_store::SecretVault>,
+    secret_vault: &std::sync::RwLock<Option<crate::secure_store::SecretVault>>,
 ) -> Result<AppConfig, String> {
     let mut next = current.clone();
     next.share_vault = share;
 
-    if share {
-        if let Some(folder) = next.settings_folder.as_deref().filter(|f| !f.trim().is_empty()) {
-            let target_dir = PathBuf::from(folder.trim());
-            let from_dir = app
-                .path()
-                .app_local_data_dir()
-                .map_err(|e| format!("Could not resolve app local data dir: {e}"))?;
-            crate::secure_store::relocate(&from_dir, &target_dir)?;
-        }
-    }
+    reopen_vault_if_moved(app, current, &mut next, secret_vault)?;
 
-    save(app, &next, vault)?;
+    save(app, &next, secret_vault.read().unwrap().as_ref())?;
     Ok(next)
 }
 
@@ -792,5 +803,36 @@ mod raw_converter_kind_wire_format_tests {
         assert_eq!(serde_json::from_str::<RawConverterKind>("\"art\"").unwrap(), RawConverterKind::Art);
         assert_eq!(serde_json::from_str::<RawConverterKind>("\"rawtherapee\"").unwrap(), RawConverterKind::RawTherapee);
         assert_eq!(serde_json::from_str::<RawConverterKind>("\"darktable\"").unwrap(), RawConverterKind::DarkTable);
+    }
+}
+
+#[cfg(test)]
+mod vault_dir_for_tests {
+    use super::{vault_dir_for, AppConfig};
+
+    #[test]
+    fn none_when_share_vault_is_off_even_with_a_folder_set() {
+        let mut cfg = AppConfig::default();
+        cfg.settings_folder = Some("/shared/BrightTable".to_string());
+        cfg.share_vault = false;
+        assert_eq!(vault_dir_for(&cfg), None);
+    }
+
+    #[test]
+    fn none_when_share_vault_is_on_but_no_folder_is_set() {
+        let mut cfg = AppConfig::default();
+        cfg.share_vault = true;
+        assert_eq!(vault_dir_for(&cfg), None);
+
+        cfg.settings_folder = Some("   ".to_string());
+        assert_eq!(vault_dir_for(&cfg), None);
+    }
+
+    #[test]
+    fn the_trimmed_folder_when_both_are_set() {
+        let mut cfg = AppConfig::default();
+        cfg.settings_folder = Some("  /shared/BrightTable  ".to_string());
+        cfg.share_vault = true;
+        assert_eq!(vault_dir_for(&cfg), Some(std::path::PathBuf::from("/shared/BrightTable")));
     }
 }

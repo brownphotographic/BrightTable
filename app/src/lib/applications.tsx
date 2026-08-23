@@ -17,6 +17,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { getConfig, saveApplicationsConfig, type AppChoice, type ApplicationsConfig, type RawConverterKind } from './api';
+import { onConfigReloaded } from './configEvents';
 
 const DEFAULT_APPLICATIONS: ApplicationsConfig = {
   externalEditor: null,
@@ -66,9 +67,13 @@ export function ApplicationsProvider({ children }: { children: ReactNode }) {
   const [applications, setApplicationsState] = useState<ApplicationsConfig>(DEFAULT_APPLICATIONS);
 
   useEffect(() => {
-    getConfig()
-      .then((cfg) => setApplicationsState({ ...DEFAULT_APPLICATIONS, ...cfg.applications }))
-      .catch(() => {});
+    function load() {
+      getConfig()
+        .then((cfg) => setApplicationsState({ ...DEFAULT_APPLICATIONS, ...cfg.applications }))
+        .catch(() => {});
+    }
+    load();
+    return onConfigReloaded(load);
   }, []);
 
   const setExternalEditor = useCallback((choice: AppChoice) => {

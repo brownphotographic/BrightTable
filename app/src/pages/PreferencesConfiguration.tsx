@@ -152,7 +152,7 @@ export default function PreferencesConfiguration() {
         </Row>
       </div>
       <div style={helpText}>
-        Where config.json is stored. Point every install (dev, AppImage, Flatpak) at the same
+        Where config.json is stored. Point every install (dev, Flatpak) at the same
         folder to share one set of settings between them. Immich/Flickr sign-in stays separate
         per install either way, since it's kept in an encrypted vault, not this file — unless
         you opt in below.

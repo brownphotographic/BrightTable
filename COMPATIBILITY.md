@@ -17,7 +17,7 @@ actually been verified live, not a guarantee about untested versions.
 Since 0.2.6, backward compatibility isn't tested — the floor (`MIN_TESTED_SERVER_VERSION` in
 `immich/models.rs`) is always set equal to the confirmed version, not trailed behind it.
 
-`npm run build:appimage` (via `scripts/bump-version.mjs`) enforces this: every build prompts for
+`npm run build:flatpak` (via `scripts/bump-version.mjs`) enforces this: every build prompts for
 the Immich server version tested (or reads `TESTED_IMMICH_VERSION` from the env non-interactively),
 then writes it into both `MIN_TESTED_SERVER_VERSION` and the About dialog's compatibility line. A
 build run non-interactively without `TESTED_IMMICH_VERSION` set fails rather than silently keeping

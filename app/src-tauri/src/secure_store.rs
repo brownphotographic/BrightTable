@@ -39,6 +39,7 @@
 //! chose over plain OS-keychain storage.
 
 use std::path::Path;
+use std::sync::Once;
 
 use rand::RngCore;
 use tauri::{AppHandle, Manager};
@@ -48,6 +49,38 @@ use crate::config::AppConfig;
 
 /// Single client namespace inside the vault - this app only ever needs one.
 const CLIENT_PATH: &[u8] = b"brighttable-secrets";
+
+/// Stronghold encrypts the whole snapshot *file* with an `age`-format work
+/// factor on top of whatever key you give it - a scrypt-style memory-hard
+/// KDF meant to slow down brute-forcing a *weak*, human-typed password. Its
+/// default (`RECOMMENDED_MINIMUM_ENCRYPT_WORK_FACTOR = 19`, ~1s on a release
+/// build per the crate's own docs) assumes exactly that. This is a
+/// *separate* cost from the one this module's own top-level doc comment
+/// already accounted for (`secrets.key` being pre-generated random bytes so
+/// no extra stretching is "needed" on top) - that reasoning is correct for
+/// the key itself, but Stronghold applies this file-level work factor
+/// unconditionally regardless of how strong the key already is, so the
+/// waste happens anyway unless explicitly turned off. In an unoptimized
+/// `cargo tauri dev` build this "waste" measured at 40+ seconds to reopen
+/// an *existing* vault (a fresh one is near-instant - nothing to decrypt
+/// yet) - even with the crypto-dependency `opt-level = 3` overrides in
+/// Cargo.toml, which speed up the surrounding code but don't touch this
+/// specific iterated-KDF cost. Stronghold's own `Snapshot` type agrees a
+/// strong key needs no stretching (see its `STRONG_KEY_WORK_FACTOR = 0` for
+/// its own internal per-vault keys) - this does the same for the top-level
+/// snapshot file.
+///
+/// Only speeds up future *writes*: decryption always uses whatever factor
+/// is embedded in the file being read, so an existing vault (written under
+/// the old default) still pays the old cost the next time it's opened -
+/// `open_in` forces one resave right after that so it never pays it again.
+static LOW_ENCRYPT_WORK_FACTOR: Once = Once::new();
+
+fn use_low_encrypt_work_factor() {
+    LOW_ENCRYPT_WORK_FACTOR.call_once(|| {
+        let _ = iota_stronghold::engine::snapshot::try_set_encrypt_work_factor(0);
+    });
+}
 
 const KEY_LIBRARY_API_KEY: &[u8] = b"library.apiKey";
 const KEY_FLICKR_API_KEY: &[u8] = b"flickr.apiKey";
@@ -81,6 +114,7 @@ impl SecretVault {
     /// exists so tests can exercise the actual vault (create/read/write/
     /// persist-across-reopen) without spinning up a real Tauri `AppHandle`.
     fn open_in(dir: &Path) -> Result<Self, String> {
+        use_low_encrypt_work_factor();
         std::fs::create_dir_all(dir).map_err(|e| format!("Could not create app local data dir: {e}"))?;
 
         let snapshot_path = dir.join("secrets.stronghold");
@@ -101,47 +135,23 @@ impl SecretVault {
             stronghold.create_client(CLIENT_PATH).map_err(|e| e.to_string())?
         };
 
+        if existed {
+            // One-time migration to the low work factor set above - see
+            // `use_low_encrypt_work_factor`'s doc comment. A real write even
+            // though nothing in the secrets themselves changed:
+            // `write_secrets`'s own no-op guard only compares secret
+            // *content*, not how it's encrypted at rest, and this needs to
+            // happen unconditionally so an existing vault actually gets
+            // rewritten rather than paying the old cost forever.
+            let _ = stronghold.save();
+        }
+
         Ok(Self { stronghold, client })
     }
 
     fn get(&self, key: &[u8]) -> Option<String> {
         self.client.store().get(key).ok().flatten().and_then(|bytes| String::from_utf8(bytes).ok())
     }
-}
-
-/// Best-effort copies the vault's on-disk files (`secrets.key` +
-/// `secrets.stronghold`) from `from_dir` into `to_dir`, without overwriting
-/// anything already there - if `to_dir` already holds its own vault (shared
-/// there previously by another install), that one is left alone and picked
-/// up as-is on the next launch rather than being clobbered by this session's.
-/// Only ever called right after the user opts into `AppConfig::share_vault`
-/// (see `config::set_share_vault`/`set_settings_folder`); the running
-/// session's already-open vault is untouched either way - this only prepares
-/// the destination for the *next* launch, since swapping the live Stronghold
-/// instance mid-session isn't worth the complexity for a settings toggle.
-pub fn relocate(from_dir: &Path, to_dir: &Path) -> Result<(), String> {
-    if from_dir == to_dir {
-        return Ok(());
-    }
-    std::fs::create_dir_all(to_dir).map_err(|e| format!("Could not create vault folder: {e}"))?;
-    if to_dir.join("secrets.stronghold").exists() {
-        return Ok(());
-    }
-    for name in ["secrets.key", "secrets.stronghold"] {
-        let src = from_dir.join(name);
-        if src.exists() {
-            std::fs::copy(&src, to_dir.join(name)).map_err(|e| format!("Could not copy {name}: {e}"))?;
-        }
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let key_path = to_dir.join("secrets.key");
-        if key_path.exists() {
-            let _ = std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600));
-        }
-    }
-    Ok(())
 }
 
 impl SecretVault {
@@ -175,13 +185,13 @@ impl SecretVault {
     /// Writes `cfg`'s current secret fields into the vault and commits the
     /// snapshot to disk - a no-op if none of them actually changed.
     ///
-    /// That early-out matters: `config::save` calls this on *every* save
-    /// (theme toggle, window position, shortcuts - not just credential
-    /// edits), and Stronghold's snapshot commit is a fixed ~1s cost in a
-    /// release build (full-snapshot re-encryption, not proportional to what
-    /// changed) - measured via this module's own tests. Skipping it when
-    /// nothing changed is the only lever available; the commit itself can't
-    /// be made cheaper.
+    /// `config::save` calls this on *every* save (theme toggle, window
+    /// position, shortcuts - not just credential edits), so this early-out
+    /// still matters for avoiding pointless disk writes, but it's no longer
+    /// covering for an expensive commit the way it used to before
+    /// `use_low_encrypt_work_factor` - full-snapshot re-encryption at the
+    /// now-low work factor is cheap (a few ms, not proportional to what
+    /// changed either way) - measured via this module's own tests.
     pub fn write_secrets(&self, cfg: &AppConfig) -> Result<(), String> {
         if self.matches(cfg) {
             return Ok(());
@@ -219,9 +229,12 @@ impl SecretVault {
 
 /// Loads the vault's unlock key from `path`, generating and persisting a
 /// fresh random one on first run. Not a passphrase a human ever sees or
-/// types - already-uniform 32 random bytes, so no KDF stretching step is
-/// needed on top (unlike `Builder::with_argon2`, which exists for actual
-/// human-typed passwords).
+/// types - already-uniform 32 random bytes, so no *extra* KDF stretching of
+/// this key itself is needed (unlike `Builder::with_argon2`, which exists
+/// for actual human-typed passwords). Stronghold still applies its own
+/// file-level work-factor KDF on top regardless of key strength unless told
+/// otherwise - see `use_low_encrypt_work_factor`'s doc comment for why that
+/// mattered anyway.
 fn load_or_create_key(path: &Path) -> Result<Vec<u8>, String> {
     if let Ok(existing) = std::fs::read(path) {
         if existing.len() == 32 {
@@ -263,6 +276,34 @@ mod tests {
         cfg.sharing.flickr.oauth_token = format!("oauth-token-{suffix}");
         cfg.sharing.flickr.oauth_token_secret = format!("oauth-token-secret-{suffix}");
         cfg
+    }
+
+    /// Locks in `use_low_encrypt_work_factor`'s whole reason for existing:
+    /// without it (and `open_in`'s one-time migration resave), reopening an
+    /// existing vault measured at 40+ seconds in an unoptimized `cargo
+    /// tauri dev` build - Stronghold's default file-level work factor is
+    /// tuned for a weak, human-typed password, and applies unconditionally
+    /// regardless of how strong the key actually is. 5s is a generous
+    /// threshold (the real fix lands well under 1s) chosen to stay stable
+    /// on a loaded CI machine while still catching a real regression back
+    /// to the default work factor, which would blow past it by 10x+.
+    #[test]
+    fn reopening_an_already_migrated_vault_is_fast() {
+        let dir = test_dir("reopen-speed");
+        let vault = SecretVault::open_in(&dir).unwrap();
+        vault.write_secrets(&sample_cfg("speed")).unwrap();
+        drop(vault);
+
+        let t0 = std::time::Instant::now();
+        drop(SecretVault::open_in(&dir).unwrap());
+        let elapsed = t0.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "reopening an existing vault took {elapsed:?} - expected well under 1s; \
+             the low-work-factor migration in `open_in` may have regressed"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -314,10 +355,11 @@ mod tests {
     fn write_secrets_is_a_true_no_op_when_nothing_changed() {
         // `config::save` calls `write_secrets` on every save, including
         // ones that never touch credentials (theme toggle, window
-        // position, ...) - it must skip the ~1s snapshot commit in that
-        // case rather than paying it on every unrelated preference change.
-        // Can't measure the timing skip directly in a unit test, but can
-        // assert the vault's on-disk snapshot file is untouched.
+        // position, ...) - it must skip re-committing the snapshot in that
+        // case rather than doing a pointless disk write on every unrelated
+        // preference change. Asserts the on-disk snapshot file is
+        // untouched (1.1s sleep to clear typical 1s filesystem mtime
+        // granularity, unrelated to how fast the commit itself now is).
         let dir = test_dir("no-op-write");
         let vault = SecretVault::open_in(&dir).unwrap();
         let cfg = sample_cfg("d");
