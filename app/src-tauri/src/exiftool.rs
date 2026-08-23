@@ -38,6 +38,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::flatpak::host_command_tokio;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum MetadataPolicy {
@@ -101,7 +103,7 @@ pub fn build_exiftool_args(policy: MetadataPolicy, source: Option<&Path>, target
 /// `run_exiftool_capture_stdout` (`rotate.rs`'s orientation read, which needs
 /// the queried tag's value back).
 async fn run_exiftool_output(exiftool_path: &str, args: &[String]) -> Result<std::process::Output, String> {
-    let child = tokio::process::Command::new(exiftool_path)
+    let child = host_command_tokio(exiftool_path)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

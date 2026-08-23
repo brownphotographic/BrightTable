@@ -1,0 +1,146 @@
+id: io.github.brownphotographic.BrightTable
+runtime: org.gnome.Platform
+runtime-version: "50"
+sdk: org.gnome.Sdk
+command: brighttable
+
+# GNOME Sdk//50 doesn't declare a version= remap for the
+# org.freedesktop.Sdk.Extension extension point (confirmed via
+# `flatpak info --show-metadata org.gnome.Sdk//50`), so plain `sdk-extensions:
+# [org.freedesktop.Sdk.Extension.rust-stable, ...]` entries resolve against
+# branch "50" by default - which Flathub has never published these
+# extensions under (only under freedesktop-sdk's own year.month branches,
+# e.g. 25.08; confirmed via `flatpak remote-ls flathub`). org.gnome.Sdk//50
+# is itself built against freedesktop-sdk 25.08 (see its
+# org.freedesktop.Platform.GL/.Timezones/etc extension points, which do
+# declare `version = 25.08`), so pinning that branch explicitly here is the
+# correct, ABI-matching fix rather than a workaround.
+add-build-extensions:
+  org.freedesktop.Sdk.Extension.rust-stable:
+    directory: lib/sdk/rust-stable
+    version: "25.08"
+  org.freedesktop.Sdk.Extension.node22:
+    directory: lib/sdk/node22
+    version: "25.08"
+
+# Build-time only - this build compiles the app from source inside
+# flatpak-builder's own sandbox (against the runtime's own toolchain/glibc,
+# not whatever host ran `flatpak-builder`), which is the whole point: unlike
+# the AppImage build (see ../README.md's "Building a distributable AppImage"
+# section), the resulting binary's glibc-symbol floor is the *runtime's* own
+# glibc, identical for every user regardless of which machine built it.
+#
+# --share=network here is an explicit, deliberate trade-off: `cargo`/`npm`
+# resolve crates.io/the npm registry live during the build, rather than this
+# manifest vendoring every dependency offline via flatpak-cargo-generator/
+# flatpak-node-generator (Flathub's own requirement for submitted apps).
+# Fine for self-distribution; revisit with real dependency vendoring before
+# ever submitting this to Flathub.
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node22/bin
+  build-args:
+    - --share=network
+  env:
+    CARGO_HOME: /run/build/brighttable/cargo
+
+finish-args:
+  # Display / input
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # In-app video playback (open_default.rs bypasses this for the *default*
+  # player, but WebKitGTK's own embedded <video> still needs it for anything
+  # played inline)
+  - --socket=pulseaudio
+  # GStreamer/PipeWire's client library requests realtime thread-scheduling
+  # priority (SCHED_RR) for its audio thread at media-pipeline init time -
+  # which WebKitGTK does eagerly on startup, before any <audio>/<video> is
+  # ever played. Sandboxed apps lack CAP_SYS_NICE for this directly, so
+  # PipeWire's normal fallback is org.freedesktop.portal.Realtime - but that
+  # portal's implementation hit a kernel ioctl bug on the dev/test machine
+  # (`PIDFD_GET_PID_NAMESPACE ioctl failed: Inappropriate ioctl for device`,
+  # confirmed via `journalctl --user -f | grep -i portal`), which the app
+  # treated as fatal rather than falling back to normal priority - a hard
+  # crash on every launch, `GDBus.Error:org.freedesktop.portal.Error.
+  # NotAllowed: This call is not available inside the sandbox`, with no
+  # further trace even with G_DBUS_DEBUG=call forwarded via `flatpak run
+  # --env=`. Granting direct rtkit access sidesteps the portal path
+  # entirely, rather than depending on that specific portal backend/kernel
+  # combination working.
+  - --system-talk-name=org.freedesktop.RealtimeKit1
+
+  # Photo library access. Deliberately --filesystem=home rather than
+  # --filesystem=host: covers every library that lives under $HOME (the
+  # common case) without the broader, more-scrutinized host grant. Libraries
+  # mounted outside $HOME (this app's NFS-share deployment pattern - see
+  # requirements/requirements.md §7.19-7.21) need an explicit extra grant the
+  # user adds themselves - see README.md's Flatpak section for the Flatseal/
+  # `flatpak override` instructions.
+  - --filesystem=home
+
+  # Read-only visibility into natively-installed apps' .desktop entries, so
+  # apps.rs's editor-detection scan of /usr/share/applications and
+  # /usr/local/share/applications isn't blind under --filesystem=home alone
+  # (the sandbox's own /usr is the *runtime's*, not the host's). Flatpak's
+  # own exports (~/.local/share/flatpak/exports, /var/lib/flatpak/exports)
+  # are already visible to every sandboxed app with no grant needed.
+  - --filesystem=host-os:ro
+  # Snap's desktop-export dir isn't under /usr, so --filesystem=host-os
+  # doesn't reach it - needs its own explicit grant.
+  - --filesystem=/var/lib/snapd/desktop/applications:ro
+
+  # flatpak-spawn --host - lets this app launch host editors/CLI tools
+  # (ART, RawTherapee, exiftool, CUPS's lp/lpstat/lpoptions, xdg-open) from
+  # inside the sandbox. See src-tauri/src/flatpak.rs for the wrapper this
+  # backs, and every call site it's used from.
+  - --talk-name=org.freedesktop.Flatpak
+
+  # "Show in File Manager" (reveal.rs) - the primary org.freedesktop.FileManager1
+  # D-Bus call, not its xdg-open fallback (that goes through flatpak-spawn above).
+  - --talk-name=org.freedesktop.FileManager1
+  # Suspend-inhibit guard around long NFS operations (suspend_guard.rs) -
+  # logind lives on the system bus, hence --system-talk-name not --talk-name.
+  - --system-talk-name=org.freedesktop.login1
+
+modules:
+  - name: brighttable
+    buildsystem: simple
+    build-commands:
+      # Frontend
+      - npm ci
+      - npm run build
+      # Backend - deliberately `cargo build`, not `cargo tauri build`: the
+      # tauri-cli's own bundling (AppImage/deb/etc.) isn't needed here, only
+      # the compiled binary, which this module installs itself below.
+      #
+      # --features tauri/custom-protocol is not optional: tauri's own
+      # build.rs (see `fn main` in the `tauri` crate) sets `dev =
+      # !custom_protocol` and emits `cargo:dev=$dev`, which is what
+      # `#[cfg(dev)]` in tauri's webview manager checks to choose `devUrl`
+      # (tauri.conf.json's `http://localhost:1420`) vs. `frontendDist`.
+      # `cargo tauri build` enables this feature for you; a bare `cargo
+      # build` doesn't - regardless of --release - so without it the
+      # compiled binary tries to load the Vite dev server on startup and
+      # fails with "Could not connect to localhost: Connection refused"
+      # (confirmed live in a Flatpak test container, 2026-08-22).
+      - cargo build --release --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol
+      - install -Dm755 src-tauri/target/release/app /app/bin/brighttable
+      - install -Dm644 flatpak/io.github.brownphotographic.BrightTable.desktop /app/share/applications/io.github.brownphotographic.BrightTable.desktop
+      - install -Dm644 src-tauri/icons/icon.png /app/share/icons/hicolor/512x512/apps/io.github.brownphotographic.BrightTable.png
+      - install -Dm644 flatpak/io.github.brownphotographic.BrightTable.metainfo.xml /app/share/metainfo/io.github.brownphotographic.BrightTable.metainfo.xml
+    sources:
+      # Builds straight from the working tree - simplest for local iteration,
+      # but embeds whatever's on disk (uncommitted changes included) and is
+      # not reproducible. For a real tagged release, switch this to
+      # `type: git, url: https://github.com/brownphotographic/BrightTable.git,
+      # tag: v<version>` instead.
+      - type: dir
+        path: ..
+        skip:
+          - node_modules
+          - dist
+          - src-tauri/target
+          - flatpak-build
+          - flatpak-repo
+          - .git

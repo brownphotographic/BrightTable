@@ -26,7 +26,12 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     watch: {
-      ignored: ['**/src-tauri/**'],
+      // flatpak-build/flatpak-repo/.flatpak-builder are flatpak-builder's own
+      // regenerated build/sandbox state (see .gitignore) - flatpak-build in
+      // particular contains a mirrored /run with circular symlinks
+      // (/run/udev/watch/*) that crash chokidar with ELOOP if it's not
+      // excluded.
+      ignored: ['**/src-tauri/**', '**/flatpak-build/**', '**/flatpak-repo/**', '**/.flatpak-builder/**'],
     },
   },
 })

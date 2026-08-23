@@ -36,9 +36,10 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde::{Deserialize, Serialize};
+
+use crate::flatpak::{host_command, host_command_tokio};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -266,7 +267,7 @@ pub fn launch_app(choice: &AppChoice, path: &Path) -> Result<(), String> {
 /// exit code as this command's own failure.
 pub async fn launch_app_and_wait(choice: &AppChoice, path: &Path) -> Result<(), String> {
     let (program, args) = build_argv(choice, path)?;
-    let mut child = tokio::process::Command::new(&program)
+    let mut child = host_command_tokio(&program)
         .args(&args)
         .spawn()
         .map_err(|e| format!("Couldn't launch {}: {e}", choice.name))?;
@@ -275,7 +276,7 @@ pub async fn launch_app_and_wait(choice: &AppChoice, path: &Path) -> Result<(), 
 }
 
 fn spawn(program: &str, args: &[String], name: &str) -> Result<(), String> {
-    Command::new(program)
+    host_command(program)
         .args(args)
         .spawn()
         .map(|_| ())

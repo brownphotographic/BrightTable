@@ -28,6 +28,7 @@
 //! the parent directory - no selection, but the folder still opens.
 
 use std::path::Path;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::process::Command;
 
 #[cfg(target_os = "linux")]
@@ -52,7 +53,10 @@ pub async fn reveal(path: &Path) -> Result<(), String> {
         }
     }
     let parent = path.parent().unwrap_or(path);
-    Command::new("xdg-open").arg(parent).spawn().map_err(|e| format!("Couldn't open a file manager: {e}"))?;
+    crate::flatpak::host_command("xdg-open")
+        .arg(parent)
+        .spawn()
+        .map_err(|e| format!("Couldn't open a file manager: {e}"))?;
     Ok(())
 }
 

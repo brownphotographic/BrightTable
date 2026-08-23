@@ -61,6 +61,9 @@ use std::time::Duration;
 use image::ImageDecoder;
 use serde::{Deserialize, Serialize};
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::flatpak::host_command_tokio;
+
 /// Bounds a single CUPS CLI invocation (`lpstat`/`lpoptions`/`lp`) - all of
 /// these are near-instant local queries/spool submissions, not something
 /// that waits for the physical print to finish, so this stays short, same
@@ -531,7 +534,7 @@ pub fn parse_ppd_paper_sizes(ppd: &str) -> Vec<PaperSize> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 async fn run_cli(program: &str, args: &[&str]) -> Result<String, String> {
-    let child = tokio::process::Command::new(program)
+    let child = host_command_tokio(program)
         .args(args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

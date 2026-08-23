@@ -61,12 +61,19 @@ pub struct SecretVault {
 }
 
 impl SecretVault {
-    /// Opens (creating on first run) the vault in the app's local data dir.
-    pub fn open(app: &AppHandle) -> Result<Self, String> {
-        let dir = app
-            .path()
-            .app_local_data_dir()
-            .map_err(|e| format!("Could not resolve app local data dir: {e}"))?;
+    /// Opens (creating on first run) the vault. `share_dir` is `Some` only
+    /// when the user has explicitly opted into `AppConfig::share_vault` -
+    /// see its doc comment and this module's own comment above for why that
+    /// isn't the default - in which case the vault lives there instead of
+    /// the OS-local app data dir.
+    pub fn open(app: &AppHandle, share_dir: Option<&Path>) -> Result<Self, String> {
+        let dir = match share_dir {
+            Some(dir) => dir.to_path_buf(),
+            None => app
+                .path()
+                .app_local_data_dir()
+                .map_err(|e| format!("Could not resolve app local data dir: {e}"))?,
+        };
         Self::open_in(&dir)
     }
 
@@ -100,7 +107,44 @@ impl SecretVault {
     fn get(&self, key: &[u8]) -> Option<String> {
         self.client.store().get(key).ok().flatten().and_then(|bytes| String::from_utf8(bytes).ok())
     }
+}
 
+/// Best-effort copies the vault's on-disk files (`secrets.key` +
+/// `secrets.stronghold`) from `from_dir` into `to_dir`, without overwriting
+/// anything already there - if `to_dir` already holds its own vault (shared
+/// there previously by another install), that one is left alone and picked
+/// up as-is on the next launch rather than being clobbered by this session's.
+/// Only ever called right after the user opts into `AppConfig::share_vault`
+/// (see `config::set_share_vault`/`set_settings_folder`); the running
+/// session's already-open vault is untouched either way - this only prepares
+/// the destination for the *next* launch, since swapping the live Stronghold
+/// instance mid-session isn't worth the complexity for a settings toggle.
+pub fn relocate(from_dir: &Path, to_dir: &Path) -> Result<(), String> {
+    if from_dir == to_dir {
+        return Ok(());
+    }
+    std::fs::create_dir_all(to_dir).map_err(|e| format!("Could not create vault folder: {e}"))?;
+    if to_dir.join("secrets.stronghold").exists() {
+        return Ok(());
+    }
+    for name in ["secrets.key", "secrets.stronghold"] {
+        let src = from_dir.join(name);
+        if src.exists() {
+            std::fs::copy(&src, to_dir.join(name)).map_err(|e| format!("Could not copy {name}: {e}"))?;
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let key_path = to_dir.join("secrets.key");
+        if key_path.exists() {
+            let _ = std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+    Ok(())
+}
+
+impl SecretVault {
     fn set(&self, key: &[u8], value: &str) -> Result<(), String> {
         let store = self.client.store();
         if value.is_empty() {

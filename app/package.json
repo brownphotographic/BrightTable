@@ -10,7 +10,10 @@
     "preview": "vite preview",
     "bump-version": "node scripts/bump-version.mjs",
     "gen-third-party-licenses": "node scripts/gen-third-party-licenses.mjs",
-    "build:appimage": "npm run bump-version && npm run gen-third-party-licenses && NO_STRIP=1 cargo tauri build --bundles appimage && node scripts/fix-appimage-gstreamer.mjs"
+    "build:appimage": "npm run bump-version && npm run gen-third-party-licenses && npm run build:appimage:only",
+    "build:appimage:only": "NO_STRIP=1 cargo tauri build --bundles appimage && node scripts/fix-appimage-bundled-gl-libs.mjs && node scripts/fix-appimage-gstreamer.mjs",
+    "build:flatpak": "npm run bump-version && npm run gen-third-party-licenses && npm run build:flatpak:only",
+    "build:flatpak:only": "node scripts/build-flatpak.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.5",

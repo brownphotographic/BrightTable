@@ -57,7 +57,7 @@ pub fn save_library_config(
         guard.library = cfg;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    config::save(&app, &snapshot, state.secret_vault.get())?;
     Ok(snapshot)
 }
 
@@ -72,7 +72,7 @@ pub fn save_shortcuts(
         guard.shortcuts = shortcuts;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    config::save(&app, &snapshot, state.secret_vault.get())?;
     Ok(snapshot)
 }
 
@@ -87,7 +87,7 @@ pub fn save_smart_stack_settings(
         guard.smart_stack = settings;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    config::save(&app, &snapshot, state.secret_vault.get())?;
     Ok(snapshot)
 }
 
@@ -102,7 +102,7 @@ pub fn save_window_controls_position(
         guard.window_controls_position = position;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    config::save(&app, &snapshot, state.secret_vault.get())?;
     Ok(snapshot)
 }
 
@@ -117,8 +117,32 @@ pub fn save_theme_mode(
         guard.theme_mode = mode;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    config::save(&app, &snapshot, state.secret_vault.get())?;
     Ok(snapshot)
+}
+
+#[tauri::command]
+pub fn save_settings_folder(
+    app: AppHandle,
+    state: State<AppState>,
+    folder: Option<String>,
+) -> Result<AppConfig, String> {
+    let current = state.config.lock().unwrap().clone();
+    let next = config::set_settings_folder(&app, &current, folder, state.secret_vault.get())?;
+    *state.config.lock().unwrap() = next.clone();
+    Ok(next)
+}
+
+#[tauri::command]
+pub fn save_share_vault(
+    app: AppHandle,
+    state: State<AppState>,
+    share: bool,
+) -> Result<AppConfig, String> {
+    let current = state.config.lock().unwrap().clone();
+    let next = config::set_share_vault(&app, &current, share, state.secret_vault.get())?;
+    *state.config.lock().unwrap() = next.clone();
+    Ok(next)
 }
 
 #[tauri::command]
@@ -139,7 +163,7 @@ pub fn set_raw_overrides(
         }
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    config::save(&app, &snapshot, state.secret_vault.get())?;
     Ok(snapshot)
 }
 
@@ -154,7 +178,7 @@ pub fn save_applications_config(
         guard.applications = cfg;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    config::save(&app, &snapshot, state.secret_vault.get())?;
     Ok(snapshot)
 }
 
@@ -1361,7 +1385,7 @@ pub fn save_import_settings(
         guard.import = settings;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    config::save(&app, &snapshot, state.secret_vault.get())?;
     Ok(snapshot)
 }
 
@@ -1858,7 +1882,7 @@ pub fn save_sharing_config(app: AppHandle, state: State<AppState>, cfg: SharingC
         guard.sharing = cfg;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    config::save(&app, &snapshot, state.secret_vault.get())?;
     Ok(snapshot)
 }
 
@@ -1911,7 +1935,7 @@ pub async fn flickr_complete_auth(
         guard.sharing.flickr.connected = true;
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    config::save(&app, &snapshot, state.secret_vault.get())?;
     Ok(snapshot)
 }
 
@@ -1922,7 +1946,7 @@ pub fn flickr_disconnect(app: AppHandle, state: State<AppState>) -> Result<AppCo
         guard.sharing.flickr = Default::default();
         guard.clone()
     };
-    config::save(&app, &snapshot, state.secret_vault.as_ref())?;
+    config::save(&app, &snapshot, state.secret_vault.get())?;
     Ok(snapshot)
 }
 

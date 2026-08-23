@@ -58,25 +58,208 @@ _System requirements:_
 
 - Designed and tested on GNU/Linux only. While it technically could be extended to Mac or Windows, I don't have either platform to test and to be honest life is way better on Linux. 
 - Requires Node.js, Rust/Cargo, and the Tauri CLI (`cargo install tauri-cli`) installed.
+- To use the executable AppImage, your distro needs glibc 2.39 or newer (check yours with `ldd --version`). As a reference point, that's:
+  - Ubuntu 24.04 LTS or later (or downstream variants, e.g. Linux Mint 22+, Pop!_OS 24.04+)
+  - Debian 13 "trixie" or later (Debian 12 doesn't qualify — its glibc is frozen at 2.36)
+  - Fedora 40 or later
+  - Rolling-release distros (Arch, openSUSE Tumbleweed) are effectively always ahead of this floor
+- Running the AppImage itself needs no dev packages or kernel headers - those are only relevant if you're building from source yourself (see Developers below). One separate gotcha: some newer distros (Ubuntu 22.04+, Fedora) dropped `libfuse2` from the default install, which AppImages need to mount themselves — install `libfuse2`, or run the AppImage with `--appimage-extract-and-run` if you'd rather not. If you get stuck, an LLM (e.g. Claude, ChatGPT) can help you troubleshoot and get you going.
+- A Flatpak build is also available as a second, sandboxed distribution option — see "Building a Flatpak" under Developers below if you'd rather build one yourself than trust the pre-built AppImage. It needs a couple of one-time permission grants beyond the AppImage's "just works" default (documented there), since this app talks to external editors and arbitrary library paths that a stock sandbox wouldn't otherwise see.
 
 _How to use:_
-
 - Executable: A stable AppImmage version is included here [https://github.com/brownphotographic/BrightTable/releases/tag/production](https://github.com/brownphotographic/BrightTable/releases/tag/production). I recommend using GearLever to manage your AppImages.
 
 _Developers:_
 
-- Run in dev mode (hot-reloading frontend + native window): `cd BrightTable && cargo tauri dev`
-- To build a distributable AppImage: 
-  - navigate to `/app/`
-  - run `npm run build:appimage`
-  - script will ask which Immich server version it was tested against, and the version of the app you would like to make this:
-    - Convention: 0.0.0 - First.Second.Third
-    - First: Sweeping changes to the app
-    - Second: New Features. Number keeps incrementing so e.g. you can have a large middle number e.g 1.101.0 
-    - Third: Bug fix
-  - Output lands at `BrightTable/src-tauri/target/release/bundle/appimage/BrightTable_<version>_amd64.AppImage`.
+**Prerequisites**
 
-- If you tested this build against a specific Immich server version, set `TESTED_IMMICH_VERSION` so the version bump also updates the About dialog's compatibility line, e.g. `TESTED_IMMICH_VERSION=3.0.1 npm run build:appimage`. Still update [COMPATIBILITY.md](COMPATIBILITY.md) by hand — that isn't automated.
+- [Rust via rustup](https://rustup.rs) — Debian/Ubuntu's packaged `rustc` is too old for Tauri 2.x, so use rustup even on Linux.
+- Node.js 20+ (Debian/Ubuntu's apt package is often too old — use [nvm](https://github.com/nvm-sh/nvm) or your distro's Node setup instead).
+- Tauri CLI: `cargo install tauri-cli --version "^2"`.
+- Linux system packages (Debian/Ubuntu names — adjust for your distro):
+  ```bash
+  sudo apt update
+  sudo apt install -y libwebkit2gtk-4.1-dev libglib2.0-dev build-essential curl wget file \
+    libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
+  ```
+
+**Dev mode** (hot-reloading frontend + native window):
+```bash
+cd app && cargo tauri dev
+```
+
+**Building a distributable AppImage**
+
+An AppImage bundles WebKitGTK and its dependency tree (glib, codec libs, etc.) straight from
+whatever machine you build on, and links all of it — including your own compiled binary — against
+that machine's glibc. glibc's forward-compatibility guarantee only runs one way: a binary built
+against glibc *X* runs on any host with glibc *X or newer*, never older. So **the distro/version you
+build on becomes the oldest distro your AppImage will run on** — build on something newer than that
+and every user on an older system hits `GLIBC_X.YY' not found` errors, even though nothing about
+their setup is actually broken.
+
+Pick a build host old enough to cover whoever you want to support, then either build on it directly
+or spin up a throwaway container for it (recommended, so it doesn't disturb your day-to-day machine).
+[distrobox](https://distrobox.it) is the easiest way to do this on Linux since it shares your home
+directory with the container, so `cargo`/`npm` caches persist across runs:
+
+```bash
+distrobox create --name brighttable-build --image ubuntu:24.04
+distrobox enter brighttable-build
+# inside the container: install the prerequisites above, then:
+cd /path/to/BrightTable/app
+npm install
+npm run build:appimage
+```
+
+(Swap `ubuntu:24.04` for whatever base you want as your compatibility floor — e.g. `debian:12` goes
+further back at the cost of an older bundled WebKitGTK; see the Compatibility section under
+Troubleshooting below for the actual trade-off.)
+
+**Gotcha: `cargo-tauri: ... GLIBC_2.4X' not found (required by /home/you/.cargo/bin/cargo-tauri)`
+when running `cargo tauri build` *inside* the container.** This is the same glibc mismatch again,
+just hitting your own tooling instead of the shipped AppImage. distrobox shares your home directory
+with the container (that's what makes `cargo`/`npm` caches persist across runs), which also means
+`~/.cargo/bin` is shared — if `cargo install tauri-cli` was ever run on a newer host (e.g. your
+day-to-day Fedora machine), that binary is linked against *that* host's glibc, and your older
+container can't execute it. Fix by reinstalling it from inside the container, so it gets rebuilt
+against the container's (older) glibc:
+```bash
+cargo install tauri-cli --version "^2" --force
+```
+This is safe to do from inside the container — the rebuilt binary needs only the container's older
+glibc, so it still runs fine back on your newer host afterwards (older-build-runs-on-newer-host always
+works, never the reverse). If the build itself misbehaves after this rather than just failing to
+launch, `src-tauri/target/` may also have stale artifacts from a newer host sharing the same home
+directory — `cargo clean` inside the container, or point `CARGO_TARGET_DIR` at a container-only path,
+to rule that out.
+
+- `npm run build:appimage` runs the full release pipeline: prompts for the app version and the
+  Immich server version this build was tested against (or reads `APP_VERSION`/`TESTED_IMMICH_VERSION`
+  from the env non-interactively), bumps versions, regenerates `THIRD-PARTY-LICENSES.md`, then builds.
+  Version convention: `First.Second.Third` — First = sweeping changes, Second = new features
+  (keeps incrementing, e.g. `1.101.0` is fine), Third = bug fixes.
+- `npm run build:appimage:only` skips straight to `cargo tauri build --bundles appimage` + the
+  GStreamer AppRun fix, reusing whatever version is already in `Cargo.toml` — no prompts, nothing
+  else touched. Use this while iterating/debugging the build itself (e.g. testing a new build host)
+  so you're not re-answering prompts or regenerating the license file every run. It's still a real
+  `cargo tauri build`, so the first run in a fresh environment compiles the whole Rust dependency
+  tree; later runs are incremental as long as `src-tauri/target` persists.
+- Set `TESTED_IMMICH_VERSION` (e.g. `TESTED_IMMICH_VERSION=3.0.1 npm run build:appimage`) so the
+  version bump also updates the About dialog's compatibility line. Still update
+  [COMPATIBILITY.md](COMPATIBILITY.md) by hand afterwards — that part isn't automated.
+- Output lands at `app/src-tauri/target/release/bundle/appimage/BrightTable_<version>_amd64.AppImage`.
+
+**Building a Flatpak**
+
+A second, additive distribution option (the AppImage above stays the default/simplest path) — a sandboxed
+build for anyone who'd rather not run an app with full, unprompted host access. Unlike the AppImage, this
+compiles from source *inside* `flatpak-builder`'s own sandbox, against the GNOME runtime/SDK's own toolchain and glibc — so the whole "pick an old enough build host" dance the AppImage needs doesn't apply here; the result's compatibility floor is whatever GNOME runtime version it's built against, the same for every user regardless of which machine ran the build.
+
+One-time host setup (this runs on your actual host, *not* inside the AppImage's distrobox container —
+`flatpak-builder` needs its own sandboxing tools and the runtime/SDK installed via `flatpak install`, an
+unrelated concern from that container's glibc-floor purpose):
+```bash
+sudo apt install -y flatpak flatpak-builder   # or your distro's equivalent
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install -y flathub org.gnome.Platform//50 org.gnome.Sdk//50 \
+  org.freedesktop.Sdk.Extension.rust-stable//25.08 org.freedesktop.Sdk.Extension.node22//25.08
+```
+The two SDK extensions need that explicit `//25.08` branch — `org.gnome.Sdk//50` doesn't declare an
+automatic version remap for them (confirmed via `flatpak info --show-metadata org.gnome.Sdk//50`), and
+Flathub only publishes them under freedesktop-sdk's own year.month branches, never under GNOME's "50". `50`
+happens to be built against freedesktop-sdk `25.08` (visible in its own `org.freedesktop.Platform.GL`/
+`.Timezones` extension points), so that's the correct, ABI-matching branch to pin — not a workaround. The
+manifest's `add-build-extensions` block pins the same branch for the actual build; if a future GNOME runtime
+bump changes this, `flatpak info --show-metadata org.gnome.Sdk//<version>` is how to find the right one
+again.
+
+Then, from `app/`:
+```bash
+npm run build:flatpak
+```
+Output lands at `app/src-tauri/target/release/bundle/flatpak/BrightTable_<version>_x86_64.flatpak`.
+
+**Installing it:**
+
+1. Install the bundle:
+   ```bash
+   flatpak install --user src-tauri/target/release/bundle/flatpak/BrightTable_<version>_x86_64.flatpak
+   ```
+   (Drop `--user` for a system-wide install instead, which needs root via polkit. Double-clicking the
+   `.flatpak` file in Files/GNOME Software does a system-wide install too, same end result.)
+
+2. **Grant network access — required, not optional.** The manifest's `finish-args` doesn't include
+   `--share=network` (only `build-options.build-args` does, and that only applies during the
+   `flatpak-builder` build itself — it has zero effect on the installed app's runtime permissions).
+   Without this grant, BrightTable can't reach your Immich server at all; you'll get connection errors
+   the moment you try to configure a library in Preferences. Either:
+   ```bash
+   flatpak override --user --share=network io.github.brownphotographic.BrightTable
+   ```
+   or in [Flatseal](https://github.com/tingping/flatseal): select **BrightTable** from the app list,
+   then toggle **Network** on — it's one of the top-level switches on the app's permissions page,
+   not nested under Filesystem/Session Bus/System Bus/Sockets.
+
+3. Confirm it installed and check which kind:
+   ```bash
+   flatpak info io.github.brownphotographic.BrightTable   # shows "Installation: user" or "Installation: system"
+   ```
+
+4. Launch it — either from your app menu as "BrightTable", or directly from a terminal:
+   ```bash
+   flatpak run io.github.brownphotographic.BrightTable
+   ```
+
+5. If your photo library lives outside `$HOME` (e.g. an NFS-mounted External Library), grant that path
+   too — same CLI-override/Flatseal pattern as step 2, see "What this actually does under the hood"
+   below for the exact command.
+
+**Updating after a rebuild:** this is a local bundle install with no remote to track, so `flatpak update`
+won't find a newer build on its own — reinstall over the old one instead (same `--user`/system choice as
+above, matching however it's currently installed):
+```bash
+flatpak install --user --reinstall src-tauri/target/release/bundle/flatpak/BrightTable_<version>_x86_64.flatpak
+```
+
+**Uninstalling:**
+```bash
+flatpak uninstall io.github.brownphotographic.BrightTable
+```
+
+*What this actually does under the hood* — the manifest lives at
+[`flatpak/io.github.brownphotographic.BrightTable.yml`](app/flatpak/io.github.brownphotographic.BrightTable.yml).
+Worth reading before you build, since it grants real permissions on your behalf:
+- `--filesystem=home` for your photo library — deliberately not the broader `--filesystem=host`. If your
+  library (or an NFS-mounted "External Library", per this app's own Immich pattern) lives outside `$HOME`,
+  the sandbox can't see it until you grant that specific path yourself, either via
+  [Flatseal](https://github.com/tingping/flatseal) (Filesystem tab → add the path) or:
+  ```bash
+  flatpak override --user --filesystem=/path/to/your/library io.github.brownphotographic.BrightTable
+  ```
+- `--talk-name=org.freedesktop.Flatpak` — lets the app launch host editors/CLI tools (ART, RawTherapee,
+  exiftool, CUPS's `lp`/`lpstat`, `xdg-open`) via `flatpak-spawn --host` from inside the sandbox, since a
+  sandboxed process can't exec a host binary directly (it doesn't share the host's library namespace). See
+  `app/src-tauri/src/flatpak.rs` for the wrapper this backs.
+- `--filesystem=host-os:ro` plus an explicit read-only grant for Snap's desktop-export directory — so the
+  app's editor auto-detection (which scans `.desktop` files under `/usr/share/applications` etc.) still
+  finds natively-installed editors. **Known limitation:** even with this, editors installed somewhere
+  unusual may not show up in the auto-detected list the way they do in the AppImage build — use
+  Preferences → Applications → "Other application…" to browse to it directly, which always works
+  regardless of sandboxing.
+- `--talk-name=org.freedesktop.FileManager1` and `--system-talk-name=org.freedesktop.login1` for "Show in
+  File Manager" and the suspend-inhibit guard around long NFS operations, respectively — both cross the
+  sandbox over D-Bus rather than `flatpak-spawn`, so they just need the permission grant, nothing else.
+
+*Trade-off, stated plainly:* the build uses `--share=network` to let `cargo`/`npm` resolve dependencies
+live during the `flatpak-builder` build, rather than vendoring every dependency offline the way a Flathub
+submission would require. Fine for building your own copy; would need real dependency vendoring
+(`flatpak-cargo-generator`/`flatpak-node-generator`) before this could ever go on Flathub.
+
+*Also worth knowing:* part of the motivation for adding this was the hope that a Flatpak's own bundled
+WebKitGTK (from the GNOME runtime, likely a different/newer version than whatever your AppImage build host
+shipped) sidesteps WebKitGTK-version-specific rendering bugs the AppImage can hit — this hasn't been
+confirmed either way and should be treated as speculative until tested on an actual affected machine.
 
 ## Troubleshooting:
 
@@ -84,6 +267,16 @@ _Compatibility_
 
 - Not sure if your Immich server version is supported? See [COMPATIBILITY.md](COMPATIBILITY.md) for which Immich version each BrightTable release has actually been tested against.
 - On some distros with very new glibc/binutils, the bundled `linuxdeploy` tool's `strip` binary can't parse newer libraries and fails the build — `build:appimage` already sets `NO_STRIP=1` to work around this.
+- **Seeing `libc.so.6: version GLIBC_2.4X' not found` (or similar) running the AppImage?** That means it was built on a newer distro than yours — see "Building a distributable AppImage" above for why, and rebuild on an older base (e.g. `ubuntu:24.04` or `debian:12` in a container) to widen compatibility. Roughly:
+
+  | Build host | glibc | Runs on |
+  |---|---|---|
+  | Ubuntu 24.04 LTS | 2.39 | Ubuntu 24.04+, Debian 13+, Fedora 40+ |
+  | Debian 12 "bookworm" | 2.36 | + Ubuntu 22.04, Debian 12, Fedora 37+ |
+
+  Going further back than Debian 12 isn't recommended — WebKitGTK gets rebased to newer upstream releases via each distro's normal security updates, so the bundled engine isn't frozen at whatever the build host originally shipped, but it does still start from that base.
+
+- **AppImage launches (window opens) but shows a blank white page, with the terminal printing `Could not create default EGL display: EGL_BAD_PARAMETER. Aborting...`?** This is a different bug from the glibc one above, and no WebKit/GDK env var fixes it (`WEBKIT_DISABLE_COMPOSITING_MODE`, `WEBKIT_DISABLE_DMABUF_RENDERER`, `GDK_BACKEND=x11`, `GDK_GL=disable` all had zero effect when this was actually hit). Root cause: `linuxdeploy`'s GTK plugin bundled `libwayland-egl.so.1` — the Wayland↔EGL glue library — straight from the build host, and the runtime host loads that frozen copy instead of its own matching one, so EGL init fails outright when the two don't negotiate cleanly (hit going from an Ubuntu 24.04 build host to a much newer Fedora 44 runtime host). Like `libEGL`/`libGL`/`libgbm`, this library should never be bundled — it must always come from the runtime host. `build:appimage`/`build:appimage:only` already run `scripts/fix-appimage-bundled-gl-libs.mjs` to strip it from the bundle post-build, so the app falls through to the runtime host's own copy. If a *different* GPU-driver-adjacent library ends up bundled and causes the same symptom, add its filename pattern to `excludePatterns` in that script.
 
 _NFS Permission Errors (Immich + Unraid)_
 Seeing `Permission denied` errors when BrightTable writes metadata over NFS (e.g. Immich + Unraid)?
