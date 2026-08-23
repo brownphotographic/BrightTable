@@ -145,6 +145,7 @@ export type ThemeMode = 'dark' | 'light';
 export interface AppConfig {
   library: LibraryConfig;
   settingsFolder: string | null;
+  shareVault: boolean;
   shortcuts: Record<string, string>;
   smartStack: SmartStackSettings;
   applications: ApplicationsConfig;
@@ -356,6 +357,14 @@ export function saveWindowControlsPosition(position: WindowControlsPosition): Pr
 
 export function saveThemeMode(mode: ThemeMode): Promise<AppConfig> {
   return invoke('save_theme_mode', { mode });
+}
+
+export function saveSettingsFolder(folder: string | null): Promise<AppConfig> {
+  return invoke('save_settings_folder', { folder });
+}
+
+export function saveShareVault(share: boolean): Promise<AppConfig> {
+  return invoke('save_share_vault', { share });
 }
 
 export function setRawOverrides(assetIds: string[], isRaw: boolean): Promise<AppConfig> {

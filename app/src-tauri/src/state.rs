@@ -24,20 +24,26 @@ use crate::io_guard::IoGuard;
 use crate::processing_queue::ProcessingQueue;
 use crate::round_trip::RoundTripWatcher;
 use crate::secure_store::SecretVault;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use sysinfo::System;
 
 pub struct AppState {
     pub config: Mutex<AppConfig>,
     /// The encrypted Stronghold vault backing the Immich/Flickr credential
-    /// fields inside `config` - see `secure_store.rs`. Opened once here
-    /// (not per `config::load`/`save` call) since each open/commit is a
-    /// fixed ~1s cost in a release build (Stronghold's snapshot
-    /// encryption), not something to pay repeatedly across a session.
-    /// `None` if opening it failed (e.g. no writable app-local-data dir) -
-    /// `config::load`/`save` both degrade to config.json-only in that case,
-    /// same as before this vault existed.
-    pub secret_vault: Option<SecretVault>,
+    /// fields inside `config` - see `secure_store.rs`. Opened once (not per
+    /// `config::load`/`save` call) since each open/commit is a fixed ~1s
+    /// cost in a release build (Stronghold's snapshot encryption), not
+    /// something to pay repeatedly across a session - but opened on a
+    /// background thread from `lib.rs`'s `.setup()` rather than inline,
+    /// since that cost is far from fixed in an unoptimized debug build and
+    /// blocking `.setup()` on it blocks the window's first paint too (see
+    /// `lib.rs`'s own comment). Starts empty and is filled in exactly once
+    /// by that thread; every reader just wants "is it ready yet" via
+    /// `.get()`, which degrades to `config::load`/`save`'s existing
+    /// config.json-only fallback (same as before this vault existed, or if
+    /// opening it fails outright - e.g. no writable app-local-data dir)
+    /// until it is.
+    pub secret_vault: Arc<OnceLock<SecretVault>>,
     /// Shared, connection-pooling HTTP client. Reused across every request
     /// (including per-thumbnail fetches) instead of paying a fresh TCP/TLS
     /// handshake per call - this is what makes the Photos grid load fast.
@@ -92,7 +98,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(
         config: AppConfig,
-        secret_vault: Option<SecretVault>,
+        secret_vault: Arc<OnceLock<SecretVault>>,
         edit_queue: Arc<EditQueue>,
         import_queue: Arc<ImportQueue>,
         round_trip: Arc<RoundTripWatcher>,

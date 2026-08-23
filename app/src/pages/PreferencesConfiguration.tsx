@@ -16,7 +16,8 @@
  */
 
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
-import { clearThumbCache, getThumbCacheInfo, type ThumbCacheStats } from '../lib/api';
+import { open } from '@tauri-apps/plugin-dialog';
+import { clearThumbCache, getConfig, getThumbCacheInfo, saveSettingsFolder, saveShareVault, type ThumbCacheStats } from '../lib/api';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useWindowControls } from '../lib/windowControls';
 import { useTheme } from '../lib/theme';
@@ -40,6 +41,12 @@ export default function PreferencesConfiguration() {
   const [confirming, setConfirming] = useState(false);
   const { position, setPosition } = useWindowControls();
   const { themeMode, setThemeMode } = useTheme();
+  const [settingsFolder, setSettingsFolder] = useState<string | null>(null);
+  const [folderLoading, setFolderLoading] = useState(true);
+  const [folderSaving, setFolderSaving] = useState(false);
+  const [folderError, setFolderError] = useState<string | null>(null);
+  const [shareVault, setShareVault] = useState(false);
+  const [vaultSaving, setVaultSaving] = useState(false);
 
   useEffect(() => {
     getThumbCacheInfo()
@@ -48,8 +55,59 @@ export default function PreferencesConfiguration() {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    getConfig()
+      .then((cfg) => {
+        setSettingsFolder(cfg.settingsFolder);
+        setShareVault(cfg.shareVault);
+      })
+      .catch((e) => setFolderError(String(e)))
+      .finally(() => setFolderLoading(false));
+  }, []);
+
   async function onClear() {
     setStats(await clearThumbCache());
+  }
+
+  async function onChooseSettingsFolder() {
+    const picked = await open({ directory: true, title: 'Choose a folder for config.json' });
+    if (!picked || Array.isArray(picked)) return;
+    setFolderSaving(true);
+    setFolderError(null);
+    try {
+      const cfg = await saveSettingsFolder(picked);
+      setSettingsFolder(cfg.settingsFolder);
+    } catch (e) {
+      setFolderError(String(e));
+    } finally {
+      setFolderSaving(false);
+    }
+  }
+
+  async function onUseDefaultSettingsFolder() {
+    setFolderSaving(true);
+    setFolderError(null);
+    try {
+      const cfg = await saveSettingsFolder(null);
+      setSettingsFolder(cfg.settingsFolder);
+    } catch (e) {
+      setFolderError(String(e));
+    } finally {
+      setFolderSaving(false);
+    }
+  }
+
+  async function onToggleShareVault(next: boolean) {
+    setVaultSaving(true);
+    setFolderError(null);
+    try {
+      const cfg = await saveShareVault(next);
+      setShareVault(cfg.shareVault);
+    } catch (e) {
+      setFolderError(String(e));
+    } finally {
+      setVaultSaving(false);
+    }
   }
 
   return (
@@ -84,6 +142,57 @@ export default function PreferencesConfiguration() {
       <div style={helpText}>
         Which side of the title bar the minimize/maximize/close buttons appear on.
       </div>
+
+      <div style={{ fontSize: 14, fontWeight: 700, margin: '26px 4px 12px' }}>Config File Location</div>
+      <div style={panel}>
+        <Row label="Location">
+          <span style={pathText}>
+            {folderLoading ? 'Loading…' : settingsFolder || 'Default'}
+          </span>
+        </Row>
+      </div>
+      <div style={helpText}>
+        Where config.json is stored. Point every install (dev, AppImage, Flatpak) at the same
+        folder to share one set of settings between them. Immich/Flickr sign-in stays separate
+        per install either way, since it's kept in an encrypted vault, not this file — unless
+        you opt in below.
+      </div>
+      {folderError && <div style={{ ...helpText, color: 'var(--danger)' }}>{folderError}</div>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 11, margin: '10px 4px 0' }}>
+        <div style={{ flex: 1 }} />
+        {settingsFolder && (
+          <button onClick={onUseDefaultSettingsFolder} disabled={folderSaving || folderLoading} style={btnSecondary}>
+            Use Default
+          </button>
+        )}
+        <button onClick={onChooseSettingsFolder} disabled={folderSaving || folderLoading} style={btnSecondary}>
+          Choose Folder…
+        </button>
+      </div>
+
+      {settingsFolder && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', margin: '14px 4px 0', gap: 10 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'default' }}>
+              <input
+                type="checkbox"
+                checked={shareVault}
+                disabled={vaultSaving || folderLoading}
+                onChange={(e) => onToggleShareVault(e.target.checked)}
+              />
+              Also share Immich/Flickr sign-in in this folder
+            </label>
+          </div>
+          <div style={helpText}>
+            Moves the encrypted login vault into the same folder so every install shares one
+            sign-in too, instead of each needing its own. Takes effect the next time each
+            install is restarted, and only ever adopts a vault already sitting there rather than
+            overwriting it. Only turn this on for a folder that stays on this machine — the
+            vault's decryption key travels with it, so a synced or cloud-backed folder would
+            expose your Immich/Flickr credentials anywhere that folder ends up.
+          </div>
+        </>
+      )}
 
       <div style={{ fontSize: 14, fontWeight: 700, margin: '26px 4px 12px' }}>Thumbnail Cache</div>
       <div style={{ fontSize: 12.5, color: 'var(--text-dimmer)', margin: '0 4px 16px', lineHeight: 1.5 }}>

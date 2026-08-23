@@ -96,14 +96,24 @@ pub fn run() {
                     "app-config",
                 );
             }
-            // Opened once for the app's lifetime and handed to AppState -
-            // each Stronghold snapshot open/commit is a fixed ~1s cost in a
-            // release build, not something to pay on every `config::load`/
-            // `save` call. `.ok()` degrades to config.json-only (this app's
-            // behavior before the vault existed) if it fails to open, e.g.
-            // no writable app-local-data dir.
-            let secret_vault = secure_store::SecretVault::open(app.handle()).ok();
-            let cfg = config::load(app.handle(), secret_vault.as_ref());
+            // `settingsFolder`/`shareVault` live inside config.json, but the
+            // vault has to be opened before `config::load` can read it for
+            // real - `resolve_early_config` peeks just those two fields via
+            // the same pointer-stub chain `load` follows below, so the vault
+            // (opened on a background thread - see below) can be opened from
+            // the right place once it's ready.
+            let (settings_folder, share_vault) = config::resolve_early_config(app.handle());
+            let vault_dir: Option<std::path::PathBuf> = if share_vault { settings_folder } else { None };
+            // Loaded without the vault for now (see the vault's own opening
+            // below for why) - any secret fields (Immich API key, Flickr
+            // tokens) come from whatever config.json itself currently holds
+            // for them in the meantime: blank/stale once they've migrated
+            // into the vault, same as this app's pre-vault behavior. Once the
+            // background open below finishes it overlays the real values
+            // onto `AppState`'s config directly and emits `vault-ready`, which
+            // `LibraryStatusProvider` on the frontend listens for to re-check
+            // the connection rather than staying stuck on a stale failure.
+            let cfg = config::load(app.handle(), None);
             // Shared between EditQueue and ProcessingQueue - see
             // `asset_locks.rs`'s own doc comment for why the two queues need
             // to serialize against each other now, not just against
@@ -144,7 +154,49 @@ pub fn run() {
             let (processing_queue, processing_queue_rx) = processing_queue::ProcessingQueue::new(asset_locks.clone());
             let (art_queue, art_queue_rx) = art_queue::ArtQueue::new();
             let (export_queue, export_queue_rx) = export_queue::ExportQueue::new();
-            app.manage(AppState::new(cfg, secret_vault, edit_queue, import_queue, round_trip.clone(), processing_queue, art_queue, export_queue));
+            // Starts empty - filled in by the background thread below once
+            // the vault finishes opening. `Arc<OnceLock<_>>` rather than
+            // `Mutex<Option<_>>`: every command that reads it (`config::save`'s
+            // vault parameter, via `state.secret_vault.get()`) only ever wants
+            // "is it ready yet", never needs to wait for or replace it after
+            // that one write.
+            let secret_vault: std::sync::Arc<std::sync::OnceLock<secure_store::SecretVault>> =
+                std::sync::Arc::new(std::sync::OnceLock::new());
+            app.manage(AppState::new(cfg, secret_vault.clone(), edit_queue, import_queue, round_trip.clone(), processing_queue, art_queue, export_queue));
+
+            // Stronghold's snapshot decrypt (password-based `scrypt` key
+            // derivation) is deliberately expensive - a fixed ~1s cost in a
+            // release build, worse still unoptimized. Running it synchronously
+            // here like every other setup step would block this whole
+            // closure's return, which blocks the window's first paint and the
+            // event loop's first pump - long enough in a debug build to trip
+            // the desktop's own "not responding" watchdog even though nothing
+            // is actually deadlocked (confirmed via `gdb`: the main thread was
+            // sitting in exactly this call, then moved on once it finished).
+            // Opened on its own thread instead, so the window shows up and
+            // stays responsive immediately - see `cfg`'s own comment above for
+            // what happens to secret fields in the meantime.
+            {
+                let app_handle = app.handle().clone();
+                let target_vault = secret_vault;
+                std::thread::spawn(move || {
+                    let Ok(vault) = secure_store::SecretVault::open(&app_handle, vault_dir.as_deref()) else {
+                        return;
+                    };
+                    let state = app_handle.state::<AppState>();
+                    {
+                        let mut guard = state.config.lock().unwrap();
+                        if vault.read_into(&mut guard) {
+                            let _ = config::save(&app_handle, &guard, Some(&vault));
+                        }
+                    }
+                    // Can't actually fail in practice - this is the only place
+                    // that ever opens the vault - but `OnceLock::set` returning
+                    // `Err` just means "already set" rather than panicking.
+                    let _ = target_vault.set(vault);
+                    let _ = app_handle.emit("vault-ready", ());
+                });
+            }
 
             tauri::async_runtime::spawn(edit_queue::run(app.handle().clone(), edit_queue_rx));
             tauri::async_runtime::spawn(import::queue::run(app.handle().clone(), import_queue_rx, max_concurrent_import_jobs));
@@ -219,6 +271,8 @@ pub fn run() {
             commands::save_smart_stack_settings,
             commands::save_window_controls_position,
             commands::save_theme_mode,
+            commands::save_settings_folder,
+            commands::save_share_vault,
             commands::save_applications_config,
             commands::list_installed_apps,
             commands::launch_editor,

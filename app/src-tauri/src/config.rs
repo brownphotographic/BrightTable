@@ -206,6 +206,15 @@ impl AutoResolution {
 pub struct AppConfig {
     pub library: LibraryConfig,
     pub settings_folder: Option<String>,
+    /// Whether the credential vault (Immich/Flickr login - `secrets.key` +
+    /// `secrets.stronghold`, see `secure_store.rs`) is relocated alongside
+    /// `settings_folder` too, instead of always staying in the OS-local
+    /// app-data dir. Off by default and opt-in separately from
+    /// `settings_folder` itself - see `secure_store.rs`'s doc comment for why
+    /// the two aren't bundled automatically. `#[serde(default)]` so existing
+    /// config.json files still deserialize cleanly.
+    #[serde(default)]
+    pub share_vault: bool,
     /// Rebindable keyboard shortcuts, keyed by action id (e.g. "selectAll").
     /// Only overrides are stored here - the frontend fills in any action
     /// missing from this map with its own built-in default, so adding a new
@@ -476,7 +485,7 @@ impl Default for ImportSettings {
 
 fn config_path(app: &AppHandle, cfg: &AppConfig) -> Result<PathBuf, String> {
     let dir = match &cfg.settings_folder {
-        Some(folder) if !folder.trim().is_empty() => PathBuf::from(folder),
+        Some(folder) if !folder.trim().is_empty() => PathBuf::from(folder.trim()),
         _ => app
             .path()
             .app_config_dir()
@@ -485,14 +494,73 @@ fn config_path(app: &AppHandle, cfg: &AppConfig) -> Result<PathBuf, String> {
     Ok(dir.join("config.json"))
 }
 
+/// Peeks the two fields needed before either config.json or the credential
+/// vault can be opened for real - the `settingsFolder` redirect, and whether
+/// the vault should follow it - by reading the same pointer-stub-then-real-
+/// file chain `load` does below, but stopping short of full deserialization.
+/// Safe to call before the vault exists (neither field is a secret), which is
+/// exactly why `lib.rs`'s `.setup()` calls this first: it needs to know where
+/// to open the vault *before* it can open it, and where the vault lives can
+/// itself be set inside the very config.json this app hasn't loaded yet.
+pub fn resolve_early_config(app: &AppHandle) -> (Option<PathBuf>, bool) {
+    let Ok(default_dir) = app.path().app_config_dir() else {
+        return (None, false);
+    };
+    let Ok(raw_default) = fs::read_to_string(default_dir.join("config.json")) else {
+        return (None, false);
+    };
+
+    let mut raw = raw_default.clone();
+    let mut folder: Option<PathBuf> = None;
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw_default) {
+        if let Some(f) = value.get("settingsFolder").and_then(|v| v.as_str()) {
+            let f = f.trim();
+            if !f.is_empty() {
+                folder = Some(PathBuf::from(f));
+                if let Ok(redirected_raw) = fs::read_to_string(PathBuf::from(f).join("config.json")) {
+                    raw = redirected_raw;
+                }
+            }
+        }
+    }
+
+    let share_vault = serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|v| v.get("shareVault").and_then(|v| v.as_bool()))
+        .unwrap_or(false);
+
+    (folder, share_vault)
+}
+
 pub fn load(app: &AppHandle, vault: Option<&crate::secure_store::SecretVault>) -> AppConfig {
     let default_cfg = AppConfig::default();
-    let Ok(path) = config_path(app, &default_cfg) else {
+    let Ok(default_dir) = app.path().app_config_dir() else {
         return default_cfg;
     };
-    let Ok(raw) = fs::read_to_string(&path) else {
+    let default_path = default_dir.join("config.json");
+    let Ok(raw_default) = fs::read_to_string(&default_path) else {
         return default_cfg;
     };
+
+    // A `settingsFolder` override (Preferences -> Configuration) moves
+    // config.json to a folder of the user's choosing - e.g. so a dev build,
+    // an AppImage, and a Flatpak install can all share one file. Which
+    // folder that is can't be known until config.json itself has been read,
+    // so `save` always keeps a stub containing just this one field at the
+    // OS-default location - read that first, purely to find the redirect,
+    // then load the real file from wherever it points.
+    let mut raw = raw_default.clone();
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw_default) {
+        if let Some(folder) = value.get("settingsFolder").and_then(|v| v.as_str()) {
+            let folder = folder.trim();
+            if !folder.is_empty() {
+                if let Ok(redirected_raw) = fs::read_to_string(PathBuf::from(folder).join("config.json")) {
+                    raw = redirected_raw;
+                }
+            }
+        }
+    }
+
     let mut cfg: AppConfig = serde_json::from_str(&raw).unwrap_or_default();
 
     // Migrates a config.json saved under either of two shapes this app went
@@ -590,7 +658,112 @@ pub fn save(app: &AppHandle, cfg: &AppConfig, vault: Option<&crate::secure_store
         // nowhere else they got saved.
     }
     let raw = serde_json::to_string_pretty(&on_disk).map_err(|e| e.to_string())?;
-    fs::write(&path, raw).map_err(|e| format!("Could not write config.json: {e}"))
+    fs::write(&path, raw).map_err(|e| format!("Could not write config.json: {e}"))?;
+
+    // When settingsFolder redirects config.json elsewhere, also drop a stub
+    // holding just that one field at the OS-default location - `load` reads
+    // it first on a fresh launch to find the redirect before it can know
+    // anything else about the real config (see `load`'s own comment).
+    let default_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("Could not resolve app config dir: {e}"))?;
+    let default_path = default_dir.join("config.json");
+    if default_path != path {
+        fs::create_dir_all(&default_dir).map_err(|e| format!("Could not create app config dir: {e}"))?;
+        let stub = serde_json::json!({ "settingsFolder": cfg.settings_folder });
+        let stub_raw = serde_json::to_string_pretty(&stub).map_err(|e| e.to_string())?;
+        fs::write(&default_path, stub_raw).map_err(|e| format!("Could not write settings-folder pointer: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Redirects config.json to `folder` (or back to the OS-default location if
+/// `None`/empty) - Preferences -> Configuration. If `folder` already holds
+/// its own full config.json (e.g. a shared folder another install of this
+/// app already wrote to, or - when clearing the override - a real config
+/// still sitting at the OS-default location from before a redirect was ever
+/// set) that file's contents are adopted wholesale rather than overwritten
+/// with whatever this install currently has loaded; otherwise (nothing there
+/// yet, or just the `settingsFolder`-only pointer stub `save` leaves behind)
+/// the current in-memory config is written there instead, effectively moving
+/// it. Note this only moves config.json itself - Immich/Flickr credentials
+/// live in the per-install encrypted Stronghold vault (`secure_store.rs`)
+/// and are never shared this way, so each install still needs its own login.
+pub fn set_settings_folder(
+    app: &AppHandle,
+    current: &AppConfig,
+    folder: Option<String>,
+    vault: Option<&crate::secure_store::SecretVault>,
+) -> Result<AppConfig, String> {
+    let folder = folder.map(|f| f.trim().to_string()).filter(|f| !f.is_empty());
+    let target_dir = match &folder {
+        Some(f) => PathBuf::from(f),
+        None => app
+            .path()
+            .app_config_dir()
+            .map_err(|e| format!("Could not resolve app config dir: {e}"))?,
+    };
+    let target_path = target_dir.join("config.json");
+
+    let mut next = fs::read_to_string(&target_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<AppConfig>(&raw).ok())
+        .unwrap_or_else(|| current.clone());
+    next.settings_folder = folder;
+
+    // If vault-sharing is (or, via an adopted config.json above, now is)
+    // turned on, prepare the new folder for it too - best-effort, and only
+    // ever copies into `target_dir`, never overwrites a vault already
+    // sitting there (see `secure_store::relocate`'s own doc comment). The
+    // running session's already-open vault is untouched either way; this
+    // just gets the destination ready for the next launch.
+    if next.share_vault {
+        let from_dir = match &current.settings_folder {
+            Some(f) if current.share_vault && !f.trim().is_empty() => PathBuf::from(f.trim()),
+            _ => app
+                .path()
+                .app_local_data_dir()
+                .map_err(|e| format!("Could not resolve app local data dir: {e}"))?,
+        };
+        crate::secure_store::relocate(&from_dir, &target_dir)?;
+    }
+
+    save(app, &next, vault)?;
+    Ok(next)
+}
+
+/// Toggles whether the credential vault follows `settings_folder` - see
+/// `AppConfig::share_vault`'s doc comment. Best-effort relocates the vault's
+/// on-disk files right now (adopting whatever's already at the destination
+/// rather than overwriting it) so it's ready for pickup, but - like
+/// `set_settings_folder`'s own vault handling above - the currently-open
+/// vault doesn't move: this only takes effect the next time the app starts.
+/// Turning sharing back off leaves the shared copy in place rather than
+/// copying it back; the OS-local dir picks up wherever it already was
+/// (nothing, for an install that always shared) on the next launch.
+pub fn set_share_vault(
+    app: &AppHandle,
+    current: &AppConfig,
+    share: bool,
+    vault: Option<&crate::secure_store::SecretVault>,
+) -> Result<AppConfig, String> {
+    let mut next = current.clone();
+    next.share_vault = share;
+
+    if share {
+        if let Some(folder) = next.settings_folder.as_deref().filter(|f| !f.trim().is_empty()) {
+            let target_dir = PathBuf::from(folder.trim());
+            let from_dir = app
+                .path()
+                .app_local_data_dir()
+                .map_err(|e| format!("Could not resolve app local data dir: {e}"))?;
+            crate::secure_store::relocate(&from_dir, &target_dir)?;
+        }
+    }
+
+    save(app, &next, vault)?;
+    Ok(next)
 }
 
 #[cfg(test)]
