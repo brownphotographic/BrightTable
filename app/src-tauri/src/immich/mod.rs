@@ -803,18 +803,25 @@ impl ImmichClient {
 
     /// GET /people?withHidden=false - Immich's `PersonResponseDto` carries no
     /// asset count of its own, so this fans out one `/statistics` call per
-    /// person concurrently (a personal/family-sized library's whole People
-    /// list, not thousands of entries - same "fetch everything, no paging"
-    /// assumption `list_albums` already makes) to sort the result "most
-    /// photos first", tie-broken by name with unnamed people pushed last.
+    /// person to sort the result "most photos first", tie-broken by name
+    /// with unnamed people pushed last. A large library can have hundreds or
+    /// thousands of detected people, so the fan-out is capped at
+    /// `PEOPLE_STATS_CONCURRENCY` in flight at a time (in submission order,
+    /// via `buffered` not `buffer_unordered`, since the results below are
+    /// zipped positionally with `raw.people`) rather than firing every
+    /// request at once, which was exhausting the process's file descriptor
+    /// limit ("Too many open files").
     pub async fn list_people(&self) -> Result<Vec<PersonSummary>, String> {
+        use futures_util::StreamExt;
+        const PEOPLE_STATS_CONCURRENCY: usize = 16;
         let raw: RawPeopleResponse = self
             .get_json("/people", &[("withHidden".into(), "false".into())])
             .await?;
-        let stats = futures_util::future::join_all(
-            raw.people.iter().map(|p| self.get_person_statistics(&p.id)),
-        )
-        .await;
+        let stat_futures: Vec<_> = raw.people.iter().map(|p| self.get_person_statistics(&p.id)).collect();
+        let stats = futures_util::stream::iter(stat_futures)
+            .buffered(PEOPLE_STATS_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await;
         let mut people: Vec<PersonSummary> = raw
             .people
             .into_iter()
