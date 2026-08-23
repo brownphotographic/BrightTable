@@ -30,6 +30,14 @@ import { stdin, stdout } from "node:process";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const versionFormat = /^\d+\.\d+\.\d+$/;
 
+// Escape hatch for local iteration builds (e.g. chasing a packaging bug,
+// not cutting a real release): skips both prompts and leaves Cargo.toml,
+// models.rs, and AboutDialog.tsx untouched.
+if (process.env.SKIP_VERSION_BUMP) {
+  console.log("SKIP_VERSION_BUMP set - leaving version/tested-server-version untouched.");
+  process.exit(0);
+}
+
 let testedVersion = process.env.TESTED_IMMICH_VERSION;
 if (testedVersion && !versionFormat.test(testedVersion)) {
   throw new Error(`TESTED_IMMICH_VERSION "${testedVersion}" isn't in x.y.z form.`);
@@ -42,6 +50,7 @@ if (!testedVersion) {
         "Set TESTED_IMMICH_VERSION=x.y.z (the Immich server version this build was tested against) and re-run.",
     );
   }
+  console.log("\n>>> bump-version.mjs is waiting for input <<<");
   const rl = createInterface({ input: stdin, output: stdout });
   while (!testedVersion) {
     const answer = (await rl.question("Immich server version tested for this build (x.y.z): ")).trim();
@@ -77,6 +86,7 @@ if (!nextVersion) {
         "Set APP_VERSION=x.y.z (the new app version) and re-run.",
     );
   }
+  console.log("\n>>> bump-version.mjs is waiting for input <<<");
   const rl = createInterface({ input: stdin, output: stdout });
   while (!nextVersion) {
     const answer = (await rl.question(`App version (current: ${currentVersion}, x.y.z): `)).trim();

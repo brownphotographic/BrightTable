@@ -154,10 +154,7 @@ to rule that out.
 
 A second, additive distribution option (the AppImage above stays the default/simplest path) — a sandboxed
 build for anyone who'd rather not run an app with full, unprompted host access. Unlike the AppImage, this
-compiles from source *inside* `flatpak-builder`'s own sandbox, against the GNOME runtime/SDK's own toolchain
-and glibc — so the whole "pick an old enough build host" dance the AppImage needs doesn't apply here; the
-result's compatibility floor is whatever GNOME runtime version it's built against, the same for every user
-regardless of which machine ran the build.
+compiles from source *inside* `flatpak-builder`'s own sandbox, against the GNOME runtime/SDK's own toolchain and glibc — so the whole "pick an old enough build host" dance the AppImage needs doesn't apply here; the result's compatibility floor is whatever GNOME runtime version it's built against, the same for every user regardless of which machine ran the build.
 
 One-time host setup (this runs on your actual host, *not* inside the AppImage's distrobox container —
 `flatpak-builder` needs its own sandboxing tools and the runtime/SDK installed via `flatpak install`, an
@@ -181,8 +178,54 @@ Then, from `app/`:
 ```bash
 npm run build:flatpak
 ```
-Output lands at `app/src-tauri/target/release/bundle/flatpak/BrightTable_<version>_x86_64.flatpak`. Install
-it locally with `flatpak install --user <path to the .flatpak>`.
+Output lands at `app/src-tauri/target/release/bundle/flatpak/BrightTable_<version>_x86_64.flatpak`.
+
+**Installing it:**
+
+1. Install the bundle:
+   ```bash
+   flatpak install --user src-tauri/target/release/bundle/flatpak/BrightTable_<version>_x86_64.flatpak
+   ```
+   (Drop `--user` for a system-wide install instead, which needs root via polkit. Double-clicking the
+   `.flatpak` file in Files/GNOME Software does a system-wide install too, same end result.)
+
+2. **Grant network access — required, not optional.** The manifest's `finish-args` doesn't include
+   `--share=network` (only `build-options.build-args` does, and that only applies during the
+   `flatpak-builder` build itself — it has zero effect on the installed app's runtime permissions).
+   Without this grant, BrightTable can't reach your Immich server at all; you'll get connection errors
+   the moment you try to configure a library in Preferences. Either:
+   ```bash
+   flatpak override --user --share=network io.github.brownphotographic.BrightTable
+   ```
+   or in [Flatseal](https://github.com/tingping/flatseal): select **BrightTable** from the app list,
+   then toggle **Network** on — it's one of the top-level switches on the app's permissions page,
+   not nested under Filesystem/Session Bus/System Bus/Sockets.
+
+3. Confirm it installed and check which kind:
+   ```bash
+   flatpak info io.github.brownphotographic.BrightTable   # shows "Installation: user" or "Installation: system"
+   ```
+
+4. Launch it — either from your app menu as "BrightTable", or directly from a terminal:
+   ```bash
+   flatpak run io.github.brownphotographic.BrightTable
+   ```
+
+5. If your photo library lives outside `$HOME` (e.g. an NFS-mounted External Library), grant that path
+   too — same CLI-override/Flatseal pattern as step 2, see "What this actually does under the hood"
+   below for the exact command.
+
+**Updating after a rebuild:** this is a local bundle install with no remote to track, so `flatpak update`
+won't find a newer build on its own — reinstall over the old one instead (same `--user`/system choice as
+above, matching however it's currently installed):
+```bash
+flatpak install --user --reinstall src-tauri/target/release/bundle/flatpak/BrightTable_<version>_x86_64.flatpak
+```
+
+**Uninstalling:**
+```bash
+flatpak uninstall io.github.brownphotographic.BrightTable
+```
 
 *What this actually does under the hood* — the manifest lives at
 [`flatpak/io.github.brownphotographic.BrightTable.yml`](app/flatpak/io.github.brownphotographic.BrightTable.yml).

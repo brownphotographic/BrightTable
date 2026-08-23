@@ -113,14 +113,22 @@ modules:
       # Backend - deliberately `cargo build`, not `cargo tauri build`: the
       # tauri-cli's own bundling (AppImage/deb/etc.) isn't needed here, only
       # the compiled binary, which this module installs itself below.
-      - cargo build --release --manifest-path src-tauri/Cargo.toml
+      #
+      # --features tauri/custom-protocol is not optional: tauri's own
+      # build.rs (see `fn main` in the `tauri` crate) sets `dev =
+      # !custom_protocol` and emits `cargo:dev=$dev`, which is what
+      # `#[cfg(dev)]` in tauri's webview manager checks to choose `devUrl`
+      # (tauri.conf.json's `http://localhost:1420`) vs. `frontendDist`.
+      # `cargo tauri build` enables this feature for you; a bare `cargo
+      # build` doesn't - regardless of --release - so without it the
+      # compiled binary tries to load the Vite dev server on startup and
+      # fails with "Could not connect to localhost: Connection refused"
+      # (confirmed live in a Flatpak test container, 2026-08-22).
+      - cargo build --release --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol
       - install -Dm755 src-tauri/target/release/app /app/bin/brighttable
-      - install -Dm644 flatpak/io.github.brownphotographic.BrightTable.desktop \
-          /app/share/applications/io.github.brownphotographic.BrightTable.desktop
-      - install -Dm644 src-tauri/icons/icon.png \
-          /app/share/icons/hicolor/512x512/apps/io.github.brownphotographic.BrightTable.png
-      - install -Dm644 flatpak/io.github.brownphotographic.BrightTable.metainfo.xml \
-          /app/share/metainfo/io.github.brownphotographic.BrightTable.metainfo.xml
+      - install -Dm644 flatpak/io.github.brownphotographic.BrightTable.desktop /app/share/applications/io.github.brownphotographic.BrightTable.desktop
+      - install -Dm644 src-tauri/icons/icon.png /app/share/icons/hicolor/512x512/apps/io.github.brownphotographic.BrightTable.png
+      - install -Dm644 flatpak/io.github.brownphotographic.BrightTable.metainfo.xml /app/share/metainfo/io.github.brownphotographic.BrightTable.metainfo.xml
     sources:
       # Builds straight from the working tree - simplest for local iteration,
       # but embeds whatever's on disk (uncommitted changes included) and is
