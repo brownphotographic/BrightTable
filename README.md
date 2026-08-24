@@ -5,6 +5,8 @@
 **A desktop viewer for Linux desktop, connecting Immich and open source RAW editors into a seamless experience**
 _An LLM coded project. Human generated requirements and testing._
 
+![Auto-stacking images](assets/Autostack.gif)
+
 I designed this for myself because I dislike the user experience and functionality that exists on GNU/Linux for managing and editing photos. For me, this gap it fills the gap between DAM and raw editing and honestly an experience I have been pining for since the great Apple Aperture bit the dust a decade ago. There are some great tools out there already like RawTherapee/ART, Digikam, RapiddRAW, Digikam, Shotwell. But to me, none of them had exactly the user experience and workflow that I really wanted. So after a couple of years of threatening myself to build my own tool: I did. 
 
 While this tool uses LLMs to generate code, the concept, requirements, and testing is performed by the author. I absolutely hate the term 'vibe coding'. This is Human Reqs --> LLM Coding --> Human Testing.
@@ -77,9 +79,11 @@ Go to the [production release](https://github.com/brownphotographic/BrightTable/
 
 **3. Grant folder and network access (required)**
 
+Install [Flatseal](https://github.com/tingping/flatseal) from your software center (if not already installed). Then:
+
 1) Grant network access
 BrightTable can't reach your Immich server without this — it isn't granted by default.
-- GUI: install [Flatseal](https://github.com/tingping/flatseal) from your software center, select **BrightTable**, and turn on the **Network** toggle.
+- Select **BrightTable**, and turn on the **Network** toggle.
 - Command line:
   ```bash
   flatpak override --user --share=network io.github.brownphotographic.BrightTable
@@ -87,13 +91,18 @@ BrightTable can't reach your Immich server without this — it isn't granted by 
 2. Grant access to the photo library folders 
 If your photo library lives outside your home folder (e.g. an NFS mount), you'll need to grant that path too. There are two folders you will want to expose
 - Immich managed library. In the settings 
-- Optional (and recommended to set up):For externally managed folder (e.g. a network share that you can expose to immich https://docs.immich.app/features/libraries)
+- Optional (and recommended to set up) - for externally managed folder (e.g. a network share that you can expose to immich https://docs.immich.app/features/libraries)
 
 To do this, in Flatseal scroll down to Filesystem. In the Other files, enter the paths. e.g.
 - /mnt/nfs/path/to/your/immich-managed-library-share
 - /mnt/nfs/path/to/your/own-externally-managed-library-folder
 
 More more details see [What this actually does under the hood](#what-this-actually-does-under-the-hood) under Developers below.
+
+3. Grant access to /tmp under Filesystem if not already granted
+
+4. If you print, grant access to Printing System under Socket
+
 
 **4. Launch**
 
