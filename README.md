@@ -3,13 +3,27 @@
 # BrightTable // Copyright (C) 2026 Rob Brown
 
 **A desktop viewer for Linux desktop, connecting Immich and open source RAW editors into a seamless experience**
-_An LLM coded project. Human generated requirements and testing._
+_A Digital Light Table for the Linux desktop: Immich + open source RAW editors = BrightTable._
 
 ![Auto-stacking images](assets/Autostack.gif)
 
-I designed this for myself because I dislike the user experience and functionality that exists on GNU/Linux for managing and editing photos. For me, this gap it fills the gap between DAM and raw editing and honestly an experience I have been pining for since the great Apple Aperture bit the dust a decade ago. There are some great tools out there already like RawTherapee/ART, Digikam, RapiddRAW, Digikam, Shotwell. But to me, none of them had exactly the user experience and workflow that I really wanted. So after a couple of years of threatening myself to build my own tool: I did. 
+I designed this for myself because I dislike the user experience and functionality that exists on GNU/Linux for managing and editing photos. For me, this fills the gap between DAM and raw editing -- an experience that I have been pining for since the great Apple Aperture bit the dust a decade ago. 
 
-While this tool uses LLMs to generate code, the concept, requirements, and testing is performed by the author. I absolutely hate the term 'vibe coding'. This is Human Reqs --> LLM Coding --> Human Testing.
+There are some great tools out there already like RawTherapee/ART, Digikam, RapidRAW, Digikam, Shotwell. But to me, none of them had exactly the user experience and workflow that I really wanted. So after a couple of years of threatening myself to build my own tool: I did. 
+
+What I was yearning for was a tool to tie the raw editing power of ART/RawTherapee with the server based DAM of Immich. Then wrap it in a first class user experience like Shotwell has. 
+
+Let's call this need a 'digital light table'.
+
+_How it works:_
+
+- The library: Uses Immich and the Immich API as a self hosted asset manager backend. It will not work without Immich!
+- Processing: Uses open source RAW editors for photo processing e.g. ART, RawTherapee. 
+- The light table (this app): A front end app that uses the above, and creates a (I think) great user experience for editing your photos.
+
+_An LLM coded project. Human generated requirements and testing._
+While this tool uses LLMs to generate code, the concept, requirements, and testing is performed by the author. I absolutely hate the term 'vibe coding'. 
+This is Human Concept --> Requirements --> LLM Coding --> Human Testing.
 
 If you disagree, take your neo-luddite principles elsewhere.
 
@@ -26,18 +40,7 @@ Since moving over to Linux I have been trying to find the perfect experience, bu
 - ART for raw editing. As a fork of RawTherapee this has the quality and look and feel I wanted with great film like rendering, and a simple UX.
 - Immich. A self hosted DAM with API and great phone app for auto upload and viewing. Super snappy. It just never played well with my dedicated camera RAW editing workflow.
 
-So really what I was yearning for was a tool to tie the raw editing and  server based DAM together, with a first class user experience like Shotwell has. 
-
-Let's call this need a 'digital light table'.
-
-_How it works:_
-
-- The library: Uses Immich and the Immich API as a self hosted asset manager backend. It will not work without Immich!
-- Processing: Uses open source RAW editors for photo processing e.g. ART, RawTherapee. 
-- The light table (this app): A front end app that uses the above, and creates a (I think) great user experience for editing your photos.
-
 **Warning!**
-
 - This tool was created by me, for me. I am giving it to the community to allow others who are interested to use it, and accept the risks involved.
 
 - Use at your own risk! You are responsible for using this tool. Read the code and understand what it does before using it. Test it on a sandbox first.
@@ -46,11 +49,11 @@ _How it works:_
 
 - As they say, backup backup backup!  
 
-- I may or may not address bugs reported by the community. I have a full time job and this is very much a side project in my spare time. I  don't have the time to deep dive bugs encountered because of differences in your setup. Sorry.
+- I may or may not address bugs reported by the community. I have a full time job and this is very much a side project in my spare time. I don't have the time to deep dive bugs encountered because of differences in your setup. Sorry.
 
 - Features are the enemy of quality! In the interest of keeping it simple I am unlikely to respond to new feature requests. You are welcome to submit a pull request with a bug fix, or a feature request that you are willing to implement yourself. However I want to keep this application primarily a simple, quality-focused tool with a user experience that is easy to use and understand. I therefore may reject pull requests for new features if I don't feel they fit the project's goals.
 
-- That said you are welcome to fork the code! Add your own features to it, repackage it, do something completely different. Consider this a concept and take it in the direction you want it to go. 
+- This all said, you are welcome to fork the code! Add your own features to it, repackage it, do something completely different. Consider this a concept and take it in the direction you want it to go. 
 
 ## System Requirements
 
