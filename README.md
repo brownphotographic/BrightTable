@@ -5,7 +5,7 @@
 **A Digital Light Table for the Linux desktop: Immich + open source RAW editors = BrightTable.**
 
 ![Auto-stacking images](assets/Autostack.gif)
-Auto-stacking images: stacking is performed locally, but synced with Immich via the Immich API. One of the many features of BrightTable.
+_above:Auto-stacking images: stacking is performed locally, but synced with Immich via the Immich API. One of the many features of BrightTable._
 
 I designed this for myself because I dislike the user experience and functionality that exists on GNU/Linux for managing and editing photos. For me, this fills the gap between DAM and raw editing -- an experience that I have been pining for since the great Apple Aperture bit the dust a decade ago. 
 
