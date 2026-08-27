@@ -293,6 +293,24 @@ pub struct SmartStackSettings {
     pub suffix: String,
     /// Index into the frontend's 19-step TOL scale, 0..=18.
     pub tolerance: u32,
+    /// Which format Name mode prefers as a group's pick when both a RAW and
+    /// a non-RAW (JPEG) rendition share a base name - "raw" preserves the
+    /// long-standing unconditional-RAW-preference behavior. A plain String
+    /// ("raw" | "jpeg"), matching `mode`'s own convention of staying
+    /// untyped here and being validated on the TS side.
+    /// `#[serde(default = ...)]` per-field (not just relying on
+    /// `AppConfig.smart_stack`'s own `#[serde(default)]`, which only covers
+    /// the whole `smartStack` key being absent) so an existing config.json
+    /// saved before this field existed still deserializes cleanly instead
+    /// of resetting the whole config to defaults - see
+    /// `LibraryConfig.max_concurrent_metadata_scans` for the same pattern.
+    #[serde(default = "default_name_pick_preference")]
+    pub name_pick_preference: String,
+    /// Version mode: when a group forms, also search the library for a
+    /// RAW/JPEG sibling sharing the group's base name that wasn't part of
+    /// the user's selection, and fold it in automatically. On by default.
+    #[serde(default = "default_true")]
+    pub version_include_siblings: bool,
 }
 
 impl Default for SmartStackSettings {
@@ -305,8 +323,14 @@ impl Default for SmartStackSettings {
             // converted.jpg" or "IMG_1_converted_2.jpg" both match).
             suffix: "*converted*".into(),
             tolerance: 10,
+            name_pick_preference: "raw".into(),
+            version_include_siblings: true,
         }
     }
+}
+
+fn default_name_pick_preference() -> String {
+    "raw".into()
 }
 
 /// Which RAW converter's CLI is currently active for "Tweak RAW Roundtrip"/

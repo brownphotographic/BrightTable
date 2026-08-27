@@ -20,6 +20,11 @@ import { isRawAsset } from './filters';
 
 export type SmartStackMode = 'name' | 'version' | 'time';
 
+// Which format Name mode prefers as a group's pick when both a RAW and a
+// non-RAW (JPEG) rendition share a base name. Version/Time modes have their
+// own independent pick logic and ignore this.
+export type NamePickPreference = 'raw' | 'jpeg';
+
 export interface SmartStackGroup {
   key: string;
   members: AssetSummary[];
@@ -164,7 +169,12 @@ export function agByTime(list: AssetSummary[], tolMs: number): { key: string; me
 // an already-existing stack's other members (see mergeExistingStacks below) -
 // the initial match and the post-merge re-evaluation both need the exact same
 // rule, just over different member lists.
-export function pickForGroup(members: AssetSummary[], mode: SmartStackMode, key: string): string {
+export function pickForGroup(
+  members: AssetSummary[],
+  mode: SmartStackMode,
+  key: string,
+  namePickPreference: NamePickPreference = 'raw',
+): string {
   if (mode === 'time') {
     const earliest = members.reduce((a, b) => (captureTs(a) <= captureTs(b) ? a : b));
     return earliest.id;
@@ -180,6 +190,11 @@ export function pickForGroup(members: AssetSummary[], mode: SmartStackMode, key:
       members[0];
     return src.id;
   }
+  // mode === 'name'
+  if (namePickPreference === 'jpeg') {
+    const jpeg = members.find((m) => !isRawAsset(m)) ?? members.find((m) => isRawAsset(m)) ?? members[0];
+    return jpeg.id;
+  }
   const raw = members.find((m) => isRawAsset(m)) ?? members[0];
   return raw.id;
 }
@@ -190,6 +205,7 @@ export function agGroups(
   mode: SmartStackMode,
   suffix: string,
   tolSeconds: number,
+  namePickPreference: NamePickPreference = 'raw',
 ): SmartStackGroup[] {
   const raw =
     mode === 'name'
@@ -200,7 +216,7 @@ export function agGroups(
 
   return raw.map((g) => {
     const members = mode === 'time' ? g.members.slice().sort((a, b) => captureTs(a) - captureTs(b)) : g.members.slice();
-    return { key: g.key, members, pickId: pickForGroup(members, mode, g.key) };
+    return { key: g.key, members, pickId: pickForGroup(members, mode, g.key, namePickPreference) };
   });
 }
 
@@ -219,6 +235,7 @@ export function mergeExistingStacks(
   groups: SmartStackGroup[],
   mode: SmartStackMode,
   existingMembers: Map<string, AssetSummary[]>,
+  namePickPreference: NamePickPreference = 'raw',
 ): SmartStackGroup[] {
   return groups.map((g) => {
     const byId = new Map(g.members.map((m) => [m.id, m]));
@@ -235,6 +252,36 @@ export function mergeExistingStacks(
     }
     if (!expanded) return g;
     const members = [...byId.values()];
-    return { key: g.key, members, pickId: pickForGroup(members, mode, g.key) };
+    return { key: g.key, members, pickId: pickForGroup(members, mode, g.key, namePickPreference) };
+  });
+}
+
+// A Version-mode group's `key` is its un-suffixed base name - siblingsByKey
+// maps that base name to whatever RAW/JPEG assets a library-wide filename
+// search (SmartStackDialog's own effect, via searchAssetsByFilename) turned
+// up for it. This module stays free of network calls (same contract as
+// mergeExistingStacks above) - the caller fetches and passes results in.
+// Only meaningful for Version mode; Name/Time groups pass through unchanged.
+export function mergeFilenameSiblings(
+  groups: SmartStackGroup[],
+  mode: SmartStackMode,
+  siblingsByKey: Map<string, AssetSummary[]>,
+  namePickPreference: NamePickPreference = 'raw',
+): SmartStackGroup[] {
+  if (mode !== 'version') return groups;
+  return groups.map((g) => {
+    const extra = siblingsByKey.get(g.key);
+    if (!extra || !extra.length) return g;
+    const byId = new Map(g.members.map((m) => [m.id, m]));
+    let expanded = false;
+    for (const em of extra) {
+      if (!byId.has(em.id)) {
+        byId.set(em.id, em);
+        expanded = true;
+      }
+    }
+    if (!expanded) return g;
+    const members = [...byId.values()];
+    return { key: g.key, members, pickId: pickForGroup(members, mode, g.key, namePickPreference) };
   });
 }

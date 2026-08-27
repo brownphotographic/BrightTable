@@ -27,8 +27,12 @@ import {
   type EditJob,
   type MetadataEditTarget,
 } from '../lib/api';
+import { useStacking } from '../lib/useStacking';
+import { isHiddenStackChild } from '../lib/stacks';
 import AssetTile, { type ClickMods } from '../components/AssetTile';
 import SelectionBar from '../components/SelectionBar';
+import StackBand from '../components/StackBand';
+import SmartStackDialog from '../components/SmartStackDialog';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import AddToAlbumDialog from '../components/AddToAlbumDialog';
 import AddToTagDialog from '../components/AddToTagDialog';
@@ -89,6 +93,21 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
   const [openId, setOpenId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; assetId: string } | null>(null);
   const [confirmDeleteSelection, setConfirmDeleteSelection] = useState(false);
+  const [smartStackOpen, setSmartStackOpen] = useState(false);
+  const {
+    stackByAssetId,
+    expandedStacks,
+    toggleStackExpand,
+    dissolveStack,
+    restackRemainder,
+    createStackForSelection,
+    applySmartStackGroups,
+    setStackPickAction,
+    unstack,
+    unstackByStackId,
+    unstackSelection,
+    hasStackedSelection,
+  } = useStacking(selected, setSelected);
   const [addToAlbumTargets, setAddToAlbumTargets] = useState<string[] | null>(null);
   const [addToTagTargets, setAddToTagTargets] = useState<string[] | null>(null);
   const [exportFolderAssets, setExportFolderAssets] = useState<AssetSummary[] | null>(null);
@@ -104,22 +123,38 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
       .catch((e) => setError(String(e)));
   }, [query]);
 
+  // Cross-references stack membership onto this search's results - see
+  // useStacking and PhotosBrowser.tsx's identical note. isHiddenStackChild
+  // then keeps a stack's non-pick members out of the grid/selection/keynav,
+  // while assetByIdAll below still resolves them by id for StackBand/
+  // Viewer/context-menu targets.
+  const overlaidAssets = useMemo(
+    () => (assets ?? []).map((a) => ({ ...a, stack: stackByAssetId.get(a.id) ?? null })),
+    [assets, stackByAssetId],
+  );
+  const visibleAssets = useMemo(() => overlaidAssets.filter((a) => !isHiddenStackChild(a)), [overlaidAssets]);
+
   const assetById = useMemo(() => {
     const map = new Map<string, AssetSummary>();
-    for (const a of assets ?? []) map.set(a.id, a);
+    for (const a of visibleAssets) map.set(a.id, a);
     return map;
-  }, [assets]);
+  }, [visibleAssets]);
 
-  const flatIds = useMemo(() => (assets ?? []).map((a) => a.id), [assets]);
+  const assetByIdAll = useMemo(() => {
+    const map = new Map<string, AssetSummary>();
+    for (const a of overlaidAssets) map.set(a.id, a);
+    return map;
+  }, [overlaidAssets]);
+
+  const flatIds = useMemo(() => visibleAssets.map((a) => a.id), [visibleAssets]);
 
   const assetChunks = useMemo(() => {
-    const items = assets ?? [];
     const chunks: AssetSummary[][] = [];
-    for (let i = 0; i < items.length; i += SEARCH_GRID_CHUNK_SIZE) {
-      chunks.push(items.slice(i, i + SEARCH_GRID_CHUNK_SIZE));
+    for (let i = 0; i < visibleAssets.length; i += SEARCH_GRID_CHUNK_SIZE) {
+      chunks.push(visibleAssets.slice(i, i + SEARCH_GRID_CHUNK_SIZE));
     }
     return chunks;
-  }, [assets]);
+  }, [visibleAssets]);
 
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const gridVirtualizer = useVirtualizer({
@@ -139,9 +174,11 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
+  // assetByIdAll (not assetById) so selecting a non-pick stack member from
+  // StackBand still resolves here - see PhotosBrowser.tsx's identical note.
   const selectedAssets = useMemo(
-    () => [...selected].map((id) => assetById.get(id)).filter((a): a is AssetSummary => !!a),
-    [selected, assetById],
+    () => [...selected].map((id) => assetByIdAll.get(id)).filter((a): a is AssetSummary => !!a),
+    [selected, assetByIdAll],
   );
   const allSelectedFavorited = selectedAssets.length > 0 && selectedAssets.every((a) => a.isFavorite);
 
@@ -228,12 +265,24 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
     commitEditMany([...selected], { isFavorite: !allSelectedFavorited }).catch(() => {});
   }, [selected, allSelectedFavorited, commitEditMany]);
 
+  // Immich trashes a stack as one atomic unit - see PhotosBrowser.tsx's
+  // identical removeAssets for the full explanation.
   const trashAssets = useCallback(
     async (ids: string[]) => {
+      const idSet = new Set(ids);
+      const stackIdsTouched = new Set<string>();
+      for (const id of ids) {
+        const info = stackByAssetId.get(id);
+        if (info) stackIdsTouched.add(info.id);
+      }
+      for (const stackId of stackIdsTouched) {
+        const memberIds = await dissolveStack(stackId);
+        await restackRemainder(memberIds.filter((id) => !idSet.has(id)));
+      }
       await deleteAssets(ids, false);
       removeAssetsLocal(ids);
     },
-    [removeAssetsLocal],
+    [removeAssetsLocal, stackByAssetId, dissolveStack, restackRemainder],
   );
 
   const handleShowInFileManager = useCallback((asset: AssetSummary) => {
@@ -242,8 +291,13 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
   }, []);
 
   const openIndex = openId ? flatIds.indexOf(openId) : -1;
-  const openAsset = openId ? assetById.get(openId) ?? null : null;
-  const stripAssets = assets ?? [];
+  // assetByIdAll so opening a non-pick stack member (StackBand's onOpen)
+  // still resolves - see PhotosBrowser.tsx's identical note.
+  const openAsset = openId ? assetByIdAll.get(openId) ?? null : null;
+  const stripAssets = useMemo(
+    () => flatIds.map((id) => assetById.get(id)).filter((a): a is AssetSummary => !!a),
+    [flatIds, assetById],
+  );
 
   const selectAll = useCallback(() => setSelected(new Set(flatIds)), [flatIds]);
   const deselectAll = useCallback(() => setSelected(new Set()), []);
@@ -292,9 +346,19 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
 
   const contextMenuItems: ContextMenuItem[] = useMemo(() => {
     if (!contextMenu) return [];
-    const asset = assetById.get(contextMenu.assetId);
+    // assetByIdAll (not assetById) so a right-click forwarded from inside an
+    // expanded StackBand still resolves - see PhotosBrowser.tsx's identical
+    // note.
+    const asset = assetByIdAll.get(contextMenu.assetId);
     const targetIds = selected.size >= 2 ? [...selected] : asset ? [asset.id] : [];
     const items: ContextMenuItem[] = [];
+    if (selected.size >= 2) {
+      items.push({ label: `Stack ${selected.size} Photos`, onClick: () => createStackForSelection([...selected]).catch(() => {}) });
+      items.push({ label: `Smart Stack ${selected.size} Photos`, onClick: () => setSmartStackOpen(true) });
+    }
+    if (asset?.stack) {
+      items.push({ label: 'Unstack', onClick: () => unstackByStackId(asset.stack!.id).catch(() => {}) });
+    }
     if (targetIds.length > 0) {
       items.push({
         label: targetIds.length > 1 ? `Add ${targetIds.length} Photos to Album…` : 'Add to Album…',
@@ -310,7 +374,7 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
       items.push({ label: 'Show in File Manager', onClick: () => handleShowInFileManager(asset) });
     }
     if (targetIds.length > 0) {
-      const exportAssets = targetIds.map((id) => assetById.get(id)).filter((a): a is AssetSummary => !!a);
+      const exportAssets = targetIds.map((id) => assetByIdAll.get(id)).filter((a): a is AssetSummary => !!a);
       items.push({ label: 'Export to Folder…', onClick: () => setExportFolderAssets(exportAssets) });
       items.push({ label: 'Share to Flickr…', onClick: () => setExportFlickrAssets(exportAssets) });
     }
@@ -321,7 +385,7 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
       });
     }
     return items;
-  }, [contextMenu, assetById, selected, handleShowInFileManager, trashAssets]);
+  }, [contextMenu, assetByIdAll, selected, handleShowInFileManager, trashAssets, createStackForSelection, unstackByStackId]);
 
   useImperativeHandle(
     ref,
@@ -408,6 +472,8 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
         <SelectionBar
           count={selected.size}
           onCancel={deselectAll}
+          onStack={() => createStackForSelection([...selected]).catch(() => {})}
+          onSmartStack={() => setSmartStackOpen(true)}
           onFavorite={toggleFavoriteForSelection}
           allFavorited={allSelectedFavorited}
           onRate={(rating) => commitEditMany([...selected], { rating }).catch(() => {})}
@@ -418,6 +484,8 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
           onOpenInRawEditor={() => {}}
           onAddToAlbum={() => setAddToAlbumTargets([...selected])}
           onAddToTag={() => setAddToTagTargets([...selected])}
+          onBulkUnstack={() => unstackSelection().catch((e) => setEnqueueError(String(e)))}
+          hasStackedSelection={hasStackedSelection}
         />
         </div>
       )}
@@ -426,10 +494,10 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
         <div ref={gridContainerRef} style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 16, background: 'var(--canvas)' }}>
           {error && <div style={{ color: 'var(--danger)', fontSize: 13 }}>Couldn't search — {error}.</div>}
           {!assets && !error && <div style={{ color: 'var(--text-dim)', fontSize: 13 }}>Searching…</div>}
-          {assets && assets.length === 0 && !error && (
+          {assets && visibleAssets.length === 0 && !error && (
             <div style={{ color: 'var(--text-dimmer)', fontSize: 12.5 }}>No photos matched "{query}".</div>
           )}
-          {assets && assets.length > 0 && (
+          {assets && visibleAssets.length > 0 && (
             <div style={{ height: gridVirtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
               {gridVirtualizer.getVirtualItems().map((item) => (
                 <div
@@ -439,18 +507,39 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
                   style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${item.start}px)` }}
                 >
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: 12, paddingBottom: 12 }}>
-                    {assetChunks[item.index].map((a) => (
-                      <AssetTile
-                        key={a.id}
-                        asset={a}
-                        selected={selected.has(a.id)}
-                        onToggleSelect={handleThumbClick}
-                        onToggleOne={toggleOne}
-                        onOpen={setOpenId}
-                        onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
-                        onRate={(id, rating) => commitEdit(id, { rating })}
-                      />
-                    ))}
+                    {assetChunks[item.index].map((a) => {
+                      if (a.stack && a.stack.primaryAssetId === a.id && expandedStacks.has(a.stack.id)) {
+                        const stackId = a.stack.id;
+                        return (
+                          <StackBand
+                            key={a.id}
+                            stackId={stackId}
+                            selected={selected}
+                            onSelectMember={(id) => handleThumbClick(id, { shiftKey: false, ctrlKey: false, metaKey: false })}
+                            onOpen={setOpenId}
+                            onCollapse={() => toggleStackExpand(stackId)}
+                            onUnstack={(memberIds) => unstack(stackId, memberIds)}
+                            onSetPick={(assetId, memberIds) => setStackPickAction(stackId, assetId, memberIds)}
+                            onRate={(id, rating) => commitEdit(id, { rating })}
+                            onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
+                            resolveAsset={(id) => assetByIdAll.get(id)}
+                          />
+                        );
+                      }
+                      return (
+                        <AssetTile
+                          key={a.id}
+                          asset={a}
+                          selected={selected.has(a.id)}
+                          onToggleSelect={handleThumbClick}
+                          onToggleOne={toggleOne}
+                          onOpen={setOpenId}
+                          onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
+                          onToggleStackExpand={toggleStackExpand}
+                          onRate={(id, rating) => commitEdit(id, { rating })}
+                        />
+                      );
+                    })}
                   </div>
                 </div>
               ))}
@@ -472,6 +561,15 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
           onSelect={setOpenId}
           onEdit={commitEdit}
           onDelete={(id) => trashAssets([id])}
+          onUnstack={openAsset.stack ? () => unstackByStackId(openAsset.stack!.id).catch(() => {}) : undefined}
+        />
+      )}
+      {smartStackOpen && (
+        <SmartStackDialog
+          candidateAssets={selectedAssets}
+          onClose={() => setSmartStackOpen(false)}
+          onApply={applySmartStackGroups}
+          stackByAssetId={stackByAssetId}
         />
       )}
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenuItems} onClose={() => setContextMenu(null)} />}

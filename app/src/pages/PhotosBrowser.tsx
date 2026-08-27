@@ -22,24 +22,18 @@ import { retryOnVaultReady } from '../lib/vaultReadyRetry';
 import {
   batchRawCliRoundTrip,
   checkSidecarMetadata,
-  createStack,
   deleteAssets,
-  deleteStack,
-  getStack,
   getTimelineBuckets,
   getTimelineBucketAssets,
   launchRawCliRoundTrip,
   launchEditor,
-  listStacks,
   pasteImageProcessing,
   RAW_CONVERTER_LABEL,
   revealInFileManager,
-  setStackPick,
   updateAssetMetadata,
   type ArtJob,
   type ArtRoundTripTarget,
   type AssetMetadataPatch,
-  type AssetStackInfo,
   type AssetSummary,
   type EditJob,
   type MetadataEditTarget,
@@ -48,6 +42,7 @@ import {
   type TimeBucketInfo,
   type UnsyncedMetadata,
 } from '../lib/api';
+import { useStacking } from '../lib/useStacking';
 import Viewer, { type ViewerHandle } from '../components/Viewer';
 import AssetTile, { type ClickMods } from '../components/AssetTile';
 import SelectionBar from '../components/SelectionBar';
@@ -69,7 +64,7 @@ import InlineWarningBanner from '../components/InlineWarningBanner';
 import { isTypingTarget, matchesShortcut, useShortcuts, type ShortcutId } from '../lib/shortcuts';
 import { isRawAsset, matchesFilters, type Filters } from '../lib/filters';
 import { isHiddenStackChild } from '../lib/stacks';
-import { matchesVersionSuffix, type SmartStackGroup } from '../lib/smartStack';
+import { matchesVersionSuffix } from '../lib/smartStack';
 import { useRawOverrides } from '../lib/rawOverrides';
 import { useApplications } from '../lib/applications';
 import { useClipboard } from '../lib/clipboard';
@@ -242,7 +237,6 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   const [, setTotalCount] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
   const [confirmDeleteSelection, setConfirmDeleteSelection] = useState(false);
-  const [expandedStacks, setExpandedStacks] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; assetId: string } | null>(null);
   const [smartStackOpen, setSmartStackOpen] = useState(false);
   const [exportFolderAssets, setExportFolderAssets] = useState<AssetSummary[] | null>(null);
@@ -250,13 +244,6 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   const [exportFlickrAssets, setExportFlickrAssets] = useState<AssetSummary[] | null>(null);
   const [addToAlbumTargets, setAddToAlbumTargets] = useState<string[] | null>(null);
   const [addToTagTargets, setAddToTagTargets] = useState<string[] | null>(null);
-  // This server version doesn't populate `stack` on /search/metadata or
-  // /timeline/bucket at all (confirmed live - it's a newer-server-only
-  // optimization), so stack membership is cross-referenced here from a
-  // separate one-time GET /stacks fetch instead of trusted off individual
-  // asset records. Kept independent of assetCache/patchAssetLocal - see the
-  // filteredAssetCache overlay below.
-  const [stackByAssetId, setStackByAssetId] = useState<Map<string, AssetStackInfo>>(new Map());
   // Asset id -> rating/description found in that asset's local sidecar or
   // embedded file, for whichever field(s) differ from what Immich currently
   // has - a plain gap (Immich has nothing) or a stale value (Immich has
@@ -276,19 +263,27 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   const { shortcuts, capturing } = useShortcuts();
   const { overrideIds, setOverride } = useRawOverrides();
   const { copiedProcessingSource, setCopiedProcessingSource, copiedMetadata, setCopiedMetadata } = useClipboard();
-
-  useEffect(() => {
-    listStacks()
-      .then((stacks) => {
-        const map = new Map<string, AssetStackInfo>();
-        for (const s of stacks) {
-          const info: AssetStackInfo = { id: s.id, primaryAssetId: s.primaryAssetId, assetCount: s.assets.length };
-          for (const a of s.assets) map.set(a.id, info);
-        }
-        setStackByAssetId(map);
-      })
-      .catch(() => {});
-  }, []);
+  // This server version doesn't populate `stack` on /search/metadata or
+  // /timeline/bucket at all (confirmed live - it's a newer-server-only
+  // optimization), so stack membership is cross-referenced from a separate
+  // one-time GET /stacks fetch instead of trusted off individual asset
+  // records - see useStacking. Kept independent of assetCache/
+  // patchAssetLocal - see the filteredAssetCache overlay below.
+  const {
+    stackByAssetId,
+    expandedStacks,
+    toggleStackExpand,
+    dissolveStack,
+    restackRemainder,
+    createStackForSelection,
+    applySmartStackGroups,
+    setStackPickAction,
+    unstack,
+    unstackByStackId,
+    unstackSelection,
+    hasStackedSelection,
+    applyStackInfo,
+  } = useStacking(selected, setSelected);
 
   // Filters only ever hide assets from view/selection/navigation - the raw
   // assetCache (keyed the same way) stays the source of truth for edits and
@@ -525,11 +520,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       addAssetLocal(outcome.asset, outcome.originalAssetId);
       if (outcome.stack) {
         const { memberIds, info } = outcome.stack;
-        setStackByAssetId((m) => {
-          const next = new Map(m);
-          for (const id of memberIds) next.set(id, info);
-          return next;
-        });
+        applyStackInfo(memberIds, info);
       }
       // Tracks the rating/favorite/description copy roundTrip.ts's
       // finishIngest already enqueued onto the EditQueue - without this, a
@@ -582,7 +573,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           .catch(() => {});
       }
     },
-    [addAssetLocal, trackJobs],
+    [addAssetLocal, trackJobs, applyStackInfo],
   );
 
   // Watches for the round-trip file the backend detected (see round_trip.rs)
@@ -623,46 +614,6 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // reload) via a manual Refresh Timeline.
   useEffect(() => subscribeLateRoundTripOutcome(applyRoundTripOutcome), [applyRoundTripOutcome]);
 
-  // Dissolves a stack server-side and purges *every* one of its members from
-  // the local stackByAssetId cache - not just whichever subset the caller
-  // already knows about. Callers that only re-add a subset of those members
-  // to a new stack (a partial merge, or a delete that drops one member) need
-  // every other member's stale entry cleared too, or a later action on one of
-  // them tries to operate on a stack id Immich has already forgotten about.
-  // Also tolerates the stack already being gone server-side (e.g. an earlier
-  // merge left another member's cache entry stale) instead of throwing -
-  // there's nothing to dissolve, so it just clears whatever's cached for it.
-  const dissolveStack = useCallback(
-    async (stackId: string): Promise<string[]> => {
-      let memberIds: string[] | null = null;
-      try {
-        const full = await getStack(stackId);
-        memberIds = full.assets.map((a) => a.id);
-      } catch {
-        // Not found - already dissolved server-side under a prior mutation
-        // this cache never heard about.
-      }
-      if (memberIds) {
-        await deleteStack(stackId);
-      } else {
-        memberIds = [...stackByAssetId.entries()].filter(([, i]) => i.id === stackId).map(([id]) => id);
-      }
-      setStackByAssetId((m) => {
-        const next = new Map(m);
-        for (const id of memberIds!) next.delete(id);
-        return next;
-      });
-      setExpandedStacks((s) => {
-        if (!s.has(stackId)) return s;
-        const next = new Set(s);
-        next.delete(stackId);
-        return next;
-      });
-      return memberIds;
-    },
-    [stackByAssetId],
-  );
-
   // Grid deletes always move to trash (permanent=false) - "Delete Forever"
   // only exists from within the Trash view. Immich trashes a stack as one
   // atomic unit, so trashing an id that's still part of a stack would take
@@ -678,120 +629,13 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       }
       for (const stackId of stackIdsTouched) {
         const memberIds = await dissolveStack(stackId);
-        const remaining = memberIds.filter((id) => !idSet.has(id));
-        if (remaining.length >= 2) {
-          const newStack = await createStack(remaining);
-          const newInfo: AssetStackInfo = {
-            id: newStack.id,
-            primaryAssetId: newStack.primaryAssetId,
-            assetCount: remaining.length,
-          };
-          setStackByAssetId((m) => {
-            const next = new Map(m);
-            for (const id of remaining) next.set(id, newInfo);
-            return next;
-          });
-        }
+        await restackRemainder(memberIds.filter((id) => !idSet.has(id)));
       }
       await deleteAssets(ids, false);
       removeAssetsLocal(ids);
     },
-    [removeAssetsLocal, stackByAssetId, dissolveStack],
+    [removeAssetsLocal, stackByAssetId, dissolveStack, restackRemainder],
   );
-
-  // Creates a real stack (first id = pick, matching the prototype's
-  // "first selected" default), then updates the local stackByAssetId map so
-  // the non-primary members immediately hide from the grid without needing
-  // to refetch anything. Any id already belonging to a different stack (e.g.
-  // merging two existing stacks' picks together, or adding new assets to a
-  // stack whose non-primary members are hidden/unselected in the grid) has
-  // its old stack dissolved first - dissolveStack's returned member list is
-  // unioned into the new stack's ids so those hidden siblings get carried
-  // over instead of silently dropped, and so they don't keep a stale
-  // reference to a stack that's about to disappear.
-  const createStackForSelection = useCallback(
-    async (ids: string[]) => {
-      if (ids.length < 2) return;
-      const oldStackIds = new Set(ids.map((id) => stackByAssetId.get(id)?.id).filter((id): id is string => !!id));
-      const allIds = new Set(ids);
-      for (const oldId of oldStackIds) {
-        const memberIds = await dissolveStack(oldId);
-        for (const id of memberIds) allIds.add(id);
-      }
-      const finalIds = [ids[0], ...[...allIds].filter((id) => id !== ids[0])];
-      const stack = await createStack(finalIds);
-      const info: AssetStackInfo = { id: stack.id, primaryAssetId: stack.primaryAssetId, assetCount: finalIds.length };
-      setStackByAssetId((m) => {
-        const next = new Map(m);
-        for (const id of finalIds) next.set(id, info);
-        return next;
-      });
-      setSelected(new Set());
-    },
-    [stackByAssetId, dissolveStack],
-  );
-
-  // Smart Stack applies one createStack call per proposed group (pick first,
-  // same "first id = primary" convention createStackForSelection already
-  // uses) - sequential rather than Promise.all so a mid-batch failure stops
-  // cleanly and the dialog can report which point it got to via the thrown
-  // error, instead of an unordered pile of concurrent server requests.
-  const applySmartStackGroups = useCallback(
-    async (groups: SmartStackGroup[]) => {
-      for (const g of groups) {
-        // A group can include members merged in from an already-existing stack
-        // (SmartStackDialog's mergeExistingStacks) rather than skipping them -
-        // dissolve any such old stack(s) first so their members are free to
-        // join the new, unified one.
-        const oldStackIds = new Set(g.members.map((m) => m.stack?.id).filter((id): id is string => !!id));
-        for (const oldId of oldStackIds) await dissolveStack(oldId);
-        const ids = [g.pickId, ...g.members.map((m) => m.id).filter((id) => id !== g.pickId)];
-        const stack = await createStack(ids);
-        const info: AssetStackInfo = { id: stack.id, primaryAssetId: stack.primaryAssetId, assetCount: ids.length };
-        setStackByAssetId((m) => {
-          const next = new Map(m);
-          for (const id of ids) next.set(id, info);
-          return next;
-        });
-      }
-      setSelected(new Set());
-    },
-    [dissolveStack],
-  );
-
-  const setStackPickAction = useCallback(async (stackId: string, assetId: string, memberIds: string[]) => {
-    await setStackPick(stackId, assetId);
-    const info: AssetStackInfo = { id: stackId, primaryAssetId: assetId, assetCount: memberIds.length };
-    setStackByAssetId((m) => {
-      const next = new Map(m);
-      for (const id of memberIds) next.set(id, info);
-      return next;
-    });
-  }, []);
-
-  const unstack = useCallback(async (stackId: string, memberIds: string[]) => {
-    await deleteStack(stackId);
-    setStackByAssetId((m) => {
-      const next = new Map(m);
-      for (const id of memberIds) next.delete(id);
-      return next;
-    });
-    setExpandedStacks((s) => {
-      if (!s.has(stackId)) return s;
-      const next = new Set(s);
-      next.delete(stackId);
-      return next;
-    });
-  }, []);
-
-  const toggleStackExpand = useCallback((stackId: string) => {
-    setExpandedStacks((s) => {
-      const next = new Set(s);
-      if (next.has(stackId)) next.delete(stackId);
-      else next.add(stackId);
-      return next;
-    });
-  }, []);
 
   // Stabilized (rather than inline arrow functions in the render below) so
   // the memoized row components (see PhotoRow type/render further down) can
@@ -800,21 +644,6 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   const handleRowContextMenu = useCallback((assetId: string, x: number, y: number) => setContextMenu({ assetId, x, y }), []);
   const handleRowRate = useCallback((id: string, rating: number) => commitEdit(id, { rating }), [commitEdit]);
   const resolveAsset = useCallback((id: string) => assetByIdAll.get(id), [assetByIdAll]);
-
-  // Context menu / Viewer's Unstack button don't already have a member list
-  // handy the way StackBand does (it just fetched one) - fetch it fresh
-  // rather than trust whatever happens to be in assetCache, since non-primary
-  // members aren't guaranteed to be loaded there.
-  const unstackByStackId = useCallback(
-    async (stackId: string) => {
-      const info = await getStack(stackId);
-      await unstack(
-        stackId,
-        info.assets.map((a) => a.id),
-      );
-    },
-    [unstack],
-  );
 
   const openIndex = openId ? flatIds.indexOf(openId) : -1;
   // Looked up via assetByIdAll (not assetById/flatIds) for two reasons: (1)
@@ -1880,6 +1709,8 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           onBatchArtRoundTrip={rawRoundTripEnabled ? () => requestBatchArtRoundTrip([...selected]) : undefined}
           onAddToAlbum={() => setAddToAlbumTargets([...selected])}
           onAddToTag={() => setAddToTagTargets([...selected])}
+          onBulkUnstack={() => unstackSelection().catch((e) => setEnqueueError(String(e)))}
+          hasStackedSelection={hasStackedSelection}
         />
       )}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
@@ -2043,6 +1874,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           candidateAssets={selectedAssets}
           onApply={applySmartStackGroups}
           onClose={() => setSmartStackOpen(false)}
+          stackByAssetId={stackByAssetId}
         />
       )}
       {exportFolderAssets && (

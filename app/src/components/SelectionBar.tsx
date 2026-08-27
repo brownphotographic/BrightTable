@@ -51,6 +51,8 @@ export default function SelectionBar({
   onRemoveFromAlbum,
   onAddToTag,
   onRemoveFromTag,
+  onBulkUnstack,
+  hasStackedSelection,
 }: {
   count: number;
   onCancel: () => void;
@@ -112,6 +114,14 @@ export default function SelectionBar({
   // selection from the tag currently open, same reasoning as
   // onRemoveFromAlbum.
   onRemoveFromTag?: () => void;
+  // Dissolves every stack touched by the current selection - only offered
+  // by PhotosBrowser today (the only caller that tracks stackByAssetId and
+  // wires this in at all). When provided together with hasStackedSelection,
+  // it takes over the Add to Tag button's slot instead of adding a new one.
+  onBulkUnstack?: () => void;
+  // Whether any asset in the current selection belongs to a stack - flips
+  // the shared button slot from Add to Tag to Unstack.
+  hasStackedSelection?: boolean;
 }) {
   const canStack = count >= 2;
   // Both editors are a single-file launch (see Viewer.tsx's handleLaunch) -
@@ -170,15 +180,22 @@ export default function SelectionBar({
           Add to Album
         </BarButton>
       )}
-      {onAddToTag && (
-        <BarButton
-          onClick={onAddToTag}
-          disabled={!!TAG_ASSIGN_DISABLED_REASON}
-          title={TAG_ASSIGN_DISABLED_REASON ?? 'Add this selection to a tag'}
-        >
-          <TagIcon />
-          Add to Tag
+      {onBulkUnstack && hasStackedSelection ? (
+        <BarButton onClick={onBulkUnstack} title="Dissolve the stack(s) in this selection">
+          <StackIcon />
+          Unstack
         </BarButton>
+      ) : (
+        onAddToTag && (
+          <BarButton
+            onClick={onAddToTag}
+            disabled={!!TAG_ASSIGN_DISABLED_REASON}
+            title={TAG_ASSIGN_DISABLED_REASON ?? 'Add this selection to a tag'}
+          >
+            <TagIcon />
+            Add to Tag
+          </BarButton>
+        )
       )}
       {onStack && (
         <BarButton onClick={onStack} disabled={!canStack}>

@@ -16,9 +16,18 @@
  */
 
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { getStack, type AssetSummary } from '../lib/api';
+import { getStack, searchAssetsByFilename, type AssetStackInfo, type AssetSummary } from '../lib/api';
 import { isRawAsset } from '../lib/filters';
-import { agGroups, mergeExistingStacks, TOL, toleranceSeconds, type SmartStackGroup, type SmartStackMode } from '../lib/smartStack';
+import {
+  agGroups,
+  baseName,
+  mergeExistingStacks,
+  mergeFilenameSiblings,
+  TOL,
+  toleranceSeconds,
+  type SmartStackGroup,
+  type SmartStackMode,
+} from '../lib/smartStack';
 import { useSmartStackSettings } from '../lib/smartStackSettings';
 import { overlayRawOverrides, useRawOverrides } from '../lib/rawOverrides';
 import AssetThumbImage from './AssetThumb';
@@ -38,10 +47,18 @@ export default function SmartStackDialog({
   candidateAssets,
   onClose,
   onApply,
+  stackByAssetId,
 }: {
   candidateAssets: AssetSummary[];
   onClose: () => void;
   onApply: (groups: SmartStackGroup[]) => Promise<void>;
+  // Cross-referenced onto assets fetched by the Version-mode sibling search
+  // below (see filenameSiblings) - a sibling found via search_by_filename
+  // hasn't gone through PhotosBrowser's own stack overlay, so without this
+  // it would look unstacked here even if it's secretly already part of a
+  // different stack, and applySmartStackGroups relies on member.stack?.id
+  // to know which old stack to dissolve before creating the new one.
+  stackByAssetId: Map<string, AssetStackInfo>;
 }) {
   const { settings, setSettings } = useSmartStackSettings();
   const { overrideIds } = useRawOverrides();
@@ -51,9 +68,16 @@ export default function SmartStackDialog({
   // below, fetched lazily as new ones show up - see mergeExistingStacks for
   // why an already-stacked asset in the selection isn't simply skipped.
   const [existingStackMembers, setExistingStackMembers] = useState<Map<string, AssetSummary[]>>(new Map());
+  // Version mode's own version of existingStackMembers - base name -> RAW/
+  // JPEG siblings a library-wide filename search found for it, fetched
+  // lazily and cached the same way (see the effect below), so re-toggling
+  // the checkbox or switching modes and back doesn't refetch anything
+  // already known.
+  const [filenameSiblings, setFilenameSiblings] = useState<Map<string, AssetSummary[]>>(new Map());
 
   const baseGroups = useMemo(
-    () => agGroups(candidateAssets, settings.mode, settings.suffix, toleranceSeconds(settings.tolerance)),
+    () =>
+      agGroups(candidateAssets, settings.mode, settings.suffix, toleranceSeconds(settings.tolerance), settings.namePickPreference),
     [candidateAssets, settings],
   );
 
@@ -83,10 +107,52 @@ export default function SmartStackDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [referencedStackIds]);
 
-  const groups = useMemo(
-    () => mergeExistingStacks(baseGroups, settings.mode, existingStackMembers),
-    [baseGroups, settings.mode, existingStackMembers],
-  );
+  // Only relevant in Version mode with the sibling checkbox on - the set of
+  // group keys (un-suffixed base names) that should have a library-wide
+  // filename lookup fired for them.
+  const versionGroupKeys = useMemo(() => {
+    if (settings.mode !== 'version' || !settings.versionIncludeSiblings) return new Set<string>();
+    return new Set(baseGroups.map((g) => g.key));
+  }, [baseGroups, settings.mode, settings.versionIncludeSiblings]);
+
+  useEffect(() => {
+    const missing = [...versionGroupKeys].filter((k) => !filenameSiblings.has(k));
+    if (!missing.length) return;
+    let cancelled = false;
+    Promise.all(
+      missing.map((key) =>
+        searchAssetsByFilename(key).then((assets) => {
+          // Exact base-name re-check regardless of what matching mode the
+          // server used (e.g. "IMG_100" shouldn't pull in "IMG_1000"), plus
+          // cross-referencing real stack membership onto these freshly-
+          // fetched assets - see stackByAssetId's doc comment above.
+          const exact = assets.filter((a) => baseName(a) === key);
+          const overlaid = exact.map((a) => ({ ...a, stack: stackByAssetId.get(a.id) ?? a.stack ?? null }));
+          return [key, overlayRawOverrides(overlaid, overrideIds)] as const;
+        }),
+      ),
+    )
+      .then((pairs) => {
+        if (cancelled) return;
+        setFilenameSiblings((m) => {
+          const next = new Map(m);
+          for (const [key, assets] of pairs) next.set(key, assets);
+          return next;
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [versionGroupKeys]);
+
+  const groups = useMemo(() => {
+    const merged = mergeExistingStacks(baseGroups, settings.mode, existingStackMembers, settings.namePickPreference);
+    return settings.mode === 'version' && settings.versionIncludeSiblings
+      ? mergeFilenameSiblings(merged, settings.mode, filenameSiblings, settings.namePickPreference)
+      : merged;
+  }, [baseGroups, settings.mode, settings.versionIncludeSiblings, existingStackMembers, filenameSiblings, settings.namePickPreference]);
 
   const selN = candidateAssets.length;
   const emptyText =
@@ -179,6 +245,23 @@ export default function SmartStackDialog({
           </div>
           <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.5, minHeight: 36 }}>{MODE_DESC[settings.mode]}</div>
 
+          {settings.mode === 'name' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+              <span style={{ fontSize: 13, color: 'var(--text-dim)', flexShrink: 0 }}>Prefer as pick</span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {(['raw', 'jpeg'] as const).map((p) => (
+                  <div
+                    key={p}
+                    onClick={() => setSettings({ ...settings, namePickPreference: p })}
+                    style={{ ...segStyle(settings.namePickPreference === p), flex: 'initial', minWidth: 70, padding: '0 14px' }}
+                  >
+                    {p === 'raw' ? 'RAW' : 'JPEG'}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {settings.mode === 'version' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
               <span style={{ fontSize: 13, color: 'var(--text-dim)', flexShrink: 0 }}>Version pattern</span>
@@ -198,6 +281,17 @@ export default function SmartStackDialog({
                 }}
               />
             </div>
+          )}
+
+          {settings.mode === 'version' && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 12.5, color: 'var(--text-dim)' }}>
+              <input
+                type="checkbox"
+                checked={settings.versionIncludeSiblings}
+                onChange={(e) => setSettings({ ...settings, versionIncludeSiblings: e.target.checked })}
+              />
+              Automatically include unselected RAW/JPEG siblings found elsewhere in the library
+            </label>
           )}
 
           {settings.mode === 'time' && (

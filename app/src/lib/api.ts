@@ -48,6 +48,8 @@ export interface SmartStackSettings {
   mode: 'name' | 'version' | 'time';
   suffix: string;
   tolerance: number;
+  namePickPreference: 'raw' | 'jpeg';
+  versionIncludeSiblings: boolean;
 }
 
 // Mirrors apps.rs's AppKind - Native/Flatpak/Snap are detected from real
@@ -639,6 +641,15 @@ export function untagAssets(tagId: string, assetIds: string[]): Promise<void> {
 // immich/mod.rs).
 export function searchAssets(query: string): Promise<AssetSummary[]> {
   return invoke('search_assets', { query });
+}
+
+// POST /search/metadata with an originalFileName filter - a cheap
+// DB-indexed lookup (not CLIP search), used by Smart Stack's Version mode
+// to find a RAW/JPEG sibling sharing a group's base name that wasn't part
+// of the current selection. `filename` is passed extension-less; see
+// search_by_filename's doc comment in immich/mod.rs.
+export function searchAssetsByFilename(filename: string): Promise<AssetSummary[]> {
+  return invoke('search_assets_by_filename', { filename });
 }
 
 // GET /assets/{id} - the only reliable way to learn an asset's assigned

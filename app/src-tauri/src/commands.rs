@@ -1435,6 +1435,13 @@ pub async fn search_assets(state: State<'_, AppState>, query: String) -> Result<
 }
 
 #[tauri::command]
+pub async fn search_assets_by_filename(state: State<'_, AppState>, filename: String) -> Result<Vec<AssetSummary>, String> {
+    let cfg = state.library_config();
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
+    client.search_by_filename(&filename).await
+}
+
+#[tauri::command]
 pub async fn get_asset(state: State<'_, AppState>, asset_id: String) -> Result<AssetSummary, String> {
     let cfg = state.library_config();
     let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;

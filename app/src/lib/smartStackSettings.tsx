@@ -19,7 +19,13 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { getConfig, saveSmartStackSettings, type SmartStackSettings } from './api';
 import { onConfigReloaded } from './configEvents';
 
-const DEFAULT_SETTINGS: SmartStackSettings = { mode: 'name', suffix: '*converted*', tolerance: 10 };
+const DEFAULT_SETTINGS: SmartStackSettings = {
+  mode: 'name',
+  suffix: '*converted*',
+  tolerance: 10,
+  namePickPreference: 'raw',
+  versionIncludeSiblings: true,
+};
 
 interface SmartStackSettingsContextValue {
   settings: SmartStackSettings;

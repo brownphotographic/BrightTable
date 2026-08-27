@@ -33,9 +33,13 @@ import {
   type TagDetail,
   type TagSummary,
 } from '../lib/api';
+import { useStacking } from '../lib/useStacking';
+import { isHiddenStackChild } from '../lib/stacks';
 import AssetTile, { type ClickMods } from '../components/AssetTile';
 import GridLoupePane from '../components/GridLoupePane';
 import SelectionBar from '../components/SelectionBar';
+import StackBand from '../components/StackBand';
+import SmartStackDialog from '../components/SmartStackDialog';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import AddToAlbumDialog from '../components/AddToAlbumDialog';
 import AddToTagDialog, { TAG_COLORS } from '../components/AddToTagDialog';
@@ -121,6 +125,21 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; assetId: string } | null>(null);
   const [confirmDeleteSelection, setConfirmDeleteSelection] = useState(false);
   const [confirmRemoveSelection, setConfirmRemoveSelection] = useState(false);
+  const [smartStackOpen, setSmartStackOpen] = useState(false);
+  const {
+    stackByAssetId,
+    expandedStacks,
+    toggleStackExpand,
+    dissolveStack,
+    restackRemainder,
+    createStackForSelection,
+    applySmartStackGroups,
+    setStackPickAction,
+    unstack,
+    unstackByStackId,
+    unstackSelection,
+    hasStackedSelection,
+  } = useStacking(selected, setSelected);
   // See FoldersBrowser.tsx's identical state/effect/ref - which tile the
   // cursor is currently over while loupeOn, driving GridLoupePane's preview
   // (cleared on loupe off), plus a never-cleared mirror ref used only to
@@ -186,17 +205,36 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
       .catch((e) => setDetailError(String(e)));
   }, [openTagId]);
 
+  // Cross-references stack membership onto this tag's assets - see
+  // useStacking and PhotosBrowser.tsx's identical note. isHiddenStackChild
+  // then keeps a stack's non-pick members out of the grid/selection/keynav,
+  // while assetByIdAll below still resolves them by id for StackBand/
+  // Viewer/context-menu targets.
+  const overlaidAssets = useMemo(
+    () => (tag?.assets ?? []).map((a) => ({ ...a, stack: stackByAssetId.get(a.id) ?? null })),
+    [tag, stackByAssetId],
+  );
+  const visibleAssets = useMemo(() => overlaidAssets.filter((a) => !isHiddenStackChild(a)), [overlaidAssets]);
+
   const assetById = useMemo(() => {
     const map = new Map<string, AssetSummary>();
-    for (const a of tag?.assets ?? []) map.set(a.id, a);
+    for (const a of visibleAssets) map.set(a.id, a);
     return map;
-  }, [tag]);
+  }, [visibleAssets]);
 
-  const flatIds = useMemo(() => (tag?.assets ?? []).map((a) => a.id), [tag]);
+  const assetByIdAll = useMemo(() => {
+    const map = new Map<string, AssetSummary>();
+    for (const a of overlaidAssets) map.set(a.id, a);
+    return map;
+  }, [overlaidAssets]);
 
+  const flatIds = useMemo(() => visibleAssets.map((a) => a.id), [visibleAssets]);
+
+  // assetByIdAll (not assetById) so selecting a non-pick stack member from
+  // StackBand still resolves here - see PhotosBrowser.tsx's identical note.
   const selectedAssets = useMemo(
-    () => [...selected].map((id) => assetById.get(id)).filter((a): a is AssetSummary => !!a),
-    [selected, assetById],
+    () => [...selected].map((id) => assetByIdAll.get(id)).filter((a): a is AssetSummary => !!a),
+    [selected, assetByIdAll],
   );
   const allSelectedFavorited = selectedAssets.length > 0 && selectedAssets.every((a) => a.isFavorite);
 
@@ -283,12 +321,24 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
     commitEditMany([...selected], { isFavorite: !allSelectedFavorited }).catch(() => {});
   }, [selected, allSelectedFavorited, commitEditMany]);
 
+  // Immich trashes a stack as one atomic unit - see PhotosBrowser.tsx's
+  // identical removeAssets for the full explanation.
   const trashAssets = useCallback(
     async (ids: string[]) => {
+      const idSet = new Set(ids);
+      const stackIdsTouched = new Set<string>();
+      for (const id of ids) {
+        const info = stackByAssetId.get(id);
+        if (info) stackIdsTouched.add(info.id);
+      }
+      for (const stackId of stackIdsTouched) {
+        const memberIds = await dissolveStack(stackId);
+        await restackRemainder(memberIds.filter((id) => !idSet.has(id)));
+      }
       await deleteAssets(ids, false);
       removeAssetsLocal(ids);
     },
-    [removeAssetsLocal],
+    [removeAssetsLocal, stackByAssetId, dissolveStack, restackRemainder],
   );
 
   const removeFromTag = useCallback(
@@ -306,8 +356,13 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
   }, []);
 
   const openIndex = openId ? flatIds.indexOf(openId) : -1;
-  const openAsset = openId ? assetById.get(openId) ?? null : null;
-  const stripAssets = useMemo(() => tag?.assets ?? [], [tag]);
+  // assetByIdAll so opening a non-pick stack member (StackBand's onOpen)
+  // still resolves - see PhotosBrowser.tsx's identical note.
+  const openAsset = openId ? assetByIdAll.get(openId) ?? null : null;
+  const stripAssets = useMemo(
+    () => flatIds.map((id) => assetById.get(id)).filter((a): a is AssetSummary => !!a),
+    [flatIds, assetById],
+  );
 
   const selectAll = useCallback(() => setSelected(new Set(flatIds)), [flatIds]);
   const deselectAll = useCallback(() => setSelected(new Set()), []);
@@ -356,9 +411,19 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
 
   const contextMenuItems: ContextMenuItem[] = useMemo(() => {
     if (!contextMenu) return [];
-    const asset = assetById.get(contextMenu.assetId);
+    // assetByIdAll (not assetById) so a right-click forwarded from inside an
+    // expanded StackBand still resolves - see PhotosBrowser.tsx's identical
+    // note.
+    const asset = assetByIdAll.get(contextMenu.assetId);
     const targetIds = selected.size >= 2 ? [...selected] : asset ? [asset.id] : [];
     const items: ContextMenuItem[] = [];
+    if (selected.size >= 2) {
+      items.push({ label: `Stack ${selected.size} Photos`, onClick: () => createStackForSelection([...selected]).catch(() => {}) });
+      items.push({ label: `Smart Stack ${selected.size} Photos`, onClick: () => setSmartStackOpen(true) });
+    }
+    if (asset?.stack) {
+      items.push({ label: 'Unstack', onClick: () => unstackByStackId(asset.stack!.id).catch(() => {}) });
+    }
     if (targetIds.length > 0) {
       items.push({
         label: targetIds.length > 1 ? `Add ${targetIds.length} Photos to Album…` : 'Add to Album…',
@@ -378,7 +443,7 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
       items.push({ label: 'Show in File Manager', onClick: () => handleShowInFileManager(asset) });
     }
     if (targetIds.length > 0) {
-      const exportAssets = targetIds.map((id) => assetById.get(id)).filter((a): a is AssetSummary => !!a);
+      const exportAssets = targetIds.map((id) => assetByIdAll.get(id)).filter((a): a is AssetSummary => !!a);
       items.push({ label: 'Export to Folder…', onClick: () => setExportFolderAssets(exportAssets) });
       items.push({ label: 'Share to Flickr…', onClick: () => setExportFlickrAssets(exportAssets) });
     }
@@ -389,7 +454,7 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
       });
     }
     return items;
-  }, [contextMenu, assetById, selected, removeFromTag, handleShowInFileManager, trashAssets]);
+  }, [contextMenu, assetByIdAll, selected, removeFromTag, handleShowInFileManager, trashAssets, createStackForSelection, unstackByStackId]);
 
   useImperativeHandle(
     ref,
@@ -690,6 +755,8 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
         <SelectionBar
           count={selected.size}
           onCancel={deselectAll}
+          onStack={() => createStackForSelection([...selected]).catch(() => {})}
+          onSmartStack={() => setSmartStackOpen(true)}
           onFavorite={toggleFavoriteForSelection}
           allFavorited={allSelectedFavorited}
           onRate={(rating) => commitEditMany([...selected], { rating }).catch(() => {})}
@@ -701,32 +768,57 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
           onAddToAlbum={() => setAddToAlbumTargets([...selected])}
           onAddToTag={() => setAddToTagTargets([...selected])}
           onRemoveFromTag={() => setConfirmRemoveSelection(true)}
+          onBulkUnstack={() => unstackSelection().catch((e) => setEnqueueError(String(e)))}
+          hasStackedSelection={hasStackedSelection}
         />
         </div>
       )}
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div ref={gridContainerRef} style={{ flex: loupeOn ? '0 0 33.333%' : 1, overflow: 'auto', minHeight: 0, padding: 16, background: 'var(--canvas)' }}>
-          {tag.assets.length === 0 ? (
+          {visibleAssets.length === 0 ? (
             <div style={{ color: 'var(--text-dimmer)', fontSize: 12.5 }}>
               No photos tagged yet — select photos anywhere and use "Add to Tag".
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${thumbSize}px, 1fr))`, gap: 12 }}>
-              {tag.assets.map((a) => (
-                <AssetTile
-                  key={a.id}
-                  asset={a}
-                  selected={selected.has(a.id)}
-                  onToggleSelect={handleThumbClick}
-                  onToggleOne={toggleOne}
-                  onOpen={setOpenId}
-                  onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
-                  onRate={(id, rating) => commitEdit(id, { rating })}
-                  loupeMode={loupeOn}
-                  onHoverAsset={handleHoverAsset}
-                />
-              ))}
+              {visibleAssets.map((a) => {
+                if (a.stack && a.stack.primaryAssetId === a.id && expandedStacks.has(a.stack.id)) {
+                  const stackId = a.stack.id;
+                  return (
+                    <StackBand
+                      key={a.id}
+                      stackId={stackId}
+                      selected={selected}
+                      onSelectMember={(id) => handleThumbClick(id, { shiftKey: false, ctrlKey: false, metaKey: false })}
+                      onOpen={setOpenId}
+                      onCollapse={() => toggleStackExpand(stackId)}
+                      onUnstack={(memberIds) => unstack(stackId, memberIds)}
+                      onSetPick={(assetId, memberIds) => setStackPickAction(stackId, assetId, memberIds)}
+                      onRate={(id, rating) => commitEdit(id, { rating })}
+                      onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
+                      resolveAsset={(id) => assetByIdAll.get(id)}
+                      loupeMode={loupeOn}
+                      onHoverAsset={handleHoverAsset}
+                    />
+                  );
+                }
+                return (
+                  <AssetTile
+                    key={a.id}
+                    asset={a}
+                    selected={selected.has(a.id)}
+                    onToggleSelect={handleThumbClick}
+                    onToggleOne={toggleOne}
+                    onOpen={setOpenId}
+                    onContextMenu={(assetId, x, y) => setContextMenu({ assetId, x, y })}
+                    onToggleStackExpand={toggleStackExpand}
+                    onRate={(id, rating) => commitEdit(id, { rating })}
+                    loupeMode={loupeOn}
+                    onHoverAsset={handleHoverAsset}
+                  />
+                );
+              })}
             </div>
           )}
         </div>
@@ -746,6 +838,15 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
           onSelect={setOpenId}
           onEdit={commitEdit}
           onDelete={(id) => trashAssets([id])}
+          onUnstack={openAsset.stack ? () => unstackByStackId(openAsset.stack!.id).catch(() => {}) : undefined}
+        />
+      )}
+      {smartStackOpen && (
+        <SmartStackDialog
+          candidateAssets={selectedAssets}
+          onClose={() => setSmartStackOpen(false)}
+          onApply={applySmartStackGroups}
+          stackByAssetId={stackByAssetId}
         />
       )}
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenuItems} onClose={() => setContextMenu(null)} />}

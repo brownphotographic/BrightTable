@@ -1025,6 +1025,27 @@ impl ImmichClient {
         self.search_paginated("/search/smart", body, 3).await
     }
 
+    /// POST /search/metadata with an `originalFileName` filter - Smart
+    /// Stack's Version mode uses this to look up RAW/JPEG siblings sharing
+    /// a group's base name that the user didn't include in their selection
+    /// (see SmartStackDialog's sibling-expansion effect). A cheap
+    /// DB-indexed lookup, not a CLIP embedding search like search_smart, so
+    /// a small page cap (1) is plenty - there are only ever a couple of
+    /// files sharing one base name. `filename` is passed extension-less
+    /// (the group's un-suffixed base name); results are re-filtered
+    /// client-side against an exact base-name match (smartStack.ts's
+    /// baseName()) regardless of whether the server does exact/prefix/
+    /// substring matching on this field, since a loose server-side match
+    /// (e.g. "IMG_100" also matching "IMG_1000") would otherwise merge
+    /// unrelated files into the group.
+    pub async fn search_by_filename(&self, filename: &str) -> Result<Vec<models::AssetSummary>, String> {
+        let mut body = serde_json::Map::new();
+        body.insert("originalFileName".into(), serde_json::json!(filename));
+        body.insert("withExif".into(), serde_json::json!(true));
+        body.insert("size".into(), serde_json::json!(50));
+        self.search_paginated("/search/metadata", body, 1).await
+    }
+
     /// GET /assets/{id} - a single asset's full detail. Confirmed against
     /// Immich's own server source (`asset.repository.ts`'s `withTags`
     /// helper) that `/search/metadata` and `/search/smart` do **not** join

@@ -309,6 +309,7 @@ pub fn run() {
             commands::tag_assets,
             commands::untag_assets,
             commands::search_assets,
+            commands::search_assets_by_filename,
             commands::get_asset,
             commands::check_sidecar_metadata,
             commands::get_folder_paths,
