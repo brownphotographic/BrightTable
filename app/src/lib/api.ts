@@ -337,6 +337,35 @@ export interface EditQueueStatus {
   pendingCount: number;
 }
 
+export type StackJobStatus = 'pending' | 'working' | 'done' | 'failed';
+export type StackJobKind = { kind: 'dissolve'; stackId: string } | { kind: 'create'; assetIds: string[] };
+
+// Mirrors stack_queue.rs's StackJob - one row of the background stack
+// create/dissolve queue's advisory activity panel. useStacking.ts's
+// waitForStackJobs also polls this directly to know when a batch it just
+// enqueued has settled, since dependent steps (a Create that needs a prior
+// Dissolve wave's freed ids) can't proceed until then.
+export interface StackJob {
+  jobId: number;
+  kind: StackJobKind;
+  status: StackJobStatus;
+  createdAtMs: number;
+  finishedAtMs: number | null;
+  error: string | null;
+  // Dissolve only: the freed member ids - null if the stack was already
+  // gone server-side (the caller falls back to its own stackByAssetId
+  // cache in that case, same tolerance the old sequential loop had).
+  resultMemberIds: string[] | null;
+  // Create only: the new stack's id/pick.
+  resultStackId: string | null;
+  resultPrimaryAssetId: string | null;
+}
+
+export interface StackQueueStatus {
+  jobs: StackJob[];
+  pendingCount: number;
+}
+
 export function getConfig(): Promise<AppConfig> {
   return invoke('get_config');
 }
@@ -506,6 +535,28 @@ export function listStacks(): Promise<StackInfo[]> {
 
 export function setStackPick(stackId: string, assetId: string): Promise<void> {
   return invoke('set_stack_pick', { stackId, assetId });
+}
+
+// Enqueues one background Dissolve job per stack id - see stack_queue.rs.
+// Returns the assigned job ids; useStacking.ts's waitForStackJobs polls
+// getStackQueueStatus for their outcomes rather than awaiting this call
+// itself doing the work synchronously.
+export function enqueueStackDissolve(stackIds: string[]): Promise<number[]> {
+  return invoke('enqueue_stack_dissolve', { stackIds });
+}
+
+// Enqueues one background Create job per requested id list (first id of
+// each = pick) - see stack_queue.rs.
+export function enqueueStackCreate(requests: string[][]): Promise<number[]> {
+  return invoke('enqueue_stack_create', { requests });
+}
+
+export function getStackQueueStatus(): Promise<StackQueueStatus> {
+  return invoke('get_stack_queue_status');
+}
+
+export function clearCompletedStackJobs(): Promise<void> {
+  return invoke('clear_completed_stack_jobs');
 }
 
 // Corrects an asset's indexed capture date - used by the round-trip watcher

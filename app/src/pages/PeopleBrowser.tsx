@@ -133,8 +133,7 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
     stackByAssetId,
     expandedStacks,
     toggleStackExpand,
-    dissolveStack,
-    restackRemainder,
+    dissolveAndRestackMany,
     createStackForSelection,
     applySmartStackGroups,
     setStackPickAction,
@@ -142,6 +141,7 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
     unstackByStackId,
     unstackSelection,
     hasStackedSelection,
+    busy: stackBusy,
   } = useStacking(selected, setSelected);
   // See FoldersBrowser.tsx's identical state/effect/ref - which tile the
   // cursor is currently over while loupeOn, driving GridLoupePane's preview
@@ -361,14 +361,11 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
         const info = stackByAssetId.get(id);
         if (info) stackIdsTouched.add(info.id);
       }
-      for (const stackId of stackIdsTouched) {
-        const memberIds = await dissolveStack(stackId);
-        await restackRemainder(memberIds.filter((id) => !idSet.has(id)));
-      }
+      await dissolveAndRestackMany([...stackIdsTouched], idSet);
       await deleteAssets(ids, false);
       removeAssetsLocal(ids);
     },
-    [removeAssetsLocal, stackByAssetId, dissolveStack, restackRemainder],
+    [removeAssetsLocal, stackByAssetId, dissolveAndRestackMany],
   );
 
   const handleShowInFileManager = useCallback((asset: AssetSummary) => {
@@ -658,6 +655,7 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
           onAddToTag={() => setAddToTagTargets([...selected])}
           onBulkUnstack={() => unstackSelection().catch((e) => setEnqueueError(String(e)))}
           hasStackedSelection={hasStackedSelection}
+          stackBusy={stackBusy}
         />
         </div>
       )}

@@ -43,6 +43,7 @@ mod reveal;
 mod rotate;
 mod round_trip;
 mod secure_store;
+mod stack_queue;
 mod state;
 #[cfg(target_os = "linux")]
 mod suspend_guard;
@@ -154,6 +155,7 @@ pub fn run() {
             let (processing_queue, processing_queue_rx) = processing_queue::ProcessingQueue::new(asset_locks.clone());
             let (art_queue, art_queue_rx) = art_queue::ArtQueue::new();
             let (export_queue, export_queue_rx) = export_queue::ExportQueue::new();
+            let (stack_queue, stack_queue_rx) = stack_queue::StackQueue::new();
             // Starts empty - filled in by the background thread below once
             // the vault finishes opening, and swapped for a freshly-reopened
             // one later if `config::set_settings_folder`/`set_share_vault`
@@ -161,7 +163,7 @@ pub fn run() {
             // why this needs to be replaceable rather than write-once.
             let secret_vault: std::sync::Arc<std::sync::RwLock<Option<secure_store::SecretVault>>> =
                 std::sync::Arc::new(std::sync::RwLock::new(None));
-            app.manage(AppState::new(cfg, secret_vault.clone(), edit_queue, import_queue, round_trip.clone(), processing_queue, art_queue, export_queue));
+            app.manage(AppState::new(cfg, secret_vault.clone(), edit_queue, import_queue, round_trip.clone(), processing_queue, art_queue, export_queue, stack_queue));
 
             // Stronghold's snapshot decrypt is fast now (see
             // `secure_store::use_low_encrypt_work_factor`), but a vault
@@ -202,6 +204,7 @@ pub fn run() {
             tauri::async_runtime::spawn(processing_queue::run(app.handle().clone(), processing_queue_rx));
             tauri::async_runtime::spawn(art_queue::run(app.handle().clone(), art_queue_rx));
             tauri::async_runtime::spawn(export_queue::run(app.handle().clone(), export_queue_rx));
+            tauri::async_runtime::spawn(stack_queue::run(app.handle().clone(), stack_queue_rx));
 
             #[cfg(target_os = "linux")]
             {
@@ -236,12 +239,13 @@ pub fn run() {
             Ok(())
         })
         // The one deliberate, narrow use of a Tauri event in this
-        // architecture: everything else about either queue is advisory/
-        // polled (see edit_queue.rs/import/queue.rs), but a hard window
-        // close can't be a silent data-loss risk, so this intercepts it and
-        // lets the frontend warn (not hard-block - "Quit anyway" calls
-        // commands::force_quit) whenever a job is still in flight in
-        // either queue. Combined into one count: an in-flight import copy
+        // architecture: everything else about any of these queues is
+        // advisory/polled (see edit_queue.rs/import/queue.rs/
+        // stack_queue.rs), but a hard window close can't be a silent
+        // data-loss risk, so this intercepts it and lets the frontend warn
+        // (not hard-block - "Quit anyway" calls commands::force_quit)
+        // whenever a job is still in flight in any of them. Combined into
+        // one count: an in-flight import copy
         // is no less worth warning about than an in-flight metadata edit,
         // and the frontend's dialog doesn't need to distinguish which
         // queue the count came from to do its job.
@@ -252,7 +256,8 @@ pub fn run() {
                     + state.import_queue.pending_count()
                     + state.processing_queue.pending_count()
                     + state.art_queue.pending_count()
-                    + state.export_queue.pending_count();
+                    + state.export_queue.pending_count()
+                    + state.stack_queue.pending_count();
                 if pending > 0 {
                     api.prevent_close();
                     let _ = window.emit("queue-close-blocked", pending);
@@ -287,6 +292,10 @@ pub fn run() {
             commands::get_stack,
             commands::list_stacks,
             commands::set_stack_pick,
+            commands::enqueue_stack_dissolve,
+            commands::enqueue_stack_create,
+            commands::get_stack_queue_status,
+            commands::clear_completed_stack_jobs,
             commands::set_asset_capture_date,
             commands::regenerate_asset_thumbnail,
             commands::rotate_asset,

@@ -24,6 +24,7 @@ use crate::io_guard::IoGuard;
 use crate::processing_queue::ProcessingQueue;
 use crate::round_trip::RoundTripWatcher;
 use crate::secure_store::SecretVault;
+use crate::stack_queue::StackQueue;
 use std::sync::{Arc, Mutex, RwLock};
 use sysinfo::System;
 
@@ -96,6 +97,10 @@ pub struct AppState {
     /// `export_queue.rs`. Same "spawned once from `.setup()`" pattern as
     /// the other background queues.
     pub export_queue: Arc<ExportQueue>,
+    /// Background stack create/dissolve queue - see `stack_queue.rs`. Same
+    /// "spawned once from `.setup()`" pattern as the other background
+    /// queues.
+    pub stack_queue: Arc<StackQueue>,
     /// Kept alive across polls (rather than a fresh `System` per call) so
     /// `Process::cpu_usage()` has a previous sample to diff against - see
     /// `commands::get_resource_usage`.
@@ -116,6 +121,7 @@ impl AppState {
         processing_queue: Arc<ProcessingQueue>,
         art_queue: Arc<ArtQueue>,
         export_queue: Arc<ExportQueue>,
+        stack_queue: Arc<StackQueue>,
     ) -> Self {
         // Captured before `config` moves into the `Mutex` below - same "read
         // once at startup to size a semaphore" contract as
@@ -134,6 +140,7 @@ impl AppState {
             processing_queue,
             art_queue,
             export_queue,
+            stack_queue,
             resource_monitor: Mutex::new(System::new()),
             num_cpus: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
         }

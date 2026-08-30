@@ -31,6 +31,7 @@ import { ClipboardProvider } from './lib/clipboard';
 import { ProcessingQueueProvider } from './lib/processingQueue';
 import { ArtQueueProvider } from './lib/artQueue';
 import { ExportQueueProvider } from './lib/exportQueue';
+import { StackQueueProvider } from './lib/stackQueue';
 import { forceQuit } from './lib/api';
 import TitleBar from './components/TitleBar';
 import ResizeHandles from './components/ResizeHandles';
@@ -64,9 +65,11 @@ export default function App() {
                       <ProcessingQueueProvider>
                         <ArtQueueProvider>
                           <ExportQueueProvider>
-                            <LibraryStatusProvider>
-                              <AppShell />
-                            </LibraryStatusProvider>
+                            <StackQueueProvider>
+                              <LibraryStatusProvider>
+                                <AppShell />
+                              </LibraryStatusProvider>
+                            </StackQueueProvider>
                           </ExportQueueProvider>
                         </ArtQueueProvider>
                       </ProcessingQueueProvider>
@@ -429,8 +432,8 @@ function AppShell() {
       {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
       {closeBlockedCount != null && (
         <ConfirmDialog
-          title="Still syncing"
-          message={`${closeBlockedCount} edit/import job${closeBlockedCount === 1 ? '' : 's'} still in progress. Quitting now may leave a change unsaved or an import incomplete.`}
+          title="Still in progress"
+          message={`${closeBlockedCount} job${closeBlockedCount === 1 ? '' : 's'} still in progress. Quitting now may leave a change unsaved, an import incomplete, or a stack operation half-applied.`}
           confirmLabel="Quit anyway"
           cancelLabel="Wait"
           danger

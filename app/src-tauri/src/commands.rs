@@ -1098,6 +1098,57 @@ pub async fn set_stack_pick(
     client.update_stack_primary(&stack_id, &asset_id).await
 }
 
+/// Enqueues one `Dissolve` job per stack id onto the background
+/// `stack_queue` (see its module doc comment) rather than dissolving
+/// synchronously - `useStacking.ts`'s bulk operations (Unstack, Smart
+/// Stack apply, dissolve-before-trash) call this once per batch instead of
+/// looping over the single-stack `delete_stack` command themselves, so the
+/// worker can run them concurrently. Per-stack `max_writes_per_batch`/
+/// existence checks happen inside the worker as each job actually runs
+/// (see `stack_queue::run`), not here - `read_only` is the only thing
+/// cheap/global enough to check once for the whole batch up front.
+#[tauri::command]
+pub fn enqueue_stack_dissolve(state: State<AppState>, stack_ids: Vec<String>) -> Result<Vec<u64>, String> {
+    let cfg = state.library_config();
+    if cfg.read_only {
+        return Err("Read-only mode is on — turn it off in Preferences → Library to unstack".into());
+    }
+    state.stack_queue.enqueue_dissolve(&cfg, stack_ids)
+}
+
+/// Enqueues one `Create` job per requested id list (first id of each = pick)
+/// onto the background `stack_queue` - see `enqueue_stack_dissolve`'s doc
+/// comment for the same reasoning, mirrored for the create side.
+#[tauri::command]
+pub fn enqueue_stack_create(state: State<AppState>, requests: Vec<Vec<String>>) -> Result<Vec<u64>, String> {
+    let cfg = state.library_config();
+    if cfg.read_only {
+        return Err("Read-only mode is on — turn it off in Preferences → Library to create a stack".into());
+    }
+    state.stack_queue.enqueue_create(&cfg, requests)
+}
+
+/// Poll target for the stack queue's advisory activity panel entry and for
+/// `useStacking.ts`'s `waitForStackJobs` helper, which polls this directly
+/// (not via the panel's slower 1s hook) to know when a batch it just
+/// enqueued has settled - see `stackQueue.tsx`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackQueueStatus {
+    pub jobs: Vec<crate::stack_queue::StackJob>,
+    pub pending_count: usize,
+}
+
+#[tauri::command]
+pub fn get_stack_queue_status(state: State<AppState>) -> StackQueueStatus {
+    StackQueueStatus { jobs: state.stack_queue.snapshot(), pending_count: state.stack_queue.pending_count() }
+}
+
+#[tauri::command]
+pub fn clear_completed_stack_jobs(state: State<AppState>) {
+    state.stack_queue.clear_completed();
+}
+
 /// Nudges Immich into generating a thumbnail for an asset right away - see
 /// `ImmichClient::regenerate_thumbnail`'s doc comment for why this is needed
 /// at all (assets discovered via a Library scan, which every round-trip

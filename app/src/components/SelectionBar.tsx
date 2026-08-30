@@ -53,6 +53,7 @@ export default function SelectionBar({
   onRemoveFromTag,
   onBulkUnstack,
   hasStackedSelection,
+  stackBusy,
 }: {
   count: number;
   onCancel: () => void;
@@ -122,6 +123,10 @@ export default function SelectionBar({
   // Whether any asset in the current selection belongs to a stack - flips
   // the shared button slot from Add to Tag to Unstack.
   hasStackedSelection?: boolean;
+  // True while a Stack/Smart Stack/Unstack batch is in flight (useStacking's
+  // `busy`) - disables all three buttons and relabels them "Working…", same
+  // pattern as rawEditorBusy/onOpenInRawEditor below.
+  stackBusy?: boolean;
 }) {
   const canStack = count >= 2;
   // Both editors are a single-file launch (see Viewer.tsx's handleLaunch) -
@@ -181,9 +186,9 @@ export default function SelectionBar({
         </BarButton>
       )}
       {onBulkUnstack && hasStackedSelection ? (
-        <BarButton onClick={onBulkUnstack} title="Dissolve the stack(s) in this selection">
+        <BarButton onClick={onBulkUnstack} disabled={stackBusy} title={stackBusy ? 'Working…' : 'Dissolve the stack(s) in this selection'}>
           <StackIcon />
-          Unstack
+          {stackBusy ? 'Working…' : 'Unstack'}
         </BarButton>
       ) : (
         onAddToTag && (
@@ -198,15 +203,15 @@ export default function SelectionBar({
         )
       )}
       {onStack && (
-        <BarButton onClick={onStack} disabled={!canStack}>
+        <BarButton onClick={onStack} disabled={!canStack || stackBusy} title={stackBusy ? 'Working…' : undefined}>
           <StackIcon />
-          Stack {count} Photos
+          {stackBusy ? 'Working…' : `Stack ${count} Photos`}
         </BarButton>
       )}
       {onSmartStack && (
-        <BarButton onClick={onSmartStack} disabled={!canStack}>
+        <BarButton onClick={onSmartStack} disabled={!canStack || stackBusy} title={stackBusy ? 'Working…' : undefined}>
           <StackIcon />
-          Smart Stack
+          {stackBusy ? 'Working…' : 'Smart Stack'}
         </BarButton>
       )}
       {singleSelected && canOpenInRawEditor && (

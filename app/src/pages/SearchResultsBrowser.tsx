@@ -98,8 +98,7 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
     stackByAssetId,
     expandedStacks,
     toggleStackExpand,
-    dissolveStack,
-    restackRemainder,
+    dissolveAndRestackMany,
     createStackForSelection,
     applySmartStackGroups,
     setStackPickAction,
@@ -107,6 +106,7 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
     unstackByStackId,
     unstackSelection,
     hasStackedSelection,
+    busy: stackBusy,
   } = useStacking(selected, setSelected);
   const [addToAlbumTargets, setAddToAlbumTargets] = useState<string[] | null>(null);
   const [addToTagTargets, setAddToTagTargets] = useState<string[] | null>(null);
@@ -275,14 +275,11 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
         const info = stackByAssetId.get(id);
         if (info) stackIdsTouched.add(info.id);
       }
-      for (const stackId of stackIdsTouched) {
-        const memberIds = await dissolveStack(stackId);
-        await restackRemainder(memberIds.filter((id) => !idSet.has(id)));
-      }
+      await dissolveAndRestackMany([...stackIdsTouched], idSet);
       await deleteAssets(ids, false);
       removeAssetsLocal(ids);
     },
-    [removeAssetsLocal, stackByAssetId, dissolveStack, restackRemainder],
+    [removeAssetsLocal, stackByAssetId, dissolveAndRestackMany],
   );
 
   const handleShowInFileManager = useCallback((asset: AssetSummary) => {
@@ -486,6 +483,7 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
           onAddToTag={() => setAddToTagTargets([...selected])}
           onBulkUnstack={() => unstackSelection().catch((e) => setEnqueueError(String(e)))}
           hasStackedSelection={hasStackedSelection}
+          stackBusy={stackBusy}
         />
         </div>
       )}

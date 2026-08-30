@@ -273,8 +273,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     stackByAssetId,
     expandedStacks,
     toggleStackExpand,
-    dissolveStack,
-    restackRemainder,
+    dissolveAndRestackMany,
     createStackForSelection,
     applySmartStackGroups,
     setStackPickAction,
@@ -283,6 +282,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     unstackSelection,
     hasStackedSelection,
     applyStackInfo,
+    busy: stackBusy,
   } = useStacking(selected, setSelected);
 
   // Filters only ever hide assets from view/selection/navigation - the raw
@@ -627,14 +627,11 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
         const info = stackByAssetId.get(id);
         if (info) stackIdsTouched.add(info.id);
       }
-      for (const stackId of stackIdsTouched) {
-        const memberIds = await dissolveStack(stackId);
-        await restackRemainder(memberIds.filter((id) => !idSet.has(id)));
-      }
+      await dissolveAndRestackMany([...stackIdsTouched], idSet);
       await deleteAssets(ids, false);
       removeAssetsLocal(ids);
     },
-    [removeAssetsLocal, stackByAssetId, dissolveStack, restackRemainder],
+    [removeAssetsLocal, stackByAssetId, dissolveAndRestackMany],
   );
 
   // Stabilized (rather than inline arrow functions in the render below) so
@@ -1711,6 +1708,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
           onAddToTag={() => setAddToTagTargets([...selected])}
           onBulkUnstack={() => unstackSelection().catch((e) => setEnqueueError(String(e)))}
           hasStackedSelection={hasStackedSelection}
+          stackBusy={stackBusy}
         />
       )}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>

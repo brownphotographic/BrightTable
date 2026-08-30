@@ -295,6 +295,11 @@ async fn write_xmp(io_guard: &Arc<IoGuard>, local_path: Option<PathBuf>, rating:
         return Ok(());
     };
     match io_guard::guarded_spawn_blocking(io_guard, move || {
+        // xmp_write_path does real filesystem I/O (.exists() checks to pick
+        // between the two sidecar-naming conventions) - must stay inside
+        // this blocking closure, not hoisted into the async fn, or it'd run
+        // directly on the tokio worker thread instead of being dispatched
+        // through io_guard's blocking pool.
         let write_path = paths::xmp_write_path(&local);
         xmp::patch_or_create(&write_path, rating, description.as_deref())
     }) {

@@ -21,6 +21,7 @@ import { useImportQueue } from '../lib/importQueue';
 import { useProcessingQueue } from '../lib/processingQueue';
 import { useArtQueue } from '../lib/artQueue';
 import { useExportQueue } from '../lib/exportQueue';
+import { useStackQueue } from '../lib/stackQueue';
 import {
   cancelRawCliJob,
   cancelExportJob,
@@ -35,6 +36,8 @@ import {
   type ImportJob,
   type ImportJobStatus,
   type ProcessingJobStatus,
+  type StackJob,
+  type StackJobStatus,
 } from '../lib/api';
 
 // Same "quiet placeholder beats the browser's broken-image glyph" idiom as
@@ -185,6 +188,31 @@ function isCancellableExportJob(job: ExportJob): boolean {
   return (job.status === 'pending' || job.status === 'running') && !job.cancelRequested;
 }
 
+// A stack job has no single asset/filename the way every other queue's row
+// does - Dissolve's asset count isn't known until it settles (resultMemberIds),
+// but Create's is known immediately from its own kind.
+function stackKindLabel(job: StackJob): string {
+  if (job.kind.kind === 'dissolve') {
+    const count = job.resultMemberIds?.length;
+    return count != null ? `Unstack (${count} photo${count === 1 ? '' : 's'})` : 'Unstack';
+  }
+  const count = job.kind.assetIds.length;
+  return `Stack (${count} photo${count === 1 ? '' : 's'})`;
+}
+
+function stackStatusPill(status: StackJobStatus): { label: string; color: string; bg: string } {
+  switch (status) {
+    case 'pending':
+      return { label: 'Queued', color: 'var(--text-dim)', bg: 'var(--overlay-medium)' };
+    case 'working':
+      return { label: 'Working…', color: 'var(--accent-text)', bg: 'rgba(53,132,228,0.22)' };
+    case 'done':
+      return { label: 'Done', color: '#8ce0ae', bg: 'rgba(46,194,126,0.18)' };
+    case 'failed':
+      return { label: 'Failed', color: '#ff8080', bg: 'rgba(224,27,36,0.2)' };
+  }
+}
+
 function baseName(path: string): string {
   return path.split('/').pop() ?? path;
 }
@@ -207,11 +235,13 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
   const { jobs: processingJobs, clearCompleted: clearProcessingCompleted } = useProcessingQueue();
   const { jobs: artJobs, clearCompleted: clearArtCompleted, stalledJobIds } = useArtQueue();
   const { jobs: exportJobs, clearCompleted: clearExportCompleted } = useExportQueue();
+  const { jobs: stackJobs, clearCompleted: clearStackCompleted } = useStackQueue();
   const sortedEdits = [...editJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
   const sortedImports = [...importJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
   const sortedProcessing = [...processingJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
   const sortedArt = [...artJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
   const sortedExports = [...exportJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
+  const sortedStacks = [...stackJobs].sort((a, b) => b.createdAtMs - a.createdAtMs);
   const cancellableArtJobIds = sortedArt.filter(isCancellableArtJob).map((j) => j.jobId);
   const [selectedArtJobIds, setSelectedArtJobIds] = useState<Set<number>>(new Set());
 
@@ -247,7 +277,8 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
     importJobs.some((j) => j.status === 'done' || j.status === 'failed') ||
     processingJobs.some((j) => j.status === 'done' || j.status === 'failed') ||
     artJobs.some((j) => j.status === 'done' || j.status === 'failed') ||
-    exportJobs.some((j) => j.status === 'done' || j.status === 'failed');
+    exportJobs.some((j) => j.status === 'done' || j.status === 'failed') ||
+    stackJobs.some((j) => j.status === 'done' || j.status === 'failed');
 
   function clearAllCompleted() {
     clearEditCompleted();
@@ -255,6 +286,7 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
     clearProcessingCompleted();
     clearArtCompleted();
     clearExportCompleted();
+    clearStackCompleted();
   }
 
   return (
@@ -538,6 +570,53 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
                       Cancel
                     </button>
                   )}
+                  <StatusPill pill={pill} />
+                </div>
+              );
+            })
+          )}
+
+          <SectionLabel>Stacks</SectionLabel>
+          {sortedStacks.length === 0 ? (
+            <EmptyRow>No stacking activity yet this session.</EmptyRow>
+          ) : (
+            sortedStacks.map((job) => {
+              const pill = stackStatusPill(job.status);
+              return (
+                <div key={job.jobId} style={rowStyle}>
+                  <div
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 6,
+                      flexShrink: 0,
+                      background: 'var(--surface-sunken)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      position: 'relative',
+                    }}
+                  >
+                    <div style={{ position: 'relative', width: 13, height: 12 }}>
+                      <div style={{ position: 'absolute', left: 0, top: 0, width: 9, height: 9, border: '1.6px solid var(--text-dim)', borderRadius: 2 }} />
+                      <div
+                        style={{
+                          position: 'absolute',
+                          left: 4,
+                          top: 3,
+                          width: 9,
+                          height: 9,
+                          border: '1.6px solid var(--text-dim)',
+                          borderRadius: 2,
+                          background: 'var(--surface-sunken)',
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={rowTitle}>{stackKindLabel(job)}</div>
+                    {job.error && <div style={rowError}>{job.error}</div>}
+                  </div>
                   <StatusPill pill={pill} />
                 </div>
               );

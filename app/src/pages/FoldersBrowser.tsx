@@ -198,8 +198,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     stackByAssetId,
     expandedStacks,
     toggleStackExpand,
-    dissolveStack,
-    restackRemainder,
+    dissolveAndRestackMany,
     createStackForSelection,
     applySmartStackGroups,
     setStackPickAction,
@@ -208,6 +207,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     unstackSelection,
     hasStackedSelection,
     applyStackInfo,
+    busy: stackBusy,
   } = useStacking(selected, setSelected);
 
   // See `vaultReadyRetry.ts` - same startup race as `PhotosBrowser`'s
@@ -506,14 +506,11 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         const info = stackByAssetId.get(id);
         if (info) stackIdsTouched.add(info.id);
       }
-      for (const stackId of stackIdsTouched) {
-        const memberIds = await dissolveStack(stackId);
-        await restackRemainder(memberIds.filter((id) => !idSet.has(id)));
-      }
+      await dissolveAndRestackMany([...stackIdsTouched], idSet);
       await deleteAssets(ids, false);
       removeAssetsLocal(ids);
     },
-    [removeAssetsLocal, stackByAssetId, dissolveStack, restackRemainder],
+    [removeAssetsLocal, stackByAssetId, dissolveAndRestackMany],
   );
 
   const openIndex = openId ? flatIds.indexOf(openId) : -1;
@@ -1334,6 +1331,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           onAddToTag={() => setAddToTagTargets([...selected])}
           onBulkUnstack={() => unstackSelection().catch((e) => setEnqueueError(String(e)))}
           hasStackedSelection={hasStackedSelection}
+          stackBusy={stackBusy}
         />
       )}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>

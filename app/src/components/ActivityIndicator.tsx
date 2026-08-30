@@ -20,14 +20,21 @@ import { useImportQueue } from '../lib/importQueue';
 import { useProcessingQueue } from '../lib/processingQueue';
 import { useArtQueue } from '../lib/artQueue';
 import { useExportQueue } from '../lib/exportQueue';
+import { useStackQueue } from '../lib/stackQueue';
 
-// Combines the edit queue, import queue, processing queue, ART queue, and
-// export queue's independent, already-tested polls (editQueue.tsx/
-// importQueue.tsx untouched; processingQueue.tsx/artQueue.tsx/exportQueue.tsx
-// structurally identical) into one TitleBar pill - five simultaneously-
-// spinning pills for what's conceptually the same "background job queue"
-// idea would be redundant chrome. Mounted in place of the old
-// EditQueueIndicator (kept as its own file, just no longer mounted directly).
+// Combines the edit queue, import queue, processing queue, ART queue,
+// export queue, and stack queue's independent, already-tested polls
+// (editQueue.tsx/importQueue.tsx untouched; processingQueue.tsx/
+// artQueue.tsx/exportQueue.tsx/stackQueue.tsx structurally identical) into
+// one TitleBar pill - six simultaneously-spinning pills for what's
+// conceptually the same "background job queue" idea would be redundant
+// chrome. Mounted in place of the old EditQueueIndicator (kept as its own
+// file, just no longer mounted directly).
+//
+// Labeled generically ("in progress", not "syncing") since not every one of
+// these is really a server sync - the stack queue and ART/processing queues
+// are just as much "local background work" as they are server writes, and
+// this pill is the one place a user checks for any of them.
 //
 // exportQueue was left out of this originally, so a folder/Flickr export
 // that failed after being enqueued (the dialog closes as soon as jobs are
@@ -39,20 +46,22 @@ export default function ActivityIndicator({ onClick }: { onClick: () => void }) 
   const { jobs: processingJobs, pendingCount: processingPending } = useProcessingQueue();
   const { jobs: artJobs, pendingCount: artPending } = useArtQueue();
   const { jobs: exportJobs, pendingCount: exportPending } = useExportQueue();
+  const { jobs: stackJobs, pendingCount: stackPending } = useStackQueue();
 
-  const pendingCount = editPending + importPending + processingPending + artPending + exportPending;
+  const pendingCount = editPending + importPending + processingPending + artPending + exportPending + stackPending;
   const failedCount =
     editJobs.filter((j) => j.status === 'failed').length +
     importJobs.filter((j) => j.status === 'failed').length +
     processingJobs.filter((j) => j.status === 'failed').length +
     artJobs.filter((j) => j.status === 'failed').length +
-    exportJobs.filter((j) => j.status === 'failed').length;
+    exportJobs.filter((j) => j.status === 'failed').length +
+    stackJobs.filter((j) => j.status === 'failed').length;
 
   if (pendingCount === 0 && failedCount === 0 && !nudgeError) return null;
 
   const syncing = pendingCount > 0;
   const failed = !syncing && failedCount > 0;
-  const label = syncing ? `${pendingCount} syncing…` : failed ? `${failedCount} failed` : 'Import notice';
+  const label = syncing ? `${pendingCount} in progress…` : failed ? `${failedCount} failed` : 'Import notice';
   const color = syncing ? 'var(--accent-text)' : failed ? '#ff8080' : 'var(--warn)';
   const bg = syncing ? 'rgba(53,132,228,0.22)' : failed ? 'rgba(224,27,36,0.22)' : 'rgba(229,165,10,0.22)';
 
