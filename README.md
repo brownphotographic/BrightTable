@@ -7,7 +7,21 @@
 ![Auto-stacking images](assets/Autostack.gif)
 _above:Auto-stacking images: stacking is performed locally, but synced with Immich via the Immich API. One of the many features of BrightTable._
 
-I designed this for myself because I dislike the user experience and functionality that exists on GNU/Linux for managing and editing photos. For me, this fills the gap between DAM and raw editing -- an experience that I have been pining for since the great Apple Aperture bit the dust a decade ago. 
+## Summary of features
+
+- 🔗 Sits on top of #Immich as the DAM backend.
+- 🖼️ Round-trip RAW editing with #ART, #RawTherapee, or #darktable. Open, edit, close, done!
+- 📋 Copy/paste image processing & metadata across photos
+-⚡ Headless batch reprocessing: apply RAW edits to whole selections without opening a GUI
+- 🔍 Loupe: hover-magnify thumbnails for that light-table-and-loupe feel
+- 🗂️ Smart Stacking: auto-groups RAW+JPEG pairs, edit versions, or burst shots time (sub second to 1 minute).
+- ⭐ Fast culling: star ratings, favorites, and rejects
+- 📤 Export to folder or share straight to Flickr (other sites coming soon)
+- 🖨️ Built-in printing with paper size and preview.
+- ⌨️ Customizable keyboard shortcuts
+
+##But why?
+I designed this for myself because I dislike the user experience and functionality that exists on GNU/Linux for managing and editing photos. For me, this fills the gap between DAM and raw editing - an experience that I have been pining for since the great Apple Aperture bit the dust a decade ago. 
 
 There are some great tools out there already like RawTherapee/ART, Digikam, RapidRAW, Digikam, Shotwell. But to me, none of them had exactly the user experience and workflow that I really wanted. So after a couple of years of threatening myself to build my own tool: I did. 
 
