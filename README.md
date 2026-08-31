@@ -163,7 +163,7 @@ again.
 
 Then, from `app/`:
 ```bash
-npm run build:flatpak
+
 ```
 
 - `npm run build:flatpak` (alias: `npm run build:full`) runs the full release pipeline: prompts for the

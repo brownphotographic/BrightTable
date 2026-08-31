@@ -78,7 +78,7 @@ export default function AppPickerDialog({
   }
 
   return (
-    <div style={overlay} onClick={onClose}>
+    <div className="window-frame window-frame-overlay" style={overlay} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} style={dialog}>
         <div style={header}>
           <div>
@@ -136,8 +136,6 @@ export default function AppPickerDialog({
 }
 
 const overlay: CSSProperties = {
-  position: 'fixed',
-  inset: 0,
   zIndex: 310,
   background: 'rgba(0,0,0,0.55)',
   display: 'flex',

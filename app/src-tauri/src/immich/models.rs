@@ -57,6 +57,16 @@ pub struct ConnectionStatus {
     pub server_version: String,
     pub user_email: String,
     pub server_version_supported: bool,
+    // Whether `local_root`/`uploaded_local_root` (see `LibraryConfig`) is
+    // actually reachable right now - independent of `ok` above, which only
+    // reflects the Immich *server* API. Populated by `commands::test_connection`
+    // (not this module - it has no filesystem access), which fills in `None`
+    // for both when neither local mapping is configured at all, so a setup
+    // that never touches local files isn't shown as broken.
+    #[serde(default)]
+    pub local_mount_ok: Option<bool>,
+    #[serde(default)]
+    pub local_mount_error: Option<String>,
 }
 
 /// Response shape for GET /timeline/buckets. Immich has used slightly different

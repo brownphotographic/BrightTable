@@ -18,6 +18,7 @@
 import type { ReactNode } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import ActivityIndicator from './ActivityIndicator';
+import ConnectionStatusPill from './ConnectionStatusPill';
 import { useWindowControls } from '../lib/windowControls';
 import appIcon from '../assets/app-icon.png';
 
@@ -27,6 +28,7 @@ const tabLabels: Record<string, string> = {
   photos: 'Photos',
   albums: 'Albums',
   people: 'People',
+  tags: 'Tags',
   folders: 'Folders',
   trash: 'Trash',
 };
@@ -76,7 +78,15 @@ function WindowButtons({ reversed }: { reversed?: boolean }) {
   return <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>{buttons}</div>;
 }
 
-export default function TitleBar({ activeTab, onOpenActivity }: { activeTab: string; onOpenActivity: () => void }) {
+export default function TitleBar({
+  activeTab,
+  onOpenActivity,
+  onOpenLibrarySettings,
+}: {
+  activeTab: string;
+  onOpenActivity: () => void;
+  onOpenLibrarySettings: () => void;
+}) {
   const { position } = useWindowControls();
   const onLeft = position === 'left';
 
@@ -118,6 +128,9 @@ export default function TitleBar({ activeTab, onOpenActivity }: { activeTab: str
       <div style={{ flex: 1 }} />
       <div style={{ marginRight: 8 }}>
         <ActivityIndicator onClick={onOpenActivity} />
+      </div>
+      <div style={{ marginRight: 8 }}>
+        <ConnectionStatusPill onOpenLibrarySettings={onOpenLibrarySettings} />
       </div>
       {!onLeft && <WindowButtons />}
     </div>

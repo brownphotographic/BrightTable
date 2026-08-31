@@ -41,6 +41,16 @@
   --overlay-strong: rgba(255, 255, 255, 0.18);
   --scrim: rgba(0, 0, 0, 0.5);
   color-scheme: dark;
+  /* See the .window-frame rule below - kept as a variable (not baked into
+     that rule) so the margin, and every fixed-position overlay's `inset`,
+     collapse to 0 right along with the radius/shadow while maximized. */
+  --window-frame-margin: 16px;
+}
+
+/* Set on <html> by useSyncWindowFrameMaximized() (see lib/windowFrame.ts),
+   the one place that actually asks Tauri whether the window is maximized. */
+:root[data-window-maximized='true'] {
+  --window-frame-margin: 0px;
 }
 
 :root[data-theme='light'] {
@@ -82,7 +92,11 @@ body,
 
 body {
   font-family: 'Cantarell', -apple-system, system-ui, sans-serif;
-  background: var(--canvas);
+  /* Window is transparent (see tauri.conf.json) so AppShell's own
+     rounded/shadowed frame - not this element - supplies the app's visible
+     background; a solid color here would paint a square behind that frame's
+     rounded corners. */
+  background: transparent;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   font-size: 14px;
@@ -106,4 +120,61 @@ input {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ConnectionStatusPill's brief red blink when a local-mount-dependent
+   operation (e.g. check_sidecar_metadata) fails - see libraryStatus.tsx's
+   reportLocalMountAlert. */
+@keyframes brighttable-blink {
+  50% {
+    opacity: 0.15;
+  }
+}
+
+/* The window is undecorated and transparent (see tauri.conf.json) so that
+   GNOME/Mutter - which draws no shadow/border/rounded-corners of its own
+   around an undecorated surface, that's all GTK's own CSD styling - has room
+   to show a hand-drawn equivalent instead. These match libadwaita's actual
+   CSD window-frame recipe (see gtk.gresource / _window.scss:
+   --window-radius: 12px; box-shadow: 0 0 14px 5px rgba(0,0,0,.15), 0 0 5px 2px
+   rgba(0,0,0,.1), 0 0 0 1px <window_outline_color>) rather than an invented
+   one, so the window reads like every other GTK app's.
+
+   One shared rule rather than one per component: every full-window overlay
+   (Viewer's detail view, every dialog scrim) sits *above* AppShell's own
+   frame and so fully hides it while open, meaning each needs this applied to
+   its own root rather than inheriting it - previously that meant every one
+   of those components computing/spreading its own copy of these values in
+   JS. Driving it off a single `data-window-maximized` attribute on <html>
+   instead means every window (the base frame in App.tsx included) just
+   references these two classes verbatim, so they can never drift apart. */
+.window-frame {
+  border-radius: 12px;
+  box-shadow:
+    0 0 0 1px var(--border-strong),
+    0 0 5px 2px rgba(0, 0, 0, 0.1),
+    0 0 14px 5px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+
+:root[data-window-maximized='true'] .window-frame {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* For a `position: fixed` overlay (every dialog scrim, Viewer's detail view)
+   standing in for the whole window - `position: absolute` would instead size
+   to whatever positioned ancestor a deeply-nested one happens to have (often
+   just the content area under the title bar), not the full window. */
+.window-frame-overlay {
+  position: fixed;
+  inset: var(--window-frame-margin);
+}
+
+/* AppShell's own root in App.tsx: a transparent margin around `.window-frame`
+   itself (rather than `.window-frame-overlay`'s inset-on-itself) so the
+   `.window-frame` box's shadow has room to render past the frame's own edge. */
+.window-frame-margin {
+  box-sizing: border-box;
+  padding: var(--window-frame-margin);
 }

@@ -156,6 +156,11 @@ export interface AppConfig {
   sharing: SharingConfig;
   windowControlsPosition: WindowControlsPosition;
   themeMode: ThemeMode;
+  // Grid loupe circle size - Preferences → Configuration → Window. `false`
+  // (Small) keeps the original 33/67 grid/pane split; `true` (Large) shrinks
+  // the grid down to a thin strip so the pane (and its circle) fills most of
+  // the view.
+  gridLoupeLarge: boolean;
 }
 
 export interface ConnectionStatus {
@@ -165,6 +170,12 @@ export interface ConnectionStatus {
   serverVersion: string;
   userEmail: string;
   serverVersionSupported: boolean;
+  // Independent of `ok` above, which only reflects the Immich *server* API -
+  // whether the local External Library / uploaded-storage mount is actually
+  // reachable on disk right now. `null` for both when neither mapping is
+  // configured (a valid setup that never touches local files).
+  localMountOk: boolean | null;
+  localMountError: string | null;
 }
 
 export interface TimeBucketInfo {
@@ -388,6 +399,10 @@ export function saveWindowControlsPosition(position: WindowControlsPosition): Pr
 
 export function saveThemeMode(mode: ThemeMode): Promise<AppConfig> {
   return invoke('save_theme_mode', { mode });
+}
+
+export function saveGridLoupeLarge(large: boolean): Promise<AppConfig> {
+  return invoke('save_grid_loupe_large', { large });
 }
 
 export function saveSettingsFolder(folder: string | null): Promise<AppConfig> {
@@ -743,8 +758,14 @@ export interface MetadataSyncResult {
 // check_sidecar_metadata in commands.rs). Immich already having a value
 // wins independently per field, so a result may carry just one of
 // rating/description.
-export function checkSidecarMetadata(queries: MetadataSyncQuery[]): Promise<MetadataSyncResult[]> {
-  return invoke('check_sidecar_metadata', { queries });
+// `priority` picks which of the backend's two concurrency lanes this call
+// queues on - leave it `false` for an ambient/bulk scan (a bucket/folder
+// just loaded), pass `true` for a check tied directly to something the user
+// just did (right-clicked/selected a photo, clicked Copy Image Processing)
+// so it doesn't wait behind however many bulk scans are already queued -
+// see io_guard.rs's acquire_interactive_metadata_scan_permit.
+export function checkSidecarMetadata(queries: MetadataSyncQuery[], priority = false): Promise<MetadataSyncResult[]> {
+  return invoke('check_sidecar_metadata', { queries, priority });
 }
 
 // Enqueues Paste Image Processing onto the backend's background

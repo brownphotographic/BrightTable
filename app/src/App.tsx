@@ -22,6 +22,8 @@ import { LibraryStatusProvider } from './lib/libraryStatus';
 import { isTypingTarget, matchesShortcut, ShortcutsProvider, useShortcuts } from './lib/shortcuts';
 import { SmartStackSettingsProvider } from './lib/smartStackSettings';
 import { WindowControlsProvider } from './lib/windowControls';
+import { GridLoupeSettingsProvider, useGridLoupeSettings } from './lib/gridLoupeSettings';
+import { useSyncWindowFrameMaximized } from './lib/windowFrame';
 import { ThemeProvider } from './lib/theme';
 import { ApplicationsProvider } from './lib/applications';
 import { RawOverridesProvider } from './lib/rawOverrides';
@@ -36,7 +38,7 @@ import { forceQuit } from './lib/api';
 import TitleBar from './components/TitleBar';
 import ResizeHandles from './components/ResizeHandles';
 import MenuBar from './components/MenuBar';
-import Sidebar, { type LeftTab } from './components/Sidebar';
+import { type LeftTab } from './components/NavTabs';
 import PreferencesOverlay from './components/PreferencesOverlay';
 import ActivityPanel from './components/ActivityPanel';
 import ImportDialog from './components/ImportDialog';
@@ -56,29 +58,31 @@ export default function App() {
     <ThemeProvider>
       <ShortcutsProvider>
         <WindowControlsProvider>
-          <SmartStackSettingsProvider>
-            <ApplicationsProvider>
-              <RawOverridesProvider>
-                <ClipboardProvider>
-                  <EditQueueProvider>
-                    <ImportQueueProvider>
-                      <ProcessingQueueProvider>
-                        <ArtQueueProvider>
-                          <ExportQueueProvider>
-                            <StackQueueProvider>
-                              <LibraryStatusProvider>
-                                <AppShell />
-                              </LibraryStatusProvider>
-                            </StackQueueProvider>
-                          </ExportQueueProvider>
-                        </ArtQueueProvider>
-                      </ProcessingQueueProvider>
-                    </ImportQueueProvider>
-                  </EditQueueProvider>
-                </ClipboardProvider>
-              </RawOverridesProvider>
-            </ApplicationsProvider>
-          </SmartStackSettingsProvider>
+          <GridLoupeSettingsProvider>
+            <SmartStackSettingsProvider>
+              <ApplicationsProvider>
+                <RawOverridesProvider>
+                  <ClipboardProvider>
+                    <EditQueueProvider>
+                      <ImportQueueProvider>
+                        <ProcessingQueueProvider>
+                          <ArtQueueProvider>
+                            <ExportQueueProvider>
+                              <StackQueueProvider>
+                                <LibraryStatusProvider>
+                                  <AppShell />
+                                </LibraryStatusProvider>
+                              </StackQueueProvider>
+                            </ExportQueueProvider>
+                          </ArtQueueProvider>
+                        </ProcessingQueueProvider>
+                      </ImportQueueProvider>
+                    </EditQueueProvider>
+                  </ClipboardProvider>
+                </RawOverridesProvider>
+              </ApplicationsProvider>
+            </SmartStackSettingsProvider>
+          </GridLoupeSettingsProvider>
         </WindowControlsProvider>
       </ShortcutsProvider>
     </ThemeProvider>
@@ -165,7 +169,12 @@ function AppShell() {
   // of the way to make room. Entering it remembers whatever metaOpen was so
   // leaving restores exactly that, rather than always landing back closed.
   const [gridLoupeOn, setGridLoupeOn] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Loupe circle size - Small is the original fixed 33/67 grid/pane split;
+  // Large shrinks the grid down to a thin strip so the pane (and so the
+  // circle within it) takes up most of the view instead. Persisted via
+  // Preferences → Configuration → Window ("Thumbnail Loupe Size"), not a
+  // local toggle here.
+  const { large: gridLoupeLarge } = useGridLoupeSettings();
   const metaOpenBeforeLoupe = useRef(false);
   const toggleGridLoupe = () => {
     setGridLoupeOn((v) => {
@@ -173,10 +182,8 @@ function AppShell() {
       if (next) {
         metaOpenBeforeLoupe.current = metaOpen;
         setMetaOpen(false);
-        setSidebarCollapsed(true);
       } else {
         setMetaOpen(metaOpenBeforeLoupe.current);
-        setSidebarCollapsed(false);
       }
       return next;
     });
@@ -190,6 +197,7 @@ function AppShell() {
   // that attempt so the warning dialog can report it; null means no close
   // attempt is currently being blocked.
   const [closeBlockedCount, setCloseBlockedCount] = useState<number | null>(null);
+  useSyncWindowFrameMaximized();
   const photosRef = useRef<PhotosBrowserHandle>(null);
   const foldersRef = useRef<FoldersBrowserHandle>(null);
   const albumsRef = useRef<AlbumsBrowserHandle>(null);
@@ -240,168 +248,159 @@ function AppShell() {
 
   return (
     <div
+      className="window-frame-margin"
       style={{
         height: '100vh',
         width: '100%',
-        background: 'var(--canvas)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        position: 'relative',
+        background: 'transparent',
       }}
     >
       <ResizeHandles />
-      <TitleBar activeTab={leftTab} onOpenActivity={() => setActivityOpen(true)} />
-      <MenuBar
-        onOpenPreferences={() => setPrefsOpen(true)}
-        onRefreshTimeline={refreshTimeline}
-        onOpenImport={() => setImportOpen(true)}
-        onOpenActivity={() => setActivityOpen(true)}
-        onQuit={() => getCurrentWindow().close()}
-        metaOpen={metaOpen}
-        onToggleMetadata={() => setMetaOpen((v) => !v)}
-        loupeOn={gridLoupeOn}
-        onToggleLoupe={toggleGridLoupe}
-        onSelectAll={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.selectAll()}
-        onDeselectAll={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.deselectAll()}
-        onStackSelected={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.stackSelected()}
-        onSmartStack={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.openSmartStack()}
-        onToggleRawOverride={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.toggleRawOverrideForSelection()}
-        onSyncSidecarRatings={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.syncAllUnsyncedMetadata()}
-        onCopyImageProcessing={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.copyImageProcessing()}
-        onPasteImageProcessing={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.pasteImageProcessing()}
-        onCopyMetadata={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.copyMetadata()}
-        onPasteMetadata={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.pasteMetadata()}
-        onPrint={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.openPrint()}
-        onRotateLeft={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.rotateLeft()}
-        onRotateRight={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.rotateRight()}
-        onExportToFolder={() =>
-          (activeSearch
-            ? searchRef
-            : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
-          ).current?.openExportToFolder()
-        }
-        onShareToFlickr={() =>
-          (activeSearch
-            ? searchRef
-            : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
-          ).current?.openExportToFlickr()
-        }
-        onOpenAbout={() => setAboutOpen(true)}
-        filters={filters}
-        onFiltersChange={setFilters}
-        searchQuery={searchQuery}
-        onSearchQueryChange={setSearchQuery}
-        onSearchSubmit={() => searchQuery.trim() && setActiveSearch(searchQuery.trim())}
-        onClearSearch={clearSearch}
-        thumbSize={thumbSize}
-        onThumbSizeChange={setThumbSize}
-        showThumbSize={showThumbSize}
-        showLoupe={showLoupe}
-      />
+      <div
+        className="window-frame"
+        style={{
+          height: '100%',
+          width: '100%',
+          background: 'var(--canvas)',
+          display: 'flex',
+          flexDirection: 'column',
+          position: 'relative',
+        }}
+      >
+        <TitleBar
+          activeTab={leftTab}
+          onOpenActivity={() => setActivityOpen(true)}
+          onOpenLibrarySettings={() => openPreferencesTab('library')}
+        />
+        <MenuBar
+          activeTab={leftTab}
+          onSelectTab={(tab) => {
+            clearSearch();
+            setLeftTab(tab);
+          }}
+          photosCount={photosCount}
+          trashCount={trashCount}
+          albumsCount={albumsCount}
+          peopleCount={peopleCount}
+          tagsCount={tagsCount}
+          onOpenPreferences={() => setPrefsOpen(true)}
+          onRefreshTimeline={refreshTimeline}
+          onOpenImport={() => setImportOpen(true)}
+          onOpenActivity={() => setActivityOpen(true)}
+          onQuit={() => getCurrentWindow().close()}
+          metaOpen={metaOpen}
+          onToggleMetadata={() => setMetaOpen((v) => !v)}
+          loupeOn={gridLoupeOn}
+          onToggleLoupe={toggleGridLoupe}
+          onSelectAll={() =>
+            (activeSearch ? searchRef : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
+            ).current?.selectAll()
+          }
+          onDeselectAll={() =>
+            (activeSearch ? searchRef : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
+            ).current?.deselectAll()
+          }
+          // Stack/Smart Stack/Sync/Copy/Paste/Rotate previously only ever
+          // reached Photos/Folders here (a 2-way ternary), silently no-oping
+          // on the Albums/People/Tags/Search tabs even though those pages now
+          // implement the same actions via useAssetActions.ts - routed
+          // through the same 6-way active-tab switch onExportToFolder/
+          // onShareToFlickr already use below. Print and RAW-override toggle
+          // stay Photos/Folders-only - those two are genuinely not
+          // implemented anywhere else.
+          onStackSelected={() =>
+            (activeSearch ? searchRef : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
+            ).current?.stackSelected()
+          }
+          onSmartStack={() =>
+            (activeSearch ? searchRef : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
+            ).current?.openSmartStack()
+          }
+          onToggleRawOverride={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.toggleRawOverrideForSelection()}
+          onSyncSidecarRatings={() =>
+            (activeSearch ? searchRef : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
+            ).current?.syncAllUnsyncedMetadata()
+          }
+          onCopyImageProcessing={() =>
+            (activeSearch ? searchRef : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
+            ).current?.copyImageProcessing()
+          }
+          onPasteImageProcessing={() =>
+            (activeSearch ? searchRef : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
+            ).current?.pasteImageProcessing()
+          }
+          onCopyMetadata={() =>
+            (activeSearch ? searchRef : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
+            ).current?.copyMetadata()
+          }
+          onPasteMetadata={() =>
+            (activeSearch ? searchRef : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
+            ).current?.pasteMetadata()
+          }
+          onPrint={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.openPrint()}
+          onRotateLeft={() =>
+            (activeSearch ? searchRef : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
+            ).current?.rotateLeft()
+          }
+          onRotateRight={() =>
+            (activeSearch ? searchRef : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
+            ).current?.rotateRight()
+          }
+          onExportToFolder={() =>
+            (activeSearch
+              ? searchRef
+              : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
+            ).current?.openExportToFolder()
+          }
+          onShareToFlickr={() =>
+            (activeSearch
+              ? searchRef
+              : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
+            ).current?.openExportToFlickr()
+          }
+          onOpenAbout={() => setAboutOpen(true)}
+          filters={filters}
+          onFiltersChange={setFilters}
+          searchQuery={searchQuery}
+          onSearchQueryChange={setSearchQuery}
+          onSearchSubmit={() => searchQuery.trim() && setActiveSearch(searchQuery.trim())}
+          onClearSearch={clearSearch}
+          thumbSize={thumbSize}
+          onThumbSizeChange={setThumbSize}
+          showThumbSize={showThumbSize}
+          showLoupe={showLoupe}
+        />
 
-      <div style={{ flex: 1, display: 'flex', minHeight: 0, background: 'var(--panel-2)', position: 'relative' }}>
-        {!sidebarCollapsed && (
-          <Sidebar
-            active={leftTab}
-            onSelect={(tab) => {
-              clearSearch();
-              setLeftTab(tab);
-            }}
-            photosCount={photosCount}
-            trashCount={trashCount}
-            albumsCount={albumsCount}
-            peopleCount={peopleCount}
-            tagsCount={tagsCount}
-          />
-        )}
-
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--canvas)', position: 'relative' }}>
-          {/* Photos and Folders stay mounted (just hidden) once visited, rather
-              than being unmounted on every tab switch - each keeps its own
-              assetCache of everything already fetched from Immich this
-              session, so switching back doesn't re-fetch the whole timeline/
-              folder tree from scratch. `key={dataKey}` still forces a full
-              remount (and so a full refetch) on an explicit Refresh Timeline.
-              `active` gates each one's global keydown shortcuts so a
-              backgrounded tab doesn't react to keys meant for the visible
-              one. */}
-          {activeSearch && (
-            <div style={{ display: 'flex', flex: 1, flexDirection: 'column', minHeight: 0 }}>
-              <SearchResultsBrowser
-                key={activeSearch}
-                ref={searchRef}
-                query={activeSearch}
-                metaOpen={metaOpen}
-                onCloseMetadata={() => setMetaOpen(false)}
-                onClose={clearSearch}
-                active
-              />
-            </div>
-          )}
-          <div style={{ display: !activeSearch && leftTab === 'photos' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
-            <PhotosBrowser
-              key={dataKey}
-              ref={photosRef}
-              active={!activeSearch && leftTab === 'photos'}
-              onTotalCount={setPhotosCount}
-              metaOpen={metaOpen}
-              onCloseMetadata={() => setMetaOpen(false)}
-              filters={filters}
-              onOpenApplicationsPreferences={() => openPreferencesTab('applications')}
-              thumbSize={thumbSize}
-              loupeOn={gridLoupeOn}
-              onToggleLoupe={toggleGridLoupe}
-            />
-          </div>
-          {albumsVisited && (
-            <div style={{ display: !activeSearch && leftTab === 'albums' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
-              <AlbumsBrowser
-                ref={albumsRef}
-                metaOpen={metaOpen}
-                onCloseMetadata={() => setMetaOpen(false)}
-                onCount={setAlbumsCount}
-                active={!activeSearch && leftTab === 'albums'}
-                loupeOn={gridLoupeOn}
-                onToggleLoupe={toggleGridLoupe}
-                thumbSize={thumbSize}
-              />
-            </div>
-          )}
-          {peopleVisited && (
-            <div style={{ display: !activeSearch && leftTab === 'people' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
-              <PeopleBrowser
-                ref={peopleRef}
-                metaOpen={metaOpen}
-                onCloseMetadata={() => setMetaOpen(false)}
-                onCount={setPeopleCount}
-                active={!activeSearch && leftTab === 'people'}
-                loupeOn={gridLoupeOn}
-                onToggleLoupe={toggleGridLoupe}
-                thumbSize={thumbSize}
-              />
-            </div>
-          )}
-          {tagsVisited && (
-            <div style={{ display: !activeSearch && leftTab === 'tags' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
-              <TagsBrowser
-                ref={tagsRef}
-                metaOpen={metaOpen}
-                onCloseMetadata={() => setMetaOpen(false)}
-                onCount={setTagsCount}
-                active={!activeSearch && leftTab === 'tags'}
-                loupeOn={gridLoupeOn}
-                onToggleLoupe={toggleGridLoupe}
-                thumbSize={thumbSize}
-              />
-            </div>
-          )}
-          {foldersVisited && (
-            <div style={{ display: !activeSearch && leftTab === 'folders' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
-              <FoldersBrowser
+        <div style={{ flex: 1, display: 'flex', minHeight: 0, background: 'var(--panel-2)', position: 'relative' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--canvas)', position: 'relative' }}>
+            {/* Photos and Folders stay mounted (just hidden) once visited, rather
+                than being unmounted on every tab switch - each keeps its own
+                assetCache of everything already fetched from Immich this
+                session, so switching back doesn't re-fetch the whole timeline/
+                folder tree from scratch. `key={dataKey}` still forces a full
+                remount (and so a full refetch) on an explicit Refresh Timeline.
+                `active` gates each one's global keydown shortcuts so a
+                backgrounded tab doesn't react to keys meant for the visible
+                one. */}
+            {activeSearch && (
+              <div style={{ display: 'flex', flex: 1, flexDirection: 'column', minHeight: 0 }}>
+                <SearchResultsBrowser
+                  key={activeSearch}
+                  ref={searchRef}
+                  query={activeSearch}
+                  metaOpen={metaOpen}
+                  onCloseMetadata={() => setMetaOpen(false)}
+                  onClose={clearSearch}
+                  active
+                />
+              </div>
+            )}
+            <div style={{ display: !activeSearch && leftTab === 'photos' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
+              <PhotosBrowser
                 key={dataKey}
-                ref={foldersRef}
-                active={!activeSearch && leftTab === 'folders'}
+                ref={photosRef}
+                active={!activeSearch && leftTab === 'photos'}
+                onTotalCount={setPhotosCount}
                 metaOpen={metaOpen}
                 onCloseMetadata={() => setMetaOpen(false)}
                 filters={filters}
@@ -409,38 +408,101 @@ function AppShell() {
                 thumbSize={thumbSize}
                 loupeOn={gridLoupeOn}
                 onToggleLoupe={toggleGridLoupe}
+                loupeLarge={gridLoupeLarge}
               />
             </div>
-          )}
-          {!activeSearch && leftTab === 'trash' && <TrashBrowser onCount={setTrashCount} thumbSize={thumbSize} />}
+            {albumsVisited && (
+              <div style={{ display: !activeSearch && leftTab === 'albums' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
+                <AlbumsBrowser
+                  ref={albumsRef}
+                  metaOpen={metaOpen}
+                  onCloseMetadata={() => setMetaOpen(false)}
+                  onCount={setAlbumsCount}
+                  active={!activeSearch && leftTab === 'albums'}
+                  loupeOn={gridLoupeOn}
+                  onToggleLoupe={toggleGridLoupe}
+                  loupeLarge={gridLoupeLarge}
+                  thumbSize={thumbSize}
+                />
+              </div>
+            )}
+            {peopleVisited && (
+              <div style={{ display: !activeSearch && leftTab === 'people' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
+                <PeopleBrowser
+                  ref={peopleRef}
+                  metaOpen={metaOpen}
+                  onCloseMetadata={() => setMetaOpen(false)}
+                  onCount={setPeopleCount}
+                  active={!activeSearch && leftTab === 'people'}
+                  loupeOn={gridLoupeOn}
+                  onToggleLoupe={toggleGridLoupe}
+                  loupeLarge={gridLoupeLarge}
+                  thumbSize={thumbSize}
+                />
+              </div>
+            )}
+            {tagsVisited && (
+              <div style={{ display: !activeSearch && leftTab === 'tags' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
+                <TagsBrowser
+                  ref={tagsRef}
+                  metaOpen={metaOpen}
+                  onCloseMetadata={() => setMetaOpen(false)}
+                  onCount={setTagsCount}
+                  active={!activeSearch && leftTab === 'tags'}
+                  loupeOn={gridLoupeOn}
+                  onToggleLoupe={toggleGridLoupe}
+                  loupeLarge={gridLoupeLarge}
+                  thumbSize={thumbSize}
+                />
+              </div>
+            )}
+            {foldersVisited && (
+              <div style={{ display: !activeSearch && leftTab === 'folders' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
+                <FoldersBrowser
+                  key={dataKey}
+                  ref={foldersRef}
+                  active={!activeSearch && leftTab === 'folders'}
+                  metaOpen={metaOpen}
+                  onCloseMetadata={() => setMetaOpen(false)}
+                  filters={filters}
+                  onOpenApplicationsPreferences={() => openPreferencesTab('applications')}
+                  thumbSize={thumbSize}
+                  loupeOn={gridLoupeOn}
+                  onToggleLoupe={toggleGridLoupe}
+                  loupeLarge={gridLoupeLarge}
+                />
+              </div>
+            )}
+            {!activeSearch && leftTab === 'trash' && <TrashBrowser onCount={setTrashCount} thumbSize={thumbSize} />}
+          </div>
         </div>
-      </div>
 
-      {prefsOpen && (
-        <PreferencesOverlay
-          initialTab={prefsInitialTab}
-          onClose={() => {
-            setPrefsOpen(false);
-            setPrefsInitialTab('library');
-          }}
-        />
-      )}
-      {activityOpen && <ActivityPanel onClose={() => setActivityOpen(false)} />}
-      {importOpen && (
-        <ImportDialog onClose={() => setImportOpen(false)} onOpenLibraryPreferences={() => openPreferencesTab('library')} />
-      )}
-      {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
-      {closeBlockedCount != null && (
-        <ConfirmDialog
-          title="Still in progress"
-          message={`${closeBlockedCount} job${closeBlockedCount === 1 ? '' : 's'} still in progress. Quitting now may leave a change unsaved, an import incomplete, or a stack operation half-applied.`}
-          confirmLabel="Quit anyway"
-          cancelLabel="Wait"
-          danger
-          onConfirm={forceQuit}
-          onClose={() => setCloseBlockedCount(null)}
-        />
-      )}
+        {prefsOpen && (
+          <PreferencesOverlay
+            initialTab={prefsInitialTab}
+            onClose={() => {
+              setPrefsOpen(false);
+              setPrefsInitialTab('library');
+            }}
+          />
+        )}
+        {activityOpen && <ActivityPanel onClose={() => setActivityOpen(false)} />}
+        {importOpen && (
+          <ImportDialog onClose={() => setImportOpen(false)} onOpenLibraryPreferences={() => openPreferencesTab('library')} />
+        )}
+        {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
+        {closeBlockedCount != null && (
+          <ConfirmDialog
+            title="Still in progress"
+            message={`${closeBlockedCount} job${closeBlockedCount === 1 ? '' : 's'} still in progress. Quitting now may leave a change unsaved, an import incomplete, or a stack operation half-applied.`}
+            confirmLabel="Quit anyway"
+            cancelLabel="Wait"
+            danger
+            onConfirm={forceQuit}
+            onClose={() => setCloseBlockedCount(null)}
+          />
+        )}
+      </div>
     </div>
   );
 }

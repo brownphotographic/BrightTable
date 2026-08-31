@@ -61,9 +61,9 @@ const TOOL_ORDER: RawConverterKind[] = ['art', 'rawtherapee', 'darktable'];
 // to need a permanent block of prose above it.
 const RAW_ROUNDTRIP_INFO =
   'Each RAW converter below owns its own GUI app and CLI path together - the app is what "Open in RAW Editor"/' +
-  '"Tweak RAW Roundtrip" launches and waits on; once its CLI binary is also configured and this converter is ' +
+  '"Tweak Roundtrip" launches and waits on; once its CLI binary is also configured and this converter is ' +
   'selected as active, that same action then runs the CLI to produce the export deterministically - no more ' +
-  'manually exporting inside the editor’s own UI. A "Headless RAW Roundtrip" action also becomes available ' +
+  'manually exporting inside the editor’s own UI. A "Headless Roundtrip" action also becomes available ' +
   'for exporting one or more RAW photos straight through the CLI, with no editor UI involved at all. Each ' +
   "tool's own settings are saved independently, so switching the active converter never loses the others'.";
 

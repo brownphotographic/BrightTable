@@ -244,6 +244,13 @@ pub struct AppConfig {
     pub window_controls_position: WindowControlsPosition,
     #[serde(default)]
     pub theme_mode: ThemeMode,
+    /// Grid loupe circle size - Preferences → Configuration → Window. `false`
+    /// (Small) keeps the original 33/67 grid/pane split; `true` (Large)
+    /// shrinks the grid down to a thin strip so the pane (and its circle)
+    /// fills most of the view. `#[serde(default)]` so existing config.json
+    /// files still deserialize cleanly.
+    #[serde(default)]
+    pub grid_loupe_large: bool,
 }
 
 /// Preferences → Sharing. Only Flickr has a real, working connection today -

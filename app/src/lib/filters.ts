@@ -51,6 +51,20 @@ export function isRawAsset(asset: AssetSummary): boolean {
   return isRawExtension(asset.fileExtension);
 }
 
+// Non-RAW formats the RAW converter CLIs (ART-cli/RawTherapee-cli/darktable-cli)
+// can also process, alongside true RAW input - all three tools open and
+// develop JPEG/TIFF the same as a RAW file (just skipping RAW-only steps
+// like demosaic), so Tweak/Headless Roundtrip aren't actually RAW-exclusive
+// at the CLI level - see isRoundTripEligible.
+export const ROUND_TRIP_NON_RAW_EXTENSIONS = new Set(['JPG', 'JPEG', 'TIF', 'TIFF']);
+
+// Whether Tweak/Headless Roundtrip can run against this asset - true RAW, or
+// one of the non-RAW formats above that the active converter's CLI also
+// accepts as input.
+export function isRoundTripEligible(asset: AssetSummary): boolean {
+  return isRawAsset(asset) || ROUND_TRIP_NON_RAW_EXTENSIONS.has(asset.fileExtension);
+}
+
 export function isVideoAsset(asset: AssetSummary): boolean {
   return asset.type === 'VIDEO';
 }

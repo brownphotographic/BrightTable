@@ -291,9 +291,8 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div
+      className="window-frame window-frame-overlay"
       style={{
-        position: 'fixed',
-        inset: 0,
         zIndex: 300,
         background: 'rgba(0,0,0,0.55)',
         display: 'flex',
@@ -511,7 +510,7 @@ export default function ActivityPanel({ onClose }: { onClose: () => void }) {
                     )}
                     <RowThumb assetId={job.assetId} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={rowTitle}>{job.exportFileName ?? 'RAW Roundtrip'}</div>
+                      <div style={rowTitle}>{job.exportFileName ?? 'Roundtrip'}</div>
                       <div style={{ fontSize: 11, color: 'var(--text-dimmer)', marginTop: 1 }}>{RAW_CONVERTER_LABEL[job.tool]}</div>
                       {job.error && !cancelled && <div style={permanent ? rowWarning : rowError}>{job.error}</div>}
                       {!job.error && stalled && (

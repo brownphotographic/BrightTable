@@ -20,6 +20,7 @@ import { prettyShortcut, useShortcuts } from '../lib/shortcuts';
 import { activeFilterCount, DEFAULT_FILTERS, type FileTypeFilter, type Filters, type MediaTypeFilter } from '../lib/filters';
 import { Star } from './MetadataRows';
 import Switch from './Switch';
+import NavTabs, { type LeftTab } from './NavTabs';
 
 type MenuKey = 'file' | 'edit' | 'view' | 'help' | 'filter' | null;
 
@@ -59,6 +60,13 @@ export default function MenuBar({
   onThumbSizeChange,
   showThumbSize,
   showLoupe,
+  activeTab,
+  onSelectTab,
+  photosCount,
+  trashCount,
+  albumsCount,
+  peopleCount,
+  tagsCount,
 }: {
   onOpenPreferences: () => void;
   onRefreshTimeline: () => void;
@@ -108,6 +116,15 @@ export default function MenuBar({
   // except Trash (Photos/Folders/Tags/People/Albums), which instead uses
   // hover actions for restore/delete.
   showLoupe: boolean;
+  // Primary view tab strip - formerly a standalone left sidebar, now part of
+  // this toolbar row (see NavTabs.tsx).
+  activeTab: LeftTab;
+  onSelectTab: (tab: LeftTab) => void;
+  photosCount: number;
+  trashCount: number;
+  albumsCount?: number;
+  peopleCount?: number;
+  tagsCount?: number;
 }) {
   const [open, setOpen] = useState<MenuKey>(null);
   const { shortcuts } = useShortcuts();
@@ -350,6 +367,18 @@ export default function MenuBar({
           }}
         />
       </TopMenu>
+
+      <div style={{ width: 1, height: 18, background: 'var(--overlay-medium)', margin: '0 6px' }} />
+
+      <NavTabs
+        active={activeTab}
+        onSelect={onSelectTab}
+        photosCount={photosCount}
+        trashCount={trashCount}
+        albumsCount={albumsCount}
+        peopleCount={peopleCount}
+        tagsCount={tagsCount}
+      />
 
       <div style={{ width: 1, height: 18, background: 'var(--overlay-medium)', margin: '0 6px' }} />
 
@@ -633,10 +662,7 @@ export default function MenuBar({
             background: loupeOn ? '#3584e4' : 'var(--overlay-medium)',
           }}
         >
-          <div style={{ position: 'relative', width: 13, height: 13, flexShrink: 0 }}>
-            <div style={{ position: 'absolute', left: 0, top: 0, width: 9, height: 9, border: '1.7px solid currentColor', borderRadius: '50%' }} />
-            <div style={{ position: 'absolute', left: 8, top: 8, width: 5, height: 1.7, background: 'currentColor', borderRadius: 1, transformOrigin: 'left center', transform: 'rotate(45deg)' }} />
-          </div>
+          <LoupeIcon />
           Loupe
         </div>
       )}
@@ -746,6 +772,16 @@ function MenuItem({ label, shortcut, onClick }: { label: string; shortcut?: stri
 
 function Divider() {
   return <div style={{ height: 1, background: 'var(--border)', margin: '6px 9px' }} />;
+}
+
+// The magnifying-glass glyph used by the Loupe button.
+function LoupeIcon() {
+  return (
+    <div style={{ position: 'relative', width: 13, height: 13, flexShrink: 0 }}>
+      <div style={{ position: 'absolute', left: 0, top: 0, width: 9, height: 9, border: '1.7px solid currentColor', borderRadius: '50%' }} />
+      <div style={{ position: 'absolute', left: 8, top: 8, width: 5, height: 1.7, background: 'currentColor', borderRadius: 1, transformOrigin: 'left center', transform: 'rotate(45deg)' }} />
+    </div>
+  );
 }
 
 function segStyle(active: boolean): CSSProperties {

@@ -43,9 +43,8 @@ export default function PreferencesOverlay({
 
   return (
     <div
+      className="window-frame window-frame-overlay"
       style={{
-        position: 'absolute',
-        inset: 0,
         zIndex: 90,
         background: 'var(--scrim)',
         display: 'flex',

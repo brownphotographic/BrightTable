@@ -15,16 +15,32 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getConfig, testConnection, type ConnectionStatus } from './api';
 import { retryOnVaultReady } from './vaultReadyRetry';
 import { onConfigReloaded } from './configEvents';
+
+// How long a reported local-mount alert stays visible (ConnectionStatusPill
+// blinks red) before auto-clearing - long enough to actually notice, short
+// enough that it reads as "something just happened" rather than a permanent
+// status (unlike `status`/`error` above, which reflect the Immich server
+// connection itself and stay however long that connection actually is down).
+const LOCAL_MOUNT_ALERT_MS = 8000;
 
 interface LibraryStatusValue {
   status: ConnectionStatus | null;
   error: string | null;
   checking: boolean;
   refresh: () => Promise<void>;
+  // Set (briefly) whenever something that depends on the local library mount
+  // (Originals on Disk) fails for a reason that looks like a connectivity
+  // problem rather than routine "this asset just has no sidecar" - a
+  // check_sidecar_metadata timeout being the motivating case (see
+  // useAssetActions.ts's scanUnsyncedMetadata). Deliberately separate from
+  // `status`/`error` above, which are about the Immich *server* connection,
+  // not the local filesystem/NFS mount BrightTable also depends on.
+  localMountAlert: string | null;
+  reportLocalMountAlert: (message: string) => void;
 }
 
 const LibraryStatusContext = createContext<LibraryStatusValue | null>(null);
@@ -33,6 +49,7 @@ export function LibraryStatusProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  const [localMountAlert, setLocalMountAlert] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setChecking(true);
@@ -64,7 +81,20 @@ export function LibraryStatusProvider({ children }: { children: ReactNode }) {
   // to notice until the app restarts.
   useEffect(() => onConfigReloaded(refresh), [refresh]);
 
-  const value = useMemo(() => ({ status, error, checking, refresh }), [status, error, checking, refresh]);
+  const localMountAlertTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reportLocalMountAlert = useCallback((message: string) => {
+    setLocalMountAlert(message);
+    if (localMountAlertTimer.current) clearTimeout(localMountAlertTimer.current);
+    localMountAlertTimer.current = setTimeout(() => setLocalMountAlert(null), LOCAL_MOUNT_ALERT_MS);
+  }, []);
+  useEffect(() => () => {
+    if (localMountAlertTimer.current) clearTimeout(localMountAlertTimer.current);
+  }, []);
+
+  const value = useMemo(
+    () => ({ status, error, checking, refresh, localMountAlert, reportLocalMountAlert }),
+    [status, error, checking, refresh, localMountAlert, reportLocalMountAlert],
+  );
 
   return <LibraryStatusContext.Provider value={value}>{children}</LibraryStatusContext.Provider>;
 }

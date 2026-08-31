@@ -25,7 +25,7 @@ import { useImageVersion } from '../lib/imageVersion';
 // unmagnified, in one large circle - closer to holding a real loupe over a
 // contact sheet than a magnifying glass. Empty whenever nothing is hovered
 // (cursor over the gap between tiles, or loupe mode just turned on).
-export default function GridLoupePane({ assetId }: { assetId: string | null }) {
+export default function GridLoupePane({ assetId, large = false }: { assetId: string | null; large?: boolean }) {
   const paneRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const version = useImageVersion(assetId ?? '');
@@ -48,16 +48,33 @@ export default function GridLoupePane({ assetId }: { assetId: string | null }) {
     return () => ro.disconnect();
   }, []);
 
-  const diameter = Math.max(0, Math.min(size.w, size.h) * 0.94);
-
-  // A rectangle of aspect ratio r, scaled so its *diagonal* equals the
-  // circle's diameter, is the largest such rectangle whose every corner (and
-  // so every point) stays within the circle - i.e. the whole photo visible,
-  // none of it clipped. Falls back to a square (the safe inscribed-square
-  // case) for the one frame before the image's real aspect ratio is known.
   const r = aspect ?? 1;
-  const boxH = diameter / Math.sqrt(r * r + 1);
-  const boxW = r * boxH;
+
+  let boxW: number;
+  let boxH: number;
+  if (large) {
+    // Large just shows the photo itself, no circular loupe mask - scaled to
+    // the largest size that fits within 95% of *both* the pane's width and
+    // height (real best-fit, like CSS object-fit: contain), not picked from
+    // the photo's own portrait/landscape orientation alone - that ignored
+    // the pane's own shape and could leave a much bigger letterboxing gap on
+    // one axis than the pane's other axis actually required.
+    const maxW = size.w * 0.95;
+    const maxH = size.h * 0.95;
+    if (maxW / r <= maxH) {
+      boxW = maxW;
+      boxH = maxW / r;
+    } else {
+      boxH = maxH;
+      boxW = maxH * r;
+    }
+  } else {
+    // Small keeps the circle within whichever dimension of the pane is
+    // tighter, so it's never trimmed by the pane's own edges.
+    const diameter = Math.min(size.w, size.h) * 0.94;
+    boxH = diameter / Math.sqrt(r * r + 1);
+    boxW = r * boxH;
+  }
 
   return (
     <div
@@ -69,14 +86,36 @@ export default function GridLoupePane({ assetId }: { assetId: string | null }) {
         justifyContent: 'center',
         minHeight: 0,
         minWidth: 0,
+        // Large's box (above) isn't clamped to the pane's *other* axis, so
+        // it can be taller (or wider) than the pane itself - overflow:
+        // hidden here would crop the photo right at the pane's own edge in
+        // that case. Small's circle never exceeds the pane, so hiding
+        // overflow there is just a no-op safety net, not load-bearing.
+        overflow: large ? 'visible' : 'hidden',
         background: 'var(--canvas)',
       }}
     >
-      {assetId && diameter > 0 && (
+      {assetId && large && (
+        <img
+          src={thumbnailSrc(assetId, 'preview', version)}
+          alt=""
+          onLoad={(e) => {
+            const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+            if (w > 0 && h > 0) setAspect(w / h);
+          }}
+          style={{ width: boxW, height: boxH, objectFit: 'contain', boxShadow: '0 0 0 1px var(--border-strong)' }}
+        />
+      )}
+      {assetId && !large && (
         <div
           style={{
-            width: diameter,
-            height: diameter,
+            // A rectangle of aspect ratio r, scaled so its *diagonal* equals
+            // the circle's diameter, is the largest such rectangle whose
+            // every corner (and so every point) stays within the circle -
+            // i.e. the whole photo visible at full size, corners touching
+            // the circle, none of it ever clipped by the circular mask.
+            width: Math.sqrt(boxW * boxW + boxH * boxH),
+            height: Math.sqrt(boxW * boxW + boxH * boxH),
             borderRadius: '50%',
             overflow: 'hidden',
             // Fixed to the light theme's --surface-sunken value (not the

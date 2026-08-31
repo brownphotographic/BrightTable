@@ -274,6 +274,7 @@ pub fn run() {
             commands::save_smart_stack_settings,
             commands::save_window_controls_position,
             commands::save_theme_mode,
+            commands::save_grid_loupe_large,
             commands::save_settings_folder,
             commands::save_share_vault,
             commands::save_applications_config,

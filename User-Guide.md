@@ -65,9 +65,8 @@ Every keyboard shortcut can be rebound here — click a shortcut, then press you
 
 ## 4. A tour of the main window
 
-- **Title bar** — window controls, plus an activity icon showing background jobs in progress.
-- **Menu bar** — File, Edit, View, Help, a Filters button, and a search box, plus a thumbnail zoom slider.
-- **Sidebar** (left) — jump between **Photos**, **Albums**, **People**, **Tags**, **Folders**, and **Trash**, each showing a live count.
+- **Title bar** — window controls, an activity icon showing background jobs in progress (imports, exports, stacking, and more), and a connection status pill showing whether BrightTable can reach Immich and your local library mount. Click the pill for details, or a quick link into Library Settings.
+- **Menu bar** — File, Edit, View, Help, a Filters button, a search box, a thumbnail zoom slider, and a row of tabs to jump between **Photos**, **Folders**, **Albums**, **People**, **Tags**, and **Trash**, each showing a live count.
 - **Main grid** — your photos for whichever tab is selected.
 - **Metadata panel** (right, toggle with `I`) — details for the selected photo.
 - **Viewer** — opens full-screen when you open a photo (press `Enter`), with zoom, a filmstrip, and its own editing shortcuts.
@@ -84,17 +83,17 @@ Every keyboard shortcut can be rebound here — click a shortcut, then press you
 - **Trash** — see anything you've deleted, restore it, or empty the trash for good.
 - **Search** — type into the search box and press Enter for a smart search across your library.
 
-Adjust thumbnail size with the slider in the menu bar or `Ctrl +` / `Ctrl -`. Turn on **Grid Loupe** to get a magnified preview when you hover over a thumbnail — handy for checking sharpness without opening the full viewer. Or just to get that nostalgic light table feel (sorry I can't provide any E6 processing chemical smell; maybe that will come in a future version).
+Adjust thumbnail size with the slider in the menu bar or `Ctrl +` / `Ctrl -`. Turn on **Grid Loupe** to get a magnified preview when you hover over a thumbnail — handy for checking sharpness without opening the full viewer. Or just to get that nostalgic light table feel (sorry I can't provide any E6 processing chemical smell; maybe that will come in a future version). Choose how much of the window it takes up in **Preferences → Configuration → Thumbnail Loupe Size**: **Small** keeps the original grid/loupe split, **Large** shrinks the grid to a thin strip so the loupe fills most of the view.
 
 ---
 
 ## 6. Selecting and viewing photos
 
-Click a thumbnail to select it, or use the checkboxes to select several. Once something's selected, a **Selection Bar** appears with quick actions: Stack, Favourite, Add to Album, Paste Processing, Paste Metadata, and Move to Trash.
+Click a thumbnail to select it, or use the checkboxes to select several. Once something's selected, a **Selection Bar** appears: Favourite and Rate stay as direct buttons, and everything else is grouped into dropdowns — **Organize** (Add to Album/Tag), **Stack**, **Edit** (Tweak/Headless Roundtrip, Open in Ext. Editor, Rotate), **Copy/Paste** (Image Processing and Metadata), and **Share** (Export to Folder, Share to Flickr) — with **Move to Trash** (and Remove from Album/Tag, where relevant) as trailing buttons. This same grouped bar, with the same actions, now appears consistently across every tab — Photos, Folders, Albums, People, Tags, and Search — not just Photos/Folders.
 
-Right-click any photo for a context menu with more options — Stack, Show in File Manager, Print, Copy/Paste Processing and Metadata, Add to Album/Tag, Export, Share to Flickr, and more.
+Right-click any photo for a context menu with the same options, grouped the same way.
 
-Double-click or press `Enter` to open the full-screen **Viewer**. From there you can zoom, flip through the filmstrip, rate, rotate, and launch editors — all without going back to the grid.
+Double-click or press `Enter` to open the full-screen **Viewer**. From there you can zoom, flip through the filmstrip, rate, rotate, launch editors, and reach the same Organize/Edit/Copy-Paste/Share menus — all without going back to the grid.
 
 ---
 
@@ -108,15 +107,15 @@ Double-click or press `Enter` to open the full-screen **Viewer**. From there you
 
 ## 8. Stacking photos together
 
-Stacks group related shots (like a RAW+JPEG pair, or a burst) into one tile in the grid.
+Stacks group related shots (like a RAW+JPEG pair, or a burst) into one tile in the grid — the same way on every tab (Photos, Folders, Albums, People, Tags, Search).
 
 - **Stack Selected** — select 2+ photos, then use the Edit menu, context menu, or Selection Bar (or press `S`).
 - **Smart Stack** — Edit menu → **Smart Stack…** automatically groups photos for you, by:
-  - **Name** — same filename, different extension (e.g. a RAW and its JPEG).
-  - **Version** — an original plus edited renditions matching a filename pattern.
+  - **Name** — same filename, different extension (e.g. a RAW and its JPEG). **Prefer as pick** lets you choose whether the RAW or the JPEG becomes the stack's cover photo (defaults to RAW).
+  - **Version** — an original plus edited renditions matching a filename pattern. Tick **Automatically include unselected RAW/JPEG siblings** (on by default) to also pull in a matching RAW/JPEG sibling elsewhere in your library that you didn't explicitly select.
   - **Time** — photos taken within a chosen number of seconds of each other.
 
-Expand a stack in the grid to see its members, and mark one as the "pick" (the cover photo). Unstack anytime from the context menu.
+Expand a stack in the grid to see its members, and mark one as the "pick" (the cover photo). Unstack anytime from the context menu. Stacking and unstacking run in the background — track progress in the Activity panel alongside imports and exports.
 
 ---
 
@@ -124,8 +123,8 @@ Expand a stack in the grid to see its members, and mark one as the "pick" (the c
 
 This is BrightTable's main job: sending a RAW file out to a real editor and bringing the result back.
 
-- **Tweak RAW Roundtrip** (`Ctrl+Enter`) — opens the photo in your chosen RAW editor (ART, RawTherapee, or darktable). When you're done editing and close it, BrightTable automatically runs that editor's command-line tool to process your changes.
-- **Headless RAW Roundtrip** — from the context menu, this reprocesses one or more selected photos through the RAW CLI directly, without opening the editor GUI. Great for batch-applying edits you've already made.
+- **Tweak Roundtrip** (`Ctrl+Enter`) — opens the photo in your chosen RAW editor (ART, RawTherapee, or darktable). Works on RAW files and on JPEG/TIFF, since all three editors can also develop those directly. When you're done editing and close it, BrightTable automatically runs that editor's command-line tool to process your changes.
+- **Headless Roundtrip** — from the context menu, this reprocesses one or more selected photos (RAW or JPEG/TIFF) through the RAW CLI directly, without opening the editor GUI. Great for batch-applying edits you've already made.
 - **Open in External Editor** (`Ctrl+E`) — opens the photo in your general-purpose editor instead.
 - **Copy/Paste Image Processing** (`Ctrl+C` / `Ctrl+V`) — copy the edit settings (sidecar) from one photo and apply them to others.
 - **Sync Metadata from Sidecar** (Edit menu, or context menu) — re-reads the on-disk sidecar file so BrightTable's view matches what's actually saved.
@@ -208,7 +207,7 @@ All of these can be changed in **Preferences → Shortcuts**.
 | Stack selected           | `S`                             |
 | Refresh timeline         | `Ctrl+R`                        |
 | Open Preferences         | `Ctrl+,`                        |
-| Open in RAW editor       | `Ctrl+Enter`                    |
+| Tweak Roundtrip (RAW editor) | `Ctrl+Enter`                |
 | Open in External Editor  | `Ctrl+E`                        |
 | Print                    | `Ctrl+P`                        |
 | Copy / Paste Processing  | `Ctrl+C` / `Ctrl+V`             |
@@ -234,6 +233,10 @@ chmod -R 777 /path/to/your/immich/library
 ```
 
 Because new files created by Immich will reset to the default owner again, set this up as a recurring **User Script** in Unraid (e.g. nightly) rather than a one-off fix. See the project's `README.md` for the full walkthrough.
+
+### Connection status pill shows "local mount unreachable"
+
+The title bar's connection pill checks two separate things: whether BrightTable can reach your Immich server, and whether the local library path(s) configured in Preferences → Library are actually reachable on disk right now. If it turns red with "local mount unreachable," your NFS/SMB share has likely dropped even though Immich itself is still reachable — reconnect the share, then click the pill to re-check. This also means actions that need local disk access (Copy Image Processing, Tweak/Headless Roundtrip, Show in File Manager, rotate) may fail or lag behind while the mount is down.
 
 ### Not sure if your Immich server version is supported?
 

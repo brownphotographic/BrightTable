@@ -151,6 +151,25 @@ pub async fn save_theme_mode(
     Ok(snapshot)
 }
 
+#[tauri::command]
+pub async fn save_grid_loupe_large(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    large: bool,
+) -> Result<AppConfig, String> {
+    let snapshot = {
+        let mut guard = state.config.lock().unwrap();
+        guard.grid_loupe_large = large;
+        guard.clone()
+    };
+    let vault = state.secret_vault.clone();
+    let to_save = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save(&app, &to_save, vault.read().unwrap().as_ref()))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(snapshot)
+}
+
 // Async for the same reason as `save_library_config` above - reopening the
 // vault at its new location (when moving it alongside the settings folder,
 // see `config::reopen_vault_if_moved`) and the trailing `config::save` are
@@ -299,7 +318,57 @@ pub async fn test_connection(
     cfg: LibraryConfig,
 ) -> Result<ConnectionStatus, String> {
     let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
-    client.test_connection().await
+    let mut status = client.test_connection().await?;
+    let (local_mount_ok, local_mount_error) = check_local_mount(&cfg, &state.io_guard).await;
+    status.local_mount_ok = local_mount_ok;
+    status.local_mount_error = local_mount_error;
+    Ok(status)
+}
+
+const LOCAL_MOUNT_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Whether `local_root`/`uploaded_local_root` (see `LibraryConfig`) is
+/// actually reachable on disk right now - independent of the Immich *server*
+/// check `test_connection` above already did, since "Connected" to the API
+/// says nothing about whether the external share backing local file
+/// operations (Copy Image Processing, Show in File Manager, rotate,
+/// sidecar scans...) is up. Confirmed live: an NFS-mounted library dropped
+/// out while Immich itself stayed reachable, and the connection pill kept
+/// showing green with zero indication anything was wrong.
+///
+/// Returns `(None, None)` when neither mapping is configured at all - a
+/// valid setup that never touches local files, so that case must not read
+/// as broken. Bounded the same way as `check_sidecar_metadata`'s own disk
+/// touch, just with a much shorter budget since this only needs to prove
+/// reachability, not walk a real directory tree: a `.exists()` stuck on a
+/// dead NFS mount must not hang this command (and therefore the whole pill)
+/// for anywhere near as long as a real per-asset scan is allowed to take.
+async fn check_local_mount(cfg: &LibraryConfig, io_guard: &Arc<io_guard::IoGuard>) -> (Option<bool>, Option<String>) {
+    let root = if !cfg.local_root.trim().is_empty() {
+        cfg.local_root.clone()
+    } else if !cfg.uploaded_local_root.trim().is_empty() {
+        cfg.uploaded_local_root.clone()
+    } else {
+        return (None, None);
+    };
+    let check_path = std::path::PathBuf::from(&root);
+    let Some(handle) = io_guard::guarded_spawn_blocking(io_guard, move || check_path.exists()) else {
+        // Suspend imminent - not a real signal either way, so stay silent
+        // rather than falsely reporting the mount as down.
+        return (None, None);
+    };
+    match tokio::time::timeout(LOCAL_MOUNT_CHECK_TIMEOUT, handle).await {
+        Ok(Ok(true)) => (Some(true), None),
+        Ok(Ok(false)) => (Some(false), Some(format!("Local mount path not found: {root}"))),
+        Ok(Err(e)) => (Some(false), Some(e.to_string())),
+        Err(_) => (
+            Some(false),
+            Some(format!(
+                "Timed out after {}s checking the local mount — check your library's local mount is actually connected/reachable",
+                LOCAL_MOUNT_CHECK_TIMEOUT.as_secs()
+            )),
+        ),
+    }
 }
 
 #[tauri::command]
@@ -532,6 +601,27 @@ pub fn clear_completed_processing_jobs(state: State<AppState>) {
 /// `guarded_spawn_blocking` closure). Not `#[tauri::command]` itself - pure
 /// enough to call directly from inside an already-blocking closure without
 /// another layer of `spawn_blocking`.
+/// Rejects a Roundtrip target upfront when Immich would never be able to
+/// notice the file the CLI is about to write next to it - i.e. `original_path`
+/// only resolves via the Immich-internal-upload mapping, not a registered
+/// External Library (see `paths::is_external_library_path`'s own doc
+/// comment). Confirmed live: a phone-uploaded JPEG's Roundtrip export landed
+/// correctly on disk (both `resolve_local_path` fallback tiers point
+/// somewhere real), but `commands::scan_immich_library` only ever rescans a
+/// *registered External Library* - there's no equivalent for Immich's own
+/// upload storage, so `ingestRoundTripExport`'s poll (up to ~25 minutes,
+/// backgrounded) never finds it and the export is permanently orphaned with
+/// no explanation. Checked before the "no mapping configured at all" case
+/// below so the two failure reasons don't collide.
+fn check_round_trip_supported(original_path: &str, file_name: &str, cfg: &LibraryConfig) -> Result<(), String> {
+    if paths::resolve_local_path(original_path, cfg).is_some() && !paths::is_external_library_path(original_path, cfg) {
+        return Err(format!(
+            "Roundtrip isn't available for {file_name} — it's stored in Immich's own upload storage rather than an External Library folder, so Immich has no way to notice the new file Roundtrip would write next to it"
+        ));
+    }
+    Ok(())
+}
+
 fn resolve_round_trip_export_path(
     original_path: &str,
     file_name: &str,
@@ -539,6 +629,7 @@ fn resolve_round_trip_export_path(
     cfg: &LibraryConfig,
     suffix_pattern: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
+    check_round_trip_supported(original_path, file_name, cfg)?;
     let local_path = paths::resolve_local_path(original_path, cfg).ok_or_else(|| {
         format!("No local path mapping configured for {file_name} — set up External Library mapping in Preferences → Library")
     })?;
@@ -629,7 +720,7 @@ pub async fn launch_raw_cli_round_trip(
         (guard.library.clone(), guard.applications.clone(), guard.smart_stack.suffix.clone())
     };
     if cfg.read_only {
-        return Err("Read-only mode is on — turn it off in Preferences → Library to use RAW Roundtrip".into());
+        return Err("Read-only mode is on — turn it off in Preferences → Library to use Roundtrip".into());
     }
     let (tool, cli_path) = applications.active_raw_cli()?;
     let cli_path = cli_path.to_string();
@@ -638,6 +729,11 @@ pub async fn launch_raw_cli_round_trip(
         return Err(format!("Your cap of {} per action doesn't allow any writes", cfg.max_writes_per_batch));
     }
     let original_path = original_path.ok_or("This asset has no server-side path to resolve")?;
+    // Checked before ever opening the editor - not just once the CLI export
+    // path is resolved later inside `setup` - so the user doesn't spend time
+    // editing a photo whose export can never actually be found afterward.
+    // See `check_round_trip_supported`'s own doc comment.
+    check_round_trip_supported(&original_path, &file_name, &cfg)?;
     let local_path = paths::resolve_local_path(&original_path, &cfg).ok_or(
         "No local path mapping configured for this asset — set up External Library mapping in Preferences → Library",
     )?;
@@ -918,7 +1014,7 @@ pub async fn batch_raw_cli_round_trip(state: State<'_, AppState>, targets: Vec<A
         (guard.library.clone(), guard.applications.clone(), guard.smart_stack.suffix.clone())
     };
     if cfg.read_only {
-        return Err("Read-only mode is on — turn it off in Preferences → Library to use Headless RAW Roundtrip".into());
+        return Err("Read-only mode is on — turn it off in Preferences → Library to use Headless Roundtrip".into());
     }
     let (tool, cli_path) = applications.active_raw_cli()?;
     let cli_path = cli_path.to_string();
@@ -1828,16 +1924,29 @@ pub struct MetadataSyncResult {
 /// saturated the NFS mount for minutes). Acquired before `guarded_spawn_blocking`
 /// so a caller waiting on a full semaphore doesn't also count as one more
 /// `io_guard`-tracked in-flight call the whole time it's merely queued.
+///
+/// `priority` picks which of `IoGuard`'s two permit pools this call queues
+/// on - `false` (the bulk per-bucket prefetch scan, the overwhelming
+/// majority of calls) for the regular `acquire_metadata_scan_permit`, `true`
+/// for the separate, smaller `acquire_interactive_metadata_scan_permit` a
+/// caller uses when this check is tied directly to something the user just
+/// did (right-clicked/selected a photo, clicked Copy Image Processing) - see
+/// that method's own doc comment for why a second lane exists at all.
 #[tauri::command]
 pub async fn check_sidecar_metadata(
     state: State<'_, AppState>,
     queries: Vec<MetadataSyncQuery>,
+    priority: bool,
 ) -> Result<Vec<MetadataSyncResult>, String> {
     let cfg = state.library_config();
     if cfg.immich_root.trim().is_empty() && cfg.uploaded_immich_root.trim().is_empty() {
         return Err("No local path mapping configured".into());
     }
-    let _permit = state.io_guard.acquire_metadata_scan_permit().await;
+    let _permit = if priority {
+        state.io_guard.acquire_interactive_metadata_scan_permit().await
+    } else {
+        state.io_guard.acquire_metadata_scan_permit().await
+    };
     let Some(handle) = io_guard::guarded_spawn_blocking(&state.io_guard, move || {
         queries
             .into_iter()
@@ -2373,5 +2482,45 @@ mod export_metadata_tests {
         assert!(needs_exiftool(ExportFormat::Original, MetadataPolicy::StripAll));
         assert!(needs_exiftool(ExportFormat::Jpeg, MetadataPolicy::Keep));
         assert!(needs_exiftool(ExportFormat::Jpeg, MetadataPolicy::RemoveGps));
+    }
+}
+
+#[cfg(test)]
+mod round_trip_support_tests {
+    use super::*;
+
+    #[test]
+    fn check_round_trip_supported_ok_for_external_library_asset() {
+        let mut cfg = LibraryConfig::default();
+        cfg.immich_root = "/libraries".into();
+        cfg.local_root = "/mnt/nfs/Rob/Images".into();
+        assert!(check_round_trip_supported("/libraries/2026/06/IMG_1.dng", "IMG_1.dng", &cfg).is_ok());
+    }
+
+    // The exact scenario confirmed live: a phone-uploaded JPEG only matches
+    // the Immich-internal-upload fallback, never the External Library
+    // mapping - Immich has no "rescan my own upload storage" operation, so
+    // Roundtrip must reject this upfront rather than let the export land on
+    // disk with no way for Immich (and so the user) to ever see it.
+    #[test]
+    fn check_round_trip_supported_rejects_uploaded_only_asset() {
+        let mut cfg = LibraryConfig::default();
+        cfg.immich_root = "/libraries".into();
+        cfg.local_root = "/mnt/nfs/Rob/Images".into();
+        cfg.uploaded_immich_root = "/photos".into();
+        cfg.uploaded_local_root = "/mnt/nfs/Rob/Immich_Uploaded".into();
+        let err = check_round_trip_supported("/photos/library/admin/2026/2026-08/2026-08-29/PXL_1.jpg", "PXL_1.jpg", &cfg)
+            .unwrap_err();
+        assert!(err.contains("Immich's own upload storage"), "unexpected error: {err}");
+    }
+
+    // Neither mapping matching at all is a different, pre-existing failure
+    // mode (`resolve_round_trip_export_path`'s own "No local path mapping
+    // configured" error) - `check_round_trip_supported` must stay silent
+    // here rather than claiming this is an uploaded-storage asset.
+    #[test]
+    fn check_round_trip_supported_ok_when_neither_mapping_matches() {
+        let cfg = LibraryConfig::default();
+        assert!(check_round_trip_supported("/libraries/2026/06/IMG_1.dng", "IMG_1.dng", &cfg).is_ok());
     }
 }

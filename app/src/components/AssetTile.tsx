@@ -92,13 +92,19 @@ const AssetTile = memo(function AssetTile({
   const [hovered, setHovered] = useState(false);
 
   const handleClick = (e: React.MouseEvent) => {
-    // Loupe mode is browse-only - hovering drives the preview pane, and
-    // nothing else on the tile (select, open, rate) is reachable except the
-    // stack-expand badge, which has its own onClick with stopPropagation so
-    // it never reaches here.
-    if (loupeMode) return;
-    const mods: ClickMods = { shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey };
     const plain = !e.shiftKey && !e.ctrlKey && !e.metaKey;
+
+    // Loupe mode is browse-only - hovering drives the preview pane, and
+    // nothing else on the tile (select, rate) is reachable except the
+    // stack-expand badge (its own onClick with stopPropagation, so it never
+    // reaches here). The one exception is a double-click: since hovering
+    // already previews this tile's image in the loupe pane, a double-click
+    // opens that same image in the detail view, same as outside loupe mode.
+    if (loupeMode) {
+      if (e.detail >= 2 && plain) onOpen(asset.id);
+      return;
+    }
+    const mods: ClickMods = { shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey };
 
     // A plain click that's the 2nd+ (or later) of a double/triple-click
     // means "open" instead of toggling selection again - the first click

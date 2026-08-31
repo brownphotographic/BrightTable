@@ -26,20 +26,26 @@ const REPO_URL = 'https://github.com/brownphotographic/BrightTable';
 // - there's no runtime channel to read either from the frontend.
 const TESTED_SERVER_VERSIONS = '3.1.0 (floor and confirmed)';
 
+// Cargo.toml (and therefore getVersion()) must carry a full semver x.y.z,
+// but a trailing ".0" patch reads as noise in the UI - "1.1" not "1.1.0".
+function formatDisplayVersion(version: string): string {
+  const parts = version.split('.');
+  return parts.length === 3 && parts[2] === '0' ? `${parts[0]}.${parts[1]}` : version;
+}
+
 export default function AboutDialog({ onClose }: { onClose: () => void }) {
   const [appVersion, setAppVersion] = useState<string | null>(null);
 
   useEffect(() => {
-    getVersion().then(setAppVersion);
+    getVersion().then((v) => setAppVersion(formatDisplayVersion(v)));
   }, []);
 
   const compatText = `Tested against Immich ${TESTED_SERVER_VERSIONS}`;
 
   return (
     <div
+      className="window-frame window-frame-overlay"
       style={{
-        position: 'fixed',
-        inset: 0,
         zIndex: 300,
         background: 'rgba(0,0,0,0.55)',
         display: 'flex',

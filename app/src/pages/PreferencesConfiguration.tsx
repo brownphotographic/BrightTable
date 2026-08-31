@@ -20,6 +20,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { clearThumbCache, getConfig, getThumbCacheInfo, saveSettingsFolder, saveShareVault, type ThumbCacheStats } from '../lib/api';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useWindowControls } from '../lib/windowControls';
+import { useGridLoupeSettings } from '../lib/gridLoupeSettings';
 import { useTheme } from '../lib/theme';
 
 function formatSize(bytes: number): string {
@@ -40,6 +41,7 @@ export default function PreferencesConfiguration() {
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState(false);
   const { position, setPosition } = useWindowControls();
+  const { large: loupeLarge, setLarge: setLoupeLarge } = useGridLoupeSettings();
   const { themeMode, setThemeMode } = useTheme();
   const [settingsFolder, setSettingsFolder] = useState<string | null>(null);
   const [folderLoading, setFolderLoading] = useState(true);
@@ -138,9 +140,23 @@ export default function PreferencesConfiguration() {
             onChange={setPosition}
           />
         </Row>
+        <Divider />
+        <Row label="Thumbnail Loupe Size">
+          <Segmented
+            value={loupeLarge ? 'large' : 'small'}
+            options={[
+              { value: 'small', label: 'Small' },
+              { value: 'large', label: 'Large' },
+            ]}
+            onChange={(v) => setLoupeLarge(v === 'large')}
+          />
+        </Row>
       </div>
       <div style={helpText}>
-        Which side of the title bar the minimize/maximize/close buttons appear on.
+        Which side of the title bar the minimize/maximize/close buttons appear on. Thumbnail Loupe
+        Size controls how much room the hover-preview loupe pane takes up: Small keeps the
+        original grid/pane split, Large shrinks the grid to a thin strip so the loupe fills most
+        of the view.
       </div>
 
       <div style={{ fontSize: 14, fontWeight: 700, margin: '26px 4px 12px' }}>Config File Location</div>

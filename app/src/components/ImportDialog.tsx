@@ -231,7 +231,7 @@ export default function ImportDialog({
   }
 
   return (
-    <div style={overlay} onClick={onClose}>
+    <div className="window-frame window-frame-overlay" style={overlay} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} style={dialog}>
         <div style={header}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>Import from SD Card/Disk</div>
@@ -436,8 +436,6 @@ function Segmented<T extends string | number>({
 }
 
 const overlay: CSSProperties = {
-  position: 'fixed',
-  inset: 0,
   zIndex: 310,
   background: 'rgba(0,0,0,0.55)',
   display: 'flex',

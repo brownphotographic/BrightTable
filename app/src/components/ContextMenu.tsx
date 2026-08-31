@@ -23,6 +23,13 @@ export interface ContextMenuItem {
   disabled?: boolean;
 }
 
+// A thin separator between logical groups of items (Organize / Stacking /
+// Copy-Paste / Utility / Destructive - see each page's contextMenuItems) -
+// callers push `DIVIDER` between groups the same way SelectionBar uses a
+// vertical rule between its own button groups.
+export const DIVIDER = { divider: true } as const;
+export type ContextMenuEntry = ContextMenuItem | typeof DIVIDER;
+
 // The app's first right-click context menu - a dumb, reusable positioned
 // popup. Callers own what items appear; this only handles placement,
 // dismissal (outside click / Escape), and matching the existing dropdown
@@ -35,10 +42,23 @@ export default function ContextMenu({
 }: {
   x: number;
   y: number;
-  items: ContextMenuItem[];
+  items: ContextMenuEntry[];
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+
+  // Callers push DIVIDER unconditionally between logical groups regardless
+  // of whether the group on either side actually ended up empty (most of
+  // these items are individually conditional) - collapsing consecutive/
+  // leading/trailing dividers here means every caller doesn't have to track
+  // that itself.
+  const normalized: ContextMenuEntry[] = [];
+  for (const item of items) {
+    const isDivider = 'divider' in item;
+    if (isDivider && (normalized.length === 0 || 'divider' in normalized[normalized.length - 1])) continue;
+    normalized.push(item);
+  }
+  while (normalized.length > 0 && 'divider' in normalized[normalized.length - 1]) normalized.pop();
 
   useEffect(() => {
     const onPointerDown = (e: MouseEvent) => {
@@ -71,7 +91,11 @@ export default function ContextMenu({
         zIndex: 120,
       }}
     >
-      {items.map((item, i) => (
+      {normalized.map((item, i) => {
+        if ('divider' in item) {
+          return <div key={i} style={{ height: 1, margin: '5px 4px', background: 'var(--border)' }} />;
+        }
+        return (
         <div
           key={i}
           onClick={() => {
@@ -102,7 +126,8 @@ export default function ContextMenu({
         >
           {item.label}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

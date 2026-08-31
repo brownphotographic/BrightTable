@@ -142,10 +142,14 @@ if (!releaseLine.test(metainfo)) {
   throw new Error(`Could not find a "<release version=... date=.../>" line in ${metainfoPath}`);
 }
 const releaseDate = new Date().toISOString().slice(0, 10);
+// Cargo.toml needs a full semver x.y.z, but AppStream's release version is
+// free text shown to users in software centers - drop a trailing ".0" patch
+// so "1.1.0" reads as "1.1", matching the About dialog.
+const displayVersion = /^\d+\.\d+\.0$/.test(nextVersion) ? nextVersion.slice(0, -2) : nextVersion;
 writeFileSync(
   metainfoPath,
-  metainfo.replace(releaseLine, `<release version="${nextVersion}" date="${releaseDate}" />`),
+  metainfo.replace(releaseLine, `<release version="${displayVersion}" date="${releaseDate}" />`),
 );
-console.log(`Set Flatpak metainfo release to ${nextVersion} (${releaseDate}).`);
+console.log(`Set Flatpak metainfo release to ${displayVersion} (${releaseDate}).`);
 
 console.log("Remember to also add a row for this build to COMPATIBILITY.md by hand.");

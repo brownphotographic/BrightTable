@@ -61,11 +61,18 @@ pub const DEFAULT_MAX_CONCURRENT_METADATA_SCANS: usize = 4;
 pub const MIN_CONCURRENT_METADATA_SCANS: usize = 1;
 pub const MAX_CONCURRENT_METADATA_SCANS_LIMIT: usize = 16;
 
+/// Fixed (not user-configurable) size of the separate "interactive" lane -
+/// see `acquire_interactive_metadata_scan_permit`. Small on purpose: this
+/// exists to skip a queueing delay, not to add more concurrent NFS load on
+/// top of the bulk lane's already-tuned cap.
+pub const INTERACTIVE_METADATA_SCAN_PERMITS: usize = 2;
+
 pub struct IoGuard {
     paused: AtomicBool,
     inflight: AtomicUsize,
     drained: Notify,
     metadata_scan_semaphore: Arc<Semaphore>,
+    interactive_metadata_scan_semaphore: Arc<Semaphore>,
 }
 
 impl IoGuard {
@@ -77,13 +84,38 @@ impl IoGuard {
             inflight: AtomicUsize::new(0),
             drained: Notify::new(),
             metadata_scan_semaphore: Arc::new(Semaphore::new(max_scans)),
+            interactive_metadata_scan_semaphore: Arc::new(Semaphore::new(INTERACTIVE_METADATA_SCAN_PERMITS)),
         })
     }
 
     /// Blocks until a `check_sidecar_metadata` concurrency slot is free -
     /// same "shared bounded `Semaphore`" pattern as `ArtQueue::acquire_permit`.
+    /// This is the bulk lane: the per-bucket/folder prefetch scan fired as
+    /// each one loads (see `commands::check_sidecar_metadata`'s own doc
+    /// comment) queues here with no priority over any other caller.
     pub async fn acquire_metadata_scan_permit(&self) -> OwnedSemaphorePermit {
         self.metadata_scan_semaphore.clone().acquire_owned().await.expect("IoGuard's metadata scan semaphore is never closed")
+    }
+
+    /// A second, separate, small permit pool for a single-asset check tied
+    /// directly to what the user is doing right now - right-clicking/
+    /// selecting a photo (each page's "recheck effect"), or clicking Copy
+    /// Image Processing itself. Kept apart from `metadata_scan_semaphore`
+    /// above so that request doesn't have to wait in line behind however
+    /// many ambient bucket-prefetch scans got queued while scrolling a large
+    /// library first. Confirmed live: browsing a 91k-asset library can queue
+    /// far more bulk-lane requests than its 4-slot cap drains quickly, so a
+    /// right-click on a tiny, currently-visible folder minutes later was
+    /// still stuck behind that entire backlog. This doesn't raise the total
+    /// number of concurrent NFS-touching scans much (2 more, hard-capped,
+    /// not user-configurable) - it only stops BrightTable's own queue
+    /// ordering from being the reason an on-screen interaction stalls.
+    pub async fn acquire_interactive_metadata_scan_permit(&self) -> OwnedSemaphorePermit {
+        self.interactive_metadata_scan_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("IoGuard's interactive metadata scan semaphore is never closed")
     }
 
     pub fn is_paused(&self) -> bool {

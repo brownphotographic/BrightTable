@@ -216,6 +216,10 @@ impl ImmichClient {
             server_version: version.display(),
             user_email: user.email,
             server_version_supported: version.is_at_least(min_major, min_minor, min_patch),
+            // Filled in by `commands::test_connection` after this returns -
+            // this client has no filesystem access of its own.
+            local_mount_ok: None,
+            local_mount_error: None,
         })
     }
 

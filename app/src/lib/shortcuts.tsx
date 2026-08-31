@@ -76,7 +76,7 @@ export const SHORTCUT_DEFS: { id: ShortcutId; label: string }[] = [
   { id: 'stack', label: 'Stack selected' },
   { id: 'refreshTimeline', label: 'Refresh timeline' },
   { id: 'openPreferences', label: 'Open preferences' },
-  { id: 'openInRawEditor', label: 'Tweak RAW Roundtrip' },
+  { id: 'openInRawEditor', label: 'Tweak Roundtrip' },
   { id: 'openInExternalEditor', label: 'Open in Ext. Editor' },
   { id: 'print', label: 'Print' },
   { id: 'copyMetadata', label: 'Copy Metadata' },

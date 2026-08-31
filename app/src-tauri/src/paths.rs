@@ -37,6 +37,24 @@ pub fn resolve_local_path(original_path: &str, lib: &LibraryConfig) -> Option<Pa
         .or_else(|| resolve_with_prefix(original_path, &lib.uploaded_immich_root, &lib.uploaded_local_root))
 }
 
+/// Whether `original_path` resolves through the External Library mapping
+/// specifically (`immich_root`/`local_root`), as opposed to only matching
+/// the Immich-internal-upload fallback (`uploaded_immich_root`/
+/// `uploaded_local_root`) - see `resolve_local_path`'s own doc comment for
+/// the two-tier fallback this distinguishes between. Roundtrip (both
+/// variants) needs this: Immich can be told to rescan a registered External
+/// Library folder (`commands::scan_immich_library` -> `POST
+/// /libraries/{id}/scan`), which is how it ever notices the new file the CLI
+/// just wrote next to the original - but it has no equivalent operation for
+/// its own internally-managed upload storage, so a file dropped there by an
+/// outside process is invisible to Immich forever, however long the caller
+/// polls for it. `commands::check_round_trip_supported` uses this to block
+/// Roundtrip upfront for an uploaded-storage asset rather than letting the
+/// export land on disk with no way for the user to ever see it.
+pub fn is_external_library_path(original_path: &str, lib: &LibraryConfig) -> bool {
+    resolve_with_prefix(original_path, &lib.immich_root, &lib.local_root).is_some()
+}
+
 fn resolve_with_prefix(original_path: &str, immich_prefix: &str, local_prefix: &str) -> Option<PathBuf> {
     let immich_prefix = immich_prefix.trim().trim_end_matches('/');
     let local_prefix = local_prefix.trim().trim_end_matches('/');
@@ -468,6 +486,24 @@ mod tests {
             resolve_local_path("upload/library/admin/2024/09/IMG_1.jpg", &lib),
             Some(PathBuf::from("/mnt/nfs/Rob/Immich_Uploaded/2024/09/IMG_1.jpg"))
         );
+    }
+
+    #[test]
+    fn is_external_library_path_true_for_external_library_match() {
+        let mut lib = LibraryConfig::default();
+        lib.immich_root = "/photos".into();
+        lib.local_root = "/mnt/nfs/Rob/Images".into();
+        assert!(is_external_library_path("/photos/2026/06/IMG_1.dng", &lib));
+    }
+
+    #[test]
+    fn is_external_library_path_false_for_uploaded_only_match() {
+        let mut lib = LibraryConfig::default();
+        lib.immich_root = "/libraries".into();
+        lib.local_root = "/mnt/nfs/Rob/Images".into();
+        lib.uploaded_immich_root = "/photos".into();
+        lib.uploaded_local_root = "/mnt/nfs/Rob/Immich_Uploaded".into();
+        assert!(!is_external_library_path("/photos/library/admin/2026/06/IMG_1.jpg", &lib));
     }
 
     #[test]

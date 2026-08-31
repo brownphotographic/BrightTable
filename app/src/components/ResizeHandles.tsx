@@ -29,7 +29,13 @@ const appWindow = getCurrentWindow();
 // No bottom-right (SouthEast) handle: that corner is where the Photos/
 // Folders/Trash status bars put their own right-aligned controls (thumbnail
 // zoom slider, "Empty Trash"), and it was stealing clicks from them.
-const EDGE = 8;
+//
+// EDGE must span the full `--window-frame-margin` (index.css) - that margin
+// is the transparent gap between the true (unmaximized) window edge, where
+// these handles are anchored, and .window-frame's own visible/shadowed
+// border. A thinner strip leaves a dead zone between where the handle stops
+// and where the user actually sees (and hovers over) the window's edge.
+const EDGE = 16;
 const CORNER = 24;
 
 type Dir = 'North' | 'South' | 'East' | 'West' | 'NorthEast' | 'NorthWest' | 'SouthEast' | 'SouthWest';

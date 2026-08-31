@@ -33,20 +33,25 @@ import {
   type AssetSummary,
   type MetadataEditTarget,
   type ProcessingJob,
+  type UnsyncedMetadata,
 } from '../lib/api';
 import { decodeThumbHash } from '../lib/thumbhash';
 import { formatDims, formatSize } from '../lib/exifFormat';
 import MetadataRows, { Star } from './MetadataRows';
 import ConfirmDialog from './ConfirmDialog';
+import ActionDropdown from './ActionDropdown';
+import { groupActions, type MenuAction } from '../lib/actionMenu';
 import { isTypingTarget, matchesShortcut, useShortcuts } from '../lib/shortcuts';
 import { overlayRawOverrides, useRawOverrides } from '../lib/rawOverrides';
-import { isOriginalZoomable, isRawAsset, isVideoAsset } from '../lib/filters';
+import { isOriginalZoomable, isRawAsset, isRoundTripEligible, isVideoAsset } from '../lib/filters';
 import { useApplications } from '../lib/applications';
 import { useClipboard } from '../lib/clipboard';
 import { useNoSidecarChoice } from '../lib/useNoSidecarChoice';
 import { useProcessingQueue } from '../lib/processingQueue';
 import { useProcessingJobReconciliation } from '../lib/useProcessingJobReconciliation';
 import { bumpImageVersion, getImageVersion, useImageVersion } from '../lib/imageVersion';
+import { TAG_ASSIGN_DISABLED_REASON } from '../lib/featureFlags';
+import { copyImageProcessingEntry } from '../lib/useAssetActions';
 
 const MIN_ZOOM = 25;
 const MAX_ZOOM = 400;
@@ -109,6 +114,23 @@ function headerButtonStyle(active: boolean) {
   } as const;
 }
 
+// Shared by Move to Trash / Remove from Album / Remove from Tag - the header's only
+// "danger" buttons, matching SelectionBar's destructive-group red.
+function destructiveButtonStyle() {
+  return {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 7,
+    height: 30,
+    padding: '0 13px',
+    borderRadius: 8,
+    background: 'rgba(224,27,36,0.16)',
+    color: '#ff8080',
+    fontSize: 12.5,
+    cursor: 'default',
+  } as const;
+}
+
 // Exposed to the parent (PhotosBrowser/FoldersBrowser) via a ref so the Edit
 // menu's Rotate Left/Right items can drive the currently-open photo's rotate
 // action from outside - see those components' own `rotateLeft`/`rotateRight`
@@ -153,6 +175,32 @@ const Viewer = forwardRef<ViewerHandle, {
   // Prints the currently-open (non-RAW) asset - omitted (no button shown)
   // for RAW assets, matching Print's "no RAW support in v1" scope.
   onPrint?: (asset: AssetSummary) => void;
+  // The rest of these mirror the equivalent SelectionBar `MenuAction`s each page
+  // already builds for the grid - see actionMenu.ts/useAssetActions.ts - just scoped to
+  // whichever single asset is open here (`shown`, not the page's own grid selection).
+  // Omitted (no affordance shown) whenever a page doesn't offer that capability, same
+  // convention as onUnstack/onPrint above.
+  onAddToAlbum?: (assetId: string) => void;
+  onAddToTag?: (assetId: string) => void;
+  // Photos/Folders only - the only two pages whose SelectionBar exposes this.
+  onHeadlessRoundtrip?: (assetId: string) => void;
+  onExportToFolder?: (asset: AssetSummary) => void;
+  onShareToFlickr?: (asset: AssetSummary) => void;
+  onSyncMetadata?: (assetId: string) => void;
+  // Gates the Sync Metadata action's visibility for `shown.id` - the page's own
+  // useAssetActions() Map, passed straight through rather than a single boolean, so it
+  // stays correct if `shown` changes via stack-member peeking without a re-render from
+  // the parent page.
+  unsyncedMetadata?: Map<string, UnsyncedMetadata>;
+  // Gates Copy Image Processing's pending-vs-confirmed-absent state (see
+  // copyImageProcessingEntry) the same way unsyncedMetadata above gates
+  // Sync Metadata - the page's own useAssetActions() Set, passed straight
+  // through.
+  scannedForProcessingSidecar?: Set<string>;
+  // Albums/Tags only - "Remove from Album/Tag" alongside the existing Move to Trash,
+  // not a replacement for it (both pages' own SelectionBar offers both, additively).
+  onRemoveFromAlbum?: (assetId: string) => Promise<void>;
+  onRemoveFromTag?: (assetId: string) => Promise<void>;
 }>(function Viewer({
   asset,
   hasPrev,
@@ -170,6 +218,16 @@ const Viewer = forwardRef<ViewerHandle, {
   onArtRoundTripQueued,
   onProcessingSidecarCreated,
   onPrint,
+  onAddToAlbum,
+  onAddToTag,
+  onHeadlessRoundtrip,
+  onExportToFolder,
+  onShareToFlickr,
+  onSyncMetadata,
+  unsyncedMetadata,
+  scannedForProcessingSidecar,
+  onRemoveFromAlbum,
+  onRemoveFromTag,
 }, ref) {
   const [zoom, setZoom] = useState(100);
   const [infoOpen, setInfoOpen] = useState(true);
@@ -192,6 +250,10 @@ const Viewer = forwardRef<ViewerHandle, {
   const [hiResLoadedId, setHiResLoadedId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmPasteProcessing, setConfirmPasteProcessing] = useState(false);
+  // Mirrors confirmDelete's shape - Remove from Album/Tag are plain single-asset async
+  // calls (see onRemoveFromAlbum/onRemoveFromTag's doc comment), not gated behind the
+  // page's own selection-scoped confirm dialog, so this view owns its own confirmation.
+  const [confirmRemove, setConfirmRemove] = useState<'album' | 'tag' | null>(null);
   const [stackMembers, setStackMembers] = useState<AssetSummary[] | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
   // Keyed by asset id (not a plain string) for the same reason as
@@ -251,7 +313,7 @@ const Viewer = forwardRef<ViewerHandle, {
   const { copiedProcessingSource, setCopiedProcessingSource, copiedMetadata, setCopiedMetadata } = useClipboard();
   // Clicking a non-pick stack member in the info panel "peeks" at it in the
   // main stage without actually navigating there (that member is hidden from
-  // the app's flat asset list - see isHiddenStackChild - so openId/assetById
+  // the app's flat asset list - see resolveVisibleStackAssets - so openId/assetById
   // can't resolve it the way a real navigation needs). Only "Set Pick"
   // actually promotes it, which does go through the real onSetStackPick/
   // openId path and clears the peek as a side effect of `asset` changing.
@@ -418,7 +480,7 @@ const Viewer = forwardRef<ViewerHandle, {
   // just disabling the button with no way to fix it from here.
   //
   // When a RAW converter CLI is configured and active (rawRoundTripEnabled),
-  // the rawEditor role becomes "Tweak RAW Roundtrip" and branches to the CLI
+  // the rawEditor role becomes "Tweak Roundtrip" and branches to the CLI
   // round trip flow instead: awaits the editor's own process exit
   // (launchRawCliRoundTrip), then hands the resulting jobId to the parent via
   // onArtRoundTripQueued as soon as the export is running in the background,
@@ -463,7 +525,7 @@ const Viewer = forwardRef<ViewerHandle, {
     const originalPath = shown.originalPath;
     const { id, fileName, rating, description } = shown;
     setCopiedProcessingSource({ assetId: id, originalPath, fileName, tools: shown.processingSidecarTools ?? [] });
-    checkSidecarMetadata([{ assetId: id, originalPath, currentRating: rating, currentDescription: description }])
+    checkSidecarMetadata([{ assetId: id, originalPath, currentRating: rating, currentDescription: description }], true)
       .then(([result]) => {
         if (result) setCopiedProcessingSource({ assetId: id, originalPath, fileName, tools: result.processingSidecarTools });
       })
@@ -599,10 +661,11 @@ const Viewer = forwardRef<ViewerHandle, {
     const onKey = (e: KeyboardEvent) => {
       // Let the confirm dialog own Escape (cancel) while it's open, rather
       // than also closing the whole viewer underneath it.
-      if (confirmDelete || confirmPasteProcessing) {
+      if (confirmDelete || confirmPasteProcessing || confirmRemove) {
         if (e.key === 'Escape') {
           setConfirmDelete(false);
           setConfirmPasteProcessing(false);
+          setConfirmRemove(null);
         }
         return;
       }
@@ -628,7 +691,7 @@ const Viewer = forwardRef<ViewerHandle, {
       else if (matchesShortcut(e, shortcuts.rate5)) handleEdit(shown.id, { rating: 5 }).catch(() => {});
       else if (matchesShortcut(e, shortcuts.reject)) handleEdit(shown.id, { rating: shown.rating === -1 ? 0 : -1 }).catch(() => {});
       else if (matchesShortcut(e, shortcuts.delete)) setConfirmDelete(true);
-      else if (matchesShortcut(e, shortcuts.openInRawEditor) && isRawAsset(shown) && !artBusy) handleLaunch('rawEditor').catch(() => {});
+      else if (matchesShortcut(e, shortcuts.openInRawEditor) && isRoundTripEligible(shown) && !artBusy) handleLaunch('rawEditor').catch(() => {});
       else if (matchesShortcut(e, shortcuts.openInExternalEditor)) handleLaunch('externalEditor').catch(() => {});
       else if (matchesShortcut(e, shortcuts.print) && onPrint && !isRawAsset(shown) && !isVideo) onPrint(shown);
       else if (matchesShortcut(e, shortcuts.rotateLeft) && !isVideo && shown.originalPath && !rotating) handleRotate(false).catch(() => {});
@@ -645,6 +708,7 @@ const Viewer = forwardRef<ViewerHandle, {
     tryStackNav,
     confirmDelete,
     confirmPasteProcessing,
+    confirmRemove,
     shortcuts,
     capturing,
     shown,
@@ -731,11 +795,115 @@ const Viewer = forwardRef<ViewerHandle, {
     }
   }
 
+  // Mirrors each page's own selectionBarActions construction (PhotosBrowser.tsx etc.) -
+  // same MenuAction shape, same groupActions() rendering via ActionDropdown - just built
+  // from `shown` (the single open/peeked asset) instead of a grid `selected` Set. Only
+  // ever populates the dropdown-worthy groups (organize/edit/copyPaste/share/more) -
+  // Unstack/Print/Open in Video Player (primary) and Move to Trash/Remove from Album/Tag
+  // (destructive) stay their own bespoke inline buttons below, same as before this
+  // refactor, since a lone-item dropdown for those buys nothing over a direct button.
+  const menuActions: MenuAction[] = useMemo(() => {
+    const actions: MenuAction[] = [];
+    if (onAddToAlbum) {
+      actions.push({ id: 'addToAlbum', group: 'organize', label: 'Add to Album', onClick: () => onAddToAlbum(shown.id) });
+    }
+    if (onAddToTag) {
+      actions.push({
+        id: 'addToTag',
+        group: 'organize',
+        label: 'Add to Tag',
+        disabled: !!TAG_ASSIGN_DISABLED_REASON,
+        disabledReason: TAG_ASSIGN_DISABLED_REASON ?? undefined,
+        onClick: () => onAddToTag(shown.id),
+      });
+    }
+    if (isRoundTripEligible(shown)) {
+      actions.push({
+        id: 'tweakRoundtrip',
+        group: 'edit',
+        label: artBusy ? 'Working…' : 'Tweak Roundtrip',
+        disabled: artBusy,
+        disabledReason: artBusy ? 'Waiting on ART…' : undefined,
+        onClick: () => handleLaunch('rawEditor'),
+      });
+    }
+    if (onHeadlessRoundtrip && rawRoundTripEnabled && isRoundTripEligible(shown)) {
+      actions.push({ id: 'headlessRoundtrip', group: 'edit', label: 'Headless Roundtrip', onClick: () => onHeadlessRoundtrip(shown.id) });
+    }
+    actions.push({ id: 'openExtEditor', group: 'edit', label: 'Open in Ext. Editor', onClick: () => handleLaunch('externalEditor') });
+    if (!isVideo && shown.originalPath) {
+      actions.push({
+        id: 'rotateLeft',
+        group: 'edit',
+        label: rotating === 'left' ? 'Rotating…' : 'Rotate Left',
+        disabled: !!rotating,
+        onClick: () => handleRotate(false),
+      });
+      actions.push({
+        id: 'rotateRight',
+        group: 'edit',
+        label: rotating === 'right' ? 'Rotating…' : 'Rotate Right',
+        disabled: !!rotating,
+        onClick: () => handleRotate(true),
+      });
+    }
+    const copyEntry = copyImageProcessingEntry(shown, scannedForProcessingSidecar ?? new Set(), () => handleCopyImageProcessing());
+    if (copyEntry) actions.push({ id: 'copyImageProcessing', group: 'copyPaste', ...copyEntry });
+    if (isRawAsset(shown) && copiedProcessingSource) {
+      actions.push({ id: 'pasteImageProcessing', group: 'copyPaste', label: 'Paste Image Processing', onClick: () => setConfirmPasteProcessing(true) });
+    }
+    actions.push({ id: 'copyMetadata', group: 'copyPaste', label: 'Copy Metadata', onClick: handleCopyMetadata });
+    if (copiedMetadata) {
+      actions.push({ id: 'pasteMetadata', group: 'copyPaste', label: 'Paste Metadata', onClick: handlePasteMetadata });
+    }
+    if (onExportToFolder) {
+      actions.push({ id: 'exportToFolder', group: 'share', label: 'Export to Folder…', onClick: () => onExportToFolder(shown) });
+    }
+    if (onShareToFlickr) {
+      actions.push({ id: 'shareToFlickr', group: 'share', label: 'Share to Flickr…', onClick: () => onShareToFlickr(shown) });
+    }
+    if (shown.originalPath) {
+      actions.push({ id: 'showInFileManager', group: 'more', label: 'Show in File Manager', onClick: handleShowInFileManager });
+    }
+    if (onSyncMetadata && unsyncedMetadata?.has(shown.id)) {
+      actions.push({ id: 'syncMetadata', group: 'more', label: 'Sync Metadata from Sidecar', onClick: () => onSyncMetadata(shown.id) });
+    }
+    return actions;
+  }, [
+    shown,
+    onAddToAlbum,
+    onAddToTag,
+    artBusy,
+    handleLaunch,
+    onHeadlessRoundtrip,
+    rawRoundTripEnabled,
+    isVideo,
+    rotating,
+    handleRotate,
+    copiedProcessingSource,
+    handleCopyImageProcessing,
+    handleCopyMetadata,
+    copiedMetadata,
+    handlePasteMetadata,
+    onExportToFolder,
+    onShareToFlickr,
+    handleShowInFileManager,
+    onSyncMetadata,
+    unsyncedMetadata,
+    scannedForProcessingSidecar,
+  ]);
+  const menuGroups = groupActions(menuActions);
+  const hasDropdownActions =
+    menuGroups.organize.length > 0 ||
+    menuGroups.edit.length > 0 ||
+    menuGroups.copyPaste.length > 0 ||
+    menuGroups.share.length > 0 ||
+    menuGroups.more.length > 0;
+
   return (
     <div
+      className="window-frame window-frame-overlay"
       style={{
-        position: 'fixed',
-        inset: 0,
         zIndex: 200,
         background: 'var(--canvas)',
         display: 'flex',
@@ -791,38 +959,8 @@ const Viewer = forwardRef<ViewerHandle, {
         </div>
         <div style={{ flex: 1 }} />
         {onUnstack && (
-          <div
-            onClick={() => onUnstack().catch(() => {})}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 7,
-              height: 30,
-              padding: '0 13px',
-              borderRadius: 8,
-              background: 'var(--overlay-medium)',
-              fontSize: 12.5,
-              cursor: 'default',
-            }}
-          >
+          <div onClick={() => onUnstack().catch(() => {})} style={headerButtonStyle(false)}>
             Unstack
-          </div>
-        )}
-        {isRawAsset(shown) && (
-          <div
-            onClick={() => !artBusy && handleLaunch('rawEditor')}
-            title={artBusy ? 'Waiting on ART…' : undefined}
-            style={{ ...headerButtonStyle(false), opacity: artBusy ? 0.5 : 1 }}
-          >
-            {artBusy ? 'Working…' : 'Tweak RAW Roundtrip'}
-          </div>
-        )}
-        <div onClick={() => handleLaunch('externalEditor')} style={headerButtonStyle(false)}>
-          Open in Ext. Editor
-        </div>
-        {isVideo && shown.originalPath && (
-          <div onClick={handleOpenInVideoPlayer} style={headerButtonStyle(false)}>
-            Open in Video Player
           </div>
         )}
         {onPrint && !isRawAsset(shown) && !isVideo && (
@@ -830,51 +968,20 @@ const Viewer = forwardRef<ViewerHandle, {
             Print
           </div>
         )}
-        {shown.originalPath && (
-          <div onClick={handleShowInFileManager} style={headerButtonStyle(false)}>
-            Show in File Manager
+        {isVideo && shown.originalPath && (
+          <div onClick={handleOpenInVideoPlayer} style={headerButtonStyle(false)}>
+            Open in Video Player
           </div>
         )}
-        {!isVideo && shown.originalPath && (
-          <>
-            <div
-              onClick={() => !rotating && handleRotate(false)}
-              title="Rotate Left"
-              style={{ ...headerButtonStyle(false), opacity: rotating ? 0.5 : 1 }}
-            >
-              {rotating === 'left' ? 'Rotating…' : 'Rotate Left'}
-            </div>
-            <div
-              onClick={() => !rotating && handleRotate(true)}
-              title="Rotate Right"
-              style={{ ...headerButtonStyle(false), opacity: rotating ? 0.5 : 1 }}
-            >
-              {rotating === 'right' ? 'Rotating…' : 'Rotate Right'}
-            </div>
-          </>
-        )}
+        {hasDropdownActions && <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />}
+        {menuGroups.organize.length > 0 && <ActionDropdown variant="plain" label="Organize" actions={menuGroups.organize} />}
+        {menuGroups.edit.length > 0 && <ActionDropdown variant="plain" label="Edit" actions={menuGroups.edit} />}
+        {menuGroups.copyPaste.length > 0 && <ActionDropdown variant="plain" label="Copy/Paste" actions={menuGroups.copyPaste} />}
+        {menuGroups.share.length > 0 && <ActionDropdown variant="plain" label="Share" actions={menuGroups.share} />}
+        {menuGroups.more.length > 0 && <ActionDropdown variant="plain" label="More" actions={menuGroups.more} />}
         {rotateError && (
           <div style={{ fontSize: 11.5, color: 'var(--danger)', maxWidth: 220, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={rotateError}>
             {rotateError}
-          </div>
-        )}
-        <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />
-        {isRawAsset(shown) && shown.hasProcessingSidecar && (
-          <div onClick={handleCopyImageProcessing} style={headerButtonStyle(false)}>
-            Copy Image Processing
-          </div>
-        )}
-        {isRawAsset(shown) && copiedProcessingSource && (
-          <div onClick={() => setConfirmPasteProcessing(true)} style={headerButtonStyle(false)}>
-            Paste Image Processing
-          </div>
-        )}
-        <div onClick={handleCopyMetadata} style={headerButtonStyle(false)}>
-          Copy Metadata
-        </div>
-        {copiedMetadata && (
-          <div onClick={handlePasteMetadata} style={headerButtonStyle(false)}>
-            Paste Metadata
           </div>
         )}
         {launchError && (
@@ -882,23 +989,20 @@ const Viewer = forwardRef<ViewerHandle, {
             {launchError}
           </div>
         )}
-        <div
-          onClick={() => setConfirmDelete(true)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 7,
-            height: 30,
-            padding: '0 13px',
-            borderRadius: 8,
-            background: 'rgba(224,27,36,0.16)',
-            color: '#ff8080',
-            fontSize: 12.5,
-            cursor: 'default',
-          }}
-        >
+        <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />
+        <div onClick={() => setConfirmDelete(true)} style={destructiveButtonStyle()}>
           Move to Trash
         </div>
+        {onRemoveFromAlbum && (
+          <div onClick={() => setConfirmRemove('album')} style={destructiveButtonStyle()}>
+            Remove from Album
+          </div>
+        )}
+        {onRemoveFromTag && (
+          <div onClick={() => setConfirmRemove('tag')} style={destructiveButtonStyle()}>
+            Remove from Tag
+          </div>
+        )}
         {/* Zoom and Loupe have nothing to act on for a video (there's no
             still-image rendition to magnify or scale) - hidden rather than
             disabled so it's clear they just don't apply here. */}
@@ -1321,6 +1425,19 @@ const Viewer = forwardRef<ViewerHandle, {
           confirmLabel="Paste"
           onConfirm={confirmPasteImageProcessingAction}
           onClose={() => setConfirmPasteProcessing(false)}
+        />
+      )}
+      {confirmRemove && (
+        <ConfirmDialog
+          title={confirmRemove === 'album' ? 'Remove from album?' : 'Remove from tag?'}
+          message={`Remove "${shown.fileName}" from this ${confirmRemove === 'album' ? 'album' : 'tag'}? The photo itself won't be deleted.`}
+          confirmLabel="Remove"
+          onConfirm={async () => {
+            if (confirmRemove === 'album') await onRemoveFromAlbum?.(shown.id);
+            else await onRemoveFromTag?.(shown.id);
+            onClose();
+          }}
+          onClose={() => setConfirmRemove(null)}
         />
       )}
       {noSidecarDialog}

@@ -112,7 +112,14 @@ export default function FlickrSetupDialog({ flickr, onClose, onConnected }: { fl
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      className="window-frame window-frame-overlay"
+      style={{
+        zIndex: 320,
+        background: 'rgba(0,0,0,0.55)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
       onClick={busy ? undefined : onClose}
     >
       <div

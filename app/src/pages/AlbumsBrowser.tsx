@@ -29,6 +29,7 @@ import {
   revealInFileManager,
   thumbnailSrc,
   updateAssetMetadata,
+  RAW_CONVERTER_LABEL,
   type AlbumDetail,
   type AlbumSummary,
   type AssetMetadataPatch,
@@ -37,13 +38,16 @@ import {
   type MetadataEditTarget,
 } from '../lib/api';
 import { useStacking } from '../lib/useStacking';
-import { isHiddenStackChild } from '../lib/stacks';
+import { copyImageProcessingEntry, useAssetActions } from '../lib/useAssetActions';
+import { type MenuAction } from '../lib/actionMenu';
+import { resolveVisibleStackAssets } from '../lib/stacks';
+import { isRawAsset, isVideoAsset } from '../lib/filters';
 import AssetTile, { type ClickMods } from '../components/AssetTile';
 import GridLoupePane from '../components/GridLoupePane';
 import SelectionBar from '../components/SelectionBar';
 import StackBand from '../components/StackBand';
 import SmartStackDialog from '../components/SmartStackDialog';
-import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
+import ContextMenu, { DIVIDER, type ContextMenuEntry } from '../components/ContextMenu';
 import AddToAlbumDialog from '../components/AddToAlbumDialog';
 import AddToTagDialog from '../components/AddToTagDialog';
 import { TAG_ASSIGN_DISABLED_REASON } from '../lib/featureFlags';
@@ -77,6 +81,17 @@ const ALBUM_GRID_CHUNK_SIZE = 60;
 export interface AlbumsBrowserHandle {
   openExportToFolder: () => void;
   openExportToFlickr: () => void;
+  selectAll: () => void;
+  deselectAll: () => void;
+  stackSelected: () => void;
+  openSmartStack: () => void;
+  syncAllUnsyncedMetadata: () => void;
+  copyImageProcessing: () => void;
+  pasteImageProcessing: () => void;
+  copyMetadata: () => void;
+  pasteMetadata: () => void;
+  rotateLeft: () => void;
+  rotateRight: () => void;
 }
 
 // Real Immich albums (GET/POST/PATCH/DELETE /albums, PUT/DELETE
@@ -100,6 +115,9 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
   // explanation. App.tsx owns the boolean, shared across every grid view.
   loupeOn: boolean;
   onToggleLoupe: () => void;
+  // Loupe circle size - set in Preferences → Configuration → Window
+  // ("Thumbnail Loupe Size"). Only meaningful while loupeOn.
+  loupeLarge: boolean;
   // Grid thumbnail size, in px - shared across every grid view. See
   // App.tsx's `thumbSize` state and MenuBar's slider.
   thumbSize: number;
@@ -110,6 +128,7 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
   active = true,
   loupeOn,
   onToggleLoupe,
+  loupeLarge,
   thumbSize,
 }, ref) {
   const [albums, setAlbums] = useState<AlbumSummary[] | null>(null);
@@ -145,6 +164,28 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
     hasStackedSelection,
     busy: stackBusy,
   } = useStacking(selected, setSelected);
+  // Copy/Paste Image Processing/Metadata, Sync Metadata from Sidecar, and
+  // batch Rotate - new to this page (see useAssetActions.ts's doc comment).
+  // Called before `overlaidAssets` below since that memo needs to overlay
+  // unsyncedMetadata/processingSidecarAssets onto this album's assets.
+  const {
+    unsyncedMetadata,
+    processingSidecarAssets,
+    scannedForProcessingSidecar,
+    scanUnsyncedMetadata,
+    copiedProcessingSource,
+    copiedMetadata,
+    handleCopyImageProcessing,
+    handleCopyMetadata,
+    handlePasteMetadata,
+    requestPasteImageProcessing,
+    pasteProcessingTargets,
+    cancelPasteImageProcessing,
+    confirmPasteImageProcessing,
+    syncMetadata,
+    rotateSelection,
+    rotatingIds,
+  } = useAssetActions({ onError: setEnqueueError });
   // See FoldersBrowser.tsx's identical state/effect/ref - which tile the
   // cursor is currently over while loupeOn, driving GridLoupePane's preview
   // (cleared on loupe off), plus a never-cleared mirror ref used only to
@@ -200,21 +241,30 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
     setDetailError(null);
     setSelected(new Set());
     getAlbum(openAlbumId)
-      .then(setAlbum)
+      .then((a) => {
+        setAlbum(a);
+        scanUnsyncedMetadata(a.assets);
+      })
       .catch((e) => setDetailError(String(e)));
-  }, [openAlbumId]);
+  }, [openAlbumId, scanUnsyncedMetadata]);
 
   // Cross-references stack membership onto this album's assets (the server
   // never inlines `.stack` here either - see PhotosBrowser.tsx's identical
-  // note) - see useStacking. isHiddenStackChild then keeps a stack's
+  // note) - see useStacking. resolveVisibleStackAssets then keeps a stack's
   // non-pick members out of the grid/selection/keynav, same as Photos/
   // Folders, while assetByIdAll below still resolves them by id for
   // StackBand/Viewer/context-menu targets.
   const overlaidAssets = useMemo(
-    () => (album?.assets ?? []).map((a) => ({ ...a, stack: stackByAssetId.get(a.id) ?? null })),
-    [album, stackByAssetId],
+    () =>
+      (album?.assets ?? []).map((a) => ({
+        ...a,
+        stack: stackByAssetId.get(a.id) ?? null,
+        unsyncedMetadata: unsyncedMetadata.get(a.id),
+        hasProcessingSidecar: processingSidecarAssets.has(a.id),
+      })),
+    [album, stackByAssetId, unsyncedMetadata, processingSidecarAssets],
   );
-  const visibleAssets = useMemo(() => overlaidAssets.filter((a) => !isHiddenStackChild(a)), [overlaidAssets]);
+  const visibleAssets = useMemo(() => resolveVisibleStackAssets(overlaidAssets), [overlaidAssets]);
 
   const assetById = useMemo(() => {
     const map = new Map<string, AssetSummary>();
@@ -442,21 +492,23 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
     setOpenId(flatIds[ni]);
   };
 
-  const contextMenuItems: ContextMenuItem[] = useMemo(() => {
+  // Ordered into logical groups - Organize / Stacking / Edit / Copy-Paste /
+  // Utility / Destructive - matching SelectionBar's own group order and
+  // PhotosBrowser.tsx's identical restructure, with DIVIDER between groups.
+  const contextMenuItems: ContextMenuEntry[] = useMemo(() => {
     if (!contextMenu) return [];
     // assetByIdAll (not assetById) so a right-click forwarded from inside an
     // expanded StackBand (a hidden, non-pick member) still resolves - see
     // PhotosBrowser.tsx's identical note.
     const asset = assetByIdAll.get(contextMenu.assetId);
     const targetIds = selected.size >= 2 ? [...selected] : asset ? [asset.id] : [];
-    const items: ContextMenuItem[] = [];
-    if (selected.size >= 2) {
-      items.push({ label: `Stack ${selected.size} Photos`, onClick: () => createStackForSelection([...selected]).catch(() => {}) });
-      items.push({ label: `Smart Stack ${selected.size} Photos`, onClick: () => setSmartStackOpen(true) });
-    }
-    if (asset?.stack) {
-      items.push({ label: 'Unstack', onClick: () => unstackByStackId(asset.stack!.id).catch(() => {}) });
-    }
+    const pasteTargetsIncludeRaw = targetIds.some((id) => {
+      const a = assetByIdAll.get(id);
+      return !!a && isRawAsset(a);
+    });
+    const items: ContextMenuEntry[] = [];
+
+    // Organize
     if (targetIds.length > 0) {
       items.push({
         label: targetIds.length > 1 ? `Add ${targetIds.length} Photos to Album…` : 'Add to Album…',
@@ -472,14 +524,64 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
         disabled: !!TAG_ASSIGN_DISABLED_REASON,
       });
     }
+    items.push(DIVIDER);
+
+    // Stacking
+    if (selected.size >= 2) {
+      items.push({ label: `Stack ${selected.size} Photos`, onClick: () => createStackForSelection([...selected]).catch(() => {}) });
+      items.push({ label: `Smart Stack ${selected.size} Photos`, onClick: () => setSmartStackOpen(true) });
+    }
+    if (asset?.stack) {
+      items.push({ label: 'Unstack', onClick: () => unstackByStackId(asset.stack!.id).catch(() => {}) });
+    }
+    items.push(DIVIDER);
+
+    // Edit - Rotate mirrors Viewer.tsx's single-open-asset gating, using
+    // rotateSelection so this menu and SelectionBar's Edit ▾ share the same
+    // batch-capable implementation.
+    if (asset && selected.size <= 1 && asset.originalPath && !isVideoAsset(asset)) {
+      items.push({ label: 'Rotate Left', onClick: () => rotateSelection([asset.id], false, assetByIdAll).catch(() => {}) });
+      items.push({ label: 'Rotate Right', onClick: () => rotateSelection([asset.id], true, assetByIdAll).catch(() => {}) });
+    }
+    items.push(DIVIDER);
+
+    // Copy/Paste
+    if (asset) {
+      const copyEntry = copyImageProcessingEntry(asset, scannedForProcessingSidecar, handleCopyImageProcessing);
+      if (copyEntry) items.push(copyEntry);
+    }
+    if (copiedProcessingSource && pasteTargetsIncludeRaw) {
+      items.push({
+        label: targetIds.length > 1 ? `Paste Image Processing to ${targetIds.length} Photos` : 'Paste Image Processing',
+        onClick: () => requestPasteImageProcessing(targetIds, assetByIdAll),
+      });
+    }
+    if (asset) {
+      items.push({ label: 'Copy Metadata', onClick: () => handleCopyMetadata(asset) });
+    }
+    if (copiedMetadata && targetIds.length > 0) {
+      items.push({
+        label: targetIds.length > 1 ? `Paste Metadata to ${targetIds.length} Photos` : 'Paste Metadata',
+        onClick: () => handlePasteMetadata(targetIds, commitEditMany),
+      });
+    }
+    items.push(DIVIDER);
+
+    // Utility
     if (asset?.originalPath) {
       items.push({ label: 'Show in File Manager', onClick: () => handleShowInFileManager(asset) });
+    }
+    if (asset && unsyncedMetadata.has(asset.id)) {
+      items.push({ label: 'Sync Metadata from Sidecar', onClick: () => syncMetadata([asset.id], commitEdit).catch(() => {}) });
     }
     if (targetIds.length > 0) {
       const exportAssets = targetIds.map((id) => assetByIdAll.get(id)).filter((a): a is AssetSummary => !!a);
       items.push({ label: 'Export to Folder…', onClick: () => setExportFolderAssets(exportAssets) });
       items.push({ label: 'Share to Flickr…', onClick: () => setExportFlickrAssets(exportAssets) });
     }
+    items.push(DIVIDER);
+
+    // Destructive
     if (targetIds.length > 0) {
       items.push({
         label: targetIds.length > 1 ? `Move ${targetIds.length} Photos to Trash` : 'Move to Trash',
@@ -487,7 +589,44 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
       });
     }
     return items;
-  }, [contextMenu, assetByIdAll, selected, removeFromAlbum, handleShowInFileManager, trashAssets, createStackForSelection, unstackByStackId]);
+  }, [
+    contextMenu,
+    assetByIdAll,
+    selected,
+    removeFromAlbum,
+    handleShowInFileManager,
+    trashAssets,
+    createStackForSelection,
+    unstackByStackId,
+    unsyncedMetadata,
+    scannedForProcessingSidecar,
+    syncMetadata,
+    commitEdit,
+    commitEditMany,
+    copiedProcessingSource,
+    copiedMetadata,
+    handleCopyImageProcessing,
+    requestPasteImageProcessing,
+    handleCopyMetadata,
+    handlePasteMetadata,
+    rotateSelection,
+  ]);
+
+  // See PhotosBrowser.tsx's identical effect - right-clicking a RAW asset,
+  // or plain-selecting exactly one (SelectionBar's own trigger for the same
+  // button), that doesn't currently show Copy Image Processing live-rechecks
+  // disk once. Without this, a sidecar created outside this view's own
+  // tracked flows (an external ART/RawTherapee run, a paste that happened in
+  // Photos/Folders, or simply this album's own asset list having been
+  // fetched before the sidecar existed) stays invisible - on both the
+  // context menu AND SelectionBar - until the album is closed and reopened.
+  useEffect(() => {
+    const candidateId = contextMenu?.assetId ?? (selected.size === 1 ? [...selected][0] : null);
+    if (!candidateId) return;
+    const asset = assetByIdAll.get(candidateId);
+    if (!asset || !asset.originalPath || asset.hasProcessingSidecar || !isRawAsset(asset)) return;
+    scanUnsyncedMetadata([asset], true);
+  }, [contextMenu, selected, assetByIdAll, scanUnsyncedMetadata]);
 
   useImperativeHandle(
     ref,
@@ -503,8 +642,57 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
         const target = selectedAssets.length > 0 ? selectedAssets : openAsset ? [openAsset] : [];
         if (target.length > 0) setExportFlickrAssets(target);
       },
+      selectAll,
+      deselectAll,
+      stackSelected: () => {
+        createStackForSelection([...selected]).catch(() => {});
+      },
+      openSmartStack: () => setSmartStackOpen(true),
+      syncAllUnsyncedMetadata: () => {
+        syncMetadata([...unsyncedMetadata.keys()], commitEdit).catch(() => {});
+      },
+      copyImageProcessing: () => {
+        if (selectedAssets.length === 1) handleCopyImageProcessing(selectedAssets[0]);
+      },
+      pasteImageProcessing: () => {
+        requestPasteImageProcessing([...selected], assetByIdAll);
+      },
+      copyMetadata: () => {
+        if (selectedAssets.length === 1) handleCopyMetadata(selectedAssets[0]);
+      },
+      pasteMetadata: () => {
+        handlePasteMetadata([...selected], commitEditMany);
+      },
+      // Unlike Photos/Folders (which route this to the open Viewer asset
+      // only, since that's the only rotate implementation those pages ever
+      // had), this page never had any rotate at all before useAssetActions -
+      // routing to the grid selection here is a net-new capability, not a
+      // semantics change for an existing one.
+      rotateLeft: () => {
+        rotateSelection([...selected], false, assetByIdAll).catch(() => {});
+      },
+      rotateRight: () => {
+        rotateSelection([...selected], true, assetByIdAll).catch(() => {});
+      },
     }),
-    [selectedAssets, openAsset],
+    [
+      selectedAssets,
+      openAsset,
+      selectAll,
+      deselectAll,
+      createStackForSelection,
+      selected,
+      syncMetadata,
+      unsyncedMetadata,
+      commitEdit,
+      handleCopyImageProcessing,
+      requestPasteImageProcessing,
+      assetByIdAll,
+      handleCopyMetadata,
+      handlePasteMetadata,
+      commitEditMany,
+      rotateSelection,
+    ],
   );
 
   useEffect(() => {
@@ -679,6 +867,91 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
     return <div style={{ padding: 24, color: 'var(--text-dim)' }}>Loading album…</div>;
   }
 
+  const canStack = selected.size >= 2;
+  const canPasteImageProcessing =
+    !!copiedProcessingSource &&
+    [...selected].some((id) => {
+      const a = assetByIdAll.get(id);
+      return !!a && isRawAsset(a);
+    });
+  const selectionCanRotate = [...selected].some((id) => {
+    const a = assetByIdAll.get(id);
+    return !!a && !!a.originalPath && !isVideoAsset(a);
+  });
+  const unsyncedSelectedIds = [...selected].filter((id) => unsyncedMetadata.has(id));
+  const copyImageProcessingBarEntry =
+    selectedAssets.length === 1 ? copyImageProcessingEntry(selectedAssets[0], scannedForProcessingSidecar, handleCopyImageProcessing) : null;
+  const selectionBarActions: MenuAction[] = [
+    { id: 'addToTag', group: 'organize', label: 'Add to Tag', disabled: !!TAG_ASSIGN_DISABLED_REASON, disabledReason: TAG_ASSIGN_DISABLED_REASON ?? undefined, onClick: () => setAddToTagTargets([...selected]) },
+    { id: 'addToAlbum', group: 'organize', label: 'Add to Album', onClick: () => setAddToAlbumTargets([...selected]) },
+    { id: 'stack', group: 'stack', label: stackBusy ? 'Working…' : `Stack ${selected.size} Photos`, disabled: !canStack || stackBusy, onClick: () => createStackForSelection([...selected]).catch(() => {}) },
+    { id: 'smartStack', group: 'stack', label: stackBusy ? 'Working…' : 'Smart Stack', disabled: !canStack || stackBusy, onClick: () => setSmartStackOpen(true) },
+    ...(hasStackedSelection
+      ? [{ id: 'unstack', group: 'stack' as const, label: stackBusy ? 'Working…' : 'Unstack', disabled: stackBusy, onClick: () => unstackSelection().catch((e) => setEnqueueError(String(e))) }]
+      : []),
+    {
+      id: 'rotateLeft',
+      group: 'edit',
+      label: rotatingIds.size > 0 ? 'Rotating…' : 'Rotate Left',
+      disabled: !selectionCanRotate || rotatingIds.size > 0,
+      onClick: () => rotateSelection([...selected], false, assetByIdAll).catch(() => {}),
+    },
+    {
+      id: 'rotateRight',
+      group: 'edit',
+      label: rotatingIds.size > 0 ? 'Rotating…' : 'Rotate Right',
+      disabled: !selectionCanRotate || rotatingIds.size > 0,
+      onClick: () => rotateSelection([...selected], true, assetByIdAll).catch(() => {}),
+    },
+    ...(copyImageProcessingBarEntry ? [{ id: 'copyImageProcessing', group: 'copyPaste' as const, ...copyImageProcessingBarEntry }] : []),
+    {
+      id: 'pasteImageProcessing',
+      group: 'copyPaste',
+      label: 'Paste Image Processing',
+      disabled: !canPasteImageProcessing,
+      onClick: () => requestPasteImageProcessing([...selected], assetByIdAll),
+    },
+    ...(selectedAssets.length === 1
+      ? [{ id: 'copyMetadata', group: 'copyPaste' as const, label: 'Copy Metadata', onClick: () => handleCopyMetadata(selectedAssets[0]) }]
+      : []),
+    { id: 'pasteMetadata', group: 'copyPaste', label: 'Paste Metadata', disabled: !copiedMetadata, onClick: () => handlePasteMetadata([...selected], commitEditMany) },
+    {
+      id: 'exportToFolder',
+      group: 'share',
+      label: 'Export to Folder…',
+      onClick: () => setExportFolderAssets([...selected].map((id) => assetByIdAll.get(id)).filter((a): a is AssetSummary => !!a)),
+    },
+    {
+      id: 'shareToFlickr',
+      group: 'share',
+      label: 'Share to Flickr…',
+      onClick: () => setExportFlickrAssets([...selected].map((id) => assetByIdAll.get(id)).filter((a): a is AssetSummary => !!a)),
+    },
+    // Show in File Manager is single-target only (revealInFileManager takes
+    // one path) - matching the context menu's identical single-asset-only
+    // gating.
+    {
+      id: 'showInFileManager',
+      group: 'more',
+      label: 'Show in File Manager',
+      disabled: selectedAssets.length !== 1 || !selectedAssets[0].originalPath,
+      disabledReason: 'Select a single photo to show it in the file manager',
+      onClick: () => handleShowInFileManager(selectedAssets[0]),
+    },
+    ...(unsyncedSelectedIds.length > 0
+      ? [
+          {
+            id: 'syncMetadata',
+            group: 'more' as const,
+            label: 'Sync Metadata from Sidecar',
+            onClick: () => syncMetadata(unsyncedSelectedIds, commitEdit).catch(() => {}),
+          },
+        ]
+      : []),
+    { id: 'removeFromAlbum', group: 'destructive', label: 'Remove from Album', onClick: () => setConfirmRemoveSelection(true) },
+    { id: 'moveToTrash', group: 'destructive', label: 'Move to Trash', onClick: () => setConfirmDeleteSelection(true) },
+  ];
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
       {enqueueError && <InlineWarningBanner message={enqueueError} onDismiss={() => setEnqueueError(null)} />}
@@ -715,22 +988,10 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
         <SelectionBar
           count={selected.size}
           onCancel={deselectAll}
-          onStack={() => createStackForSelection([...selected]).catch(() => {})}
-          onSmartStack={() => setSmartStackOpen(true)}
           onFavorite={toggleFavoriteForSelection}
           allFavorited={allSelectedFavorited}
           onRate={(rating) => commitEditMany([...selected], { rating }).catch(() => {})}
-          unsyncedCount={0}
-          onSyncMetadata={() => {}}
-          onDelete={() => setConfirmDeleteSelection(true)}
-          canOpenInRawEditor={false}
-          onOpenInRawEditor={() => {}}
-          onAddToAlbum={() => setAddToAlbumTargets([...selected])}
-          onRemoveFromAlbum={() => setConfirmRemoveSelection(true)}
-          onAddToTag={() => setAddToTagTargets([...selected])}
-          onBulkUnstack={() => unstackSelection().catch((e) => setEnqueueError(String(e)))}
-          hasStackedSelection={hasStackedSelection}
-          stackBusy={stackBusy}
+          actions={selectionBarActions}
         />
         </div>
       )}
@@ -794,7 +1055,7 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
             </div>
           )}
         </div>
-        {loupeOn && <GridLoupePane assetId={hoveredAssetId} />}
+        {loupeOn && <GridLoupePane assetId={hoveredAssetId} large={loupeLarge} />}
         {!loupeOn && metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
       </div>
 
@@ -811,6 +1072,14 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
           onEdit={commitEdit}
           onDelete={(id) => trashAssets([id])}
           onUnstack={openAsset.stack ? () => unstackByStackId(openAsset.stack!.id).catch(() => {}) : undefined}
+          onAddToAlbum={(id) => setAddToAlbumTargets([id])}
+          onAddToTag={(id) => setAddToTagTargets([id])}
+          onExportToFolder={(a) => setExportFolderAssets([a])}
+          onShareToFlickr={(a) => setExportFlickrAssets([a])}
+          onSyncMetadata={(id) => syncMetadata([id], commitEdit).catch(() => {})}
+          unsyncedMetadata={unsyncedMetadata}
+          scannedForProcessingSidecar={scannedForProcessingSidecar}
+          onRemoveFromAlbum={(id) => removeFromAlbum([id]).catch((e) => setEnqueueError(String(e)))}
         />
       )}
       {smartStackOpen && (
@@ -838,6 +1107,17 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
           confirmLabel="Remove from Album"
           onConfirm={() => removeFromAlbum([...selected])}
           onClose={() => setConfirmRemoveSelection(false)}
+        />
+      )}
+      {pasteProcessingTargets && (
+        <ConfirmDialog
+          title="Paste image processing?"
+          message={`Paste image processing onto ${pasteProcessingTargets.length} photo${pasteProcessingTargets.length === 1 ? '' : 's'}? This replaces any existing ${
+            copiedProcessingSource?.tools.map((t) => RAW_CONVERTER_LABEL[t]).join('/') || 'RAW-editor'
+          } edits on each one.`}
+          confirmLabel="Paste"
+          onConfirm={confirmPasteImageProcessing}
+          onClose={cancelPasteImageProcessing}
         />
       )}
       {addToAlbumTargets && <AddToAlbumDialog assetIds={addToAlbumTargets} onClose={() => setAddToAlbumTargets(null)} />}
@@ -965,7 +1245,17 @@ function RenameAlbumDialog({
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={busy ? undefined : onClose}>
+    <div
+      className="window-frame window-frame-overlay"
+      style={{
+        zIndex: 300,
+        background: 'rgba(0,0,0,0.55)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+      onClick={busy ? undefined : onClose}
+    >
       <div onClick={(e) => e.stopPropagation()} style={{ width: 360, maxWidth: '92%', background: 'var(--dialog-bg)', borderRadius: 14, boxShadow: '0 24px 70px rgba(0,0,0,0.7)', border: '1px solid var(--border)', padding: 20 }}>
         <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 14 }}>Rename Album</div>
         <input
