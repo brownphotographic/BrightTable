@@ -20,7 +20,8 @@ _above:Auto-stacking images: stacking is performed locally, but synced with Immi
 - 🖨️ Built-in printing with paper size and preview.
 - ⌨️ Customizable keyboard shortcuts
 
-##But why?
+## Why, and what does it do?
+### Inspiration
 I designed this for myself because I dislike the user experience and functionality that exists on GNU/Linux for managing and editing photos. For me, this fills the gap between DAM and raw editing - an experience that I have been pining for since the great Apple Aperture bit the dust a decade ago. 
 
 There are some great tools out there already like RawTherapee/ART, Digikam, RapidRAW, Digikam, Shotwell. But to me, none of them had exactly the user experience and workflow that I really wanted. So after a couple of years of threatening myself to build my own tool: I did. 
@@ -29,7 +30,7 @@ What I was yearning for was a tool to tie the raw editing power of ART/RawTherap
 
 Let's call this need a 'digital light table'.
 
-_How it works:_
+### How it works:
 
 - The library: Uses Immich and the Immich API as a self hosted asset manager backend. It will not work without Immich!
 - Processing: Uses open source RAW editors for photo processing e.g. ART, RawTherapee. 
@@ -43,7 +44,7 @@ If you disagree, take your neo-luddite principles elsewhere.
 
 If you decide to use this, please read the warnings below.
 
-**What does it do?**
+### What does it do?
 _Background (the inspiration):_
 For those of you who have actually used a real light table and loupe to view transparency film you will understand the purpose of this tool. Light tables to me were the most enjoyable part of my photography workflow back when I shot film: heading to my local pro film label, getting that processed film back and sticking it on their light table to view the goods. It was fun, and tactile.
 
@@ -54,7 +55,7 @@ Since moving over to Linux I have been trying to find the perfect experience, bu
 - ART for raw editing. As a fork of RawTherapee this has the quality and look and feel I wanted with great film like rendering, and a simple UX.
 - Immich. A self hosted DAM with API and great phone app for auto upload and viewing. Super snappy. It just never played well with my dedicated camera RAW editing workflow.
 
-**Warning!**
+### Warning!
 - This tool was created by me, for me. I am giving it to the community to allow others who are interested to use it, and accept the risks involved.
 
 - Use at your own risk! You are responsible for using this tool. Read the code and understand what it does before using it. Test it on a sandbox first.
@@ -80,11 +81,12 @@ Since moving over to Linux I have been trying to find the perfect experience, bu
 - Since Flatpak is a sandboxed container, you may need to configure your system to allow BrightTable to access all of the necessary system resources (e.g. network, file system). **Flatseal** is a recommended app to allow you to configure these permissions. Instructions are provided below.
 - To access your library away from home, you must set up **Tailscale** and have end points configured for your Immich server container, plus the network share for the external library folder.
 
-## Quickstart
+## Setup
+### Quickstart
 
 Install the Flatpak below, then read the [User Guide](User-Guide.md) to connect BrightTable to Immich and start using it.
 
-### Installing BrightTable
+### Detailed Instructions
 
 **1. Download**
 
