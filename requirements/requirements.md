@@ -19,12 +19,19 @@
 ## 1. Product Requirements
 
 ### 1.1 Library & navigation
-- ✅ Left sidebar with Photos, Albums, People, Tags, Folders, Trash, plus a
-  connection-status indicator — all real (§7.1–§7.10, §7.26, §7.28, §7.29). Live asset
-  **counts** are real for Photos, Folders, Trash, Albums (§7.26), and People (§7.28) —
-  **Tags** (§7.29) deliberately shows no count, see below. No placeholder counts remain.
-  The mockup's "Stacks" sidebar tab is gone even there (removed per §5 feedback) and was
-  never part of the real app.
+- ✅ **Nav tabs, not a left sidebar** — `d5b0811` (v1.1, §7.34) deleted `Sidebar.tsx`
+  outright and replaced it with `NavTabs.tsx`, a horizontal tab strip (Photos / Folders /
+  Albums / People / Tags / Trash, each with a small color swatch and live count) rendered
+  inline inside the same toolbar row as the File/Edit/View/Help menus, per the commit's own
+  message: "Removed side tab bar and system status in favor of using existing space in
+  horizontal bars at top of UI." The connection-status indicator moved too — it's now
+  `ConnectionStatusPill.tsx`, docked in `TitleBar.tsx` next to the Activity indicator, with
+  a click-to-expand popover (resolved server URL, any error, dev-only resource chart,
+  "Library Settings…" shortcut) rather than a sidebar-footer readout. Live asset **counts**
+  are real for Photos, Folders, Trash, Albums (§7.26), and People (§7.28) — **Tags**
+  (§7.29) deliberately shows no count, see below. No placeholder counts remain. The
+  mockup's "Stacks" sidebar tab is gone even there (removed per §5 feedback) and was never
+  part of the real app.
 - ✅ **Photos** timeline grouped by day, with date / place / count headers, newest-first (§7.3).
 - ✅ **Folders** view: the real server-side folder tree (Immich's `/view/folder*`
   endpoints, same as Immich's own web UI) with its own thumbnail grid (§7.10).
@@ -41,28 +48,45 @@
   endpoint exists for tags the way People has).
 - 🟡 Menu bar (File / Edit / View / Help) is real, but only some items are wired: Select
   All / Deselect All, Refresh Timeline, Preferences, Quit, Stack Selected (§7.13), Smart
-  Stack… (§7.14), and the Filters dropdown (§7.11) are real; Upload…, Print…, Recent
-  Activity, Copy/Paste Settings, Zoom In/Out, and Sort Photos By are present but do nothing
-  yet (§7.15).
-- 🟡 Search field exists visually; not wired to Immich search in the real app either.
+  Stack… (§7.14), the Filters dropdown (§7.11), **Export to Folder… and Share to Flickr…**
+  (§1.7, §7.31) are real; Upload…, Recent Activity, Zoom In/Out, and Sort Photos By are
+  present but do nothing yet (§7.15). **Print…** is real (§7.27, §1.8).
+- ✅ **Search field is real** — `SearchResultsBrowser.tsx` submits Enter'd text to Immich's
+  own smart search (`POST /search/smart`, Immich's natural-language search, same as
+  Immich's own web UI) and swaps the content area to a flat results grid, with the same
+  selection/stack/copy-paste/rating machinery every other browser page has (§7.31). Found
+  already fully built and wired during this documentation pass — it predates this file's
+  §7 log and has no dated round of its own to cite; the previous "not wired" status here was
+  simply stale, not describing a real gap.
 
 ### 1.2 Selection, detail & viewing
 - ✅ Single-click select and checkbox multi-select are real (grid + Folders view), plus a
-  floating **selection action bar** (`SelectionBar.tsx`, §7.17) across the top of both the
-  Photos and Folders grids whenever the selection is non-empty — Cancel, Favorite (a real
-  click target now, not just a keyboard shortcut), Smart Stack, Stack N Photos, and Move to
-  Trash. The bottom status bar's redundant text links for the same two actions were removed
-  once the bar covered them (§7.17). A right-click **context menu** (**Stack N Photos**,
+  floating **selection action bar** (`SelectionBar.tsx`) across the top of every browser
+  page (Photos, Folders, Albums, People, Tags, Search Results) whenever the selection is
+  non-empty. `d5b0811` (v1.1, §7.33) refactored the bar from ~15 always-visible inline
+  buttons down to a fixed handful — Cancel, a rating group (0–5 stars + Reject), Favorite —
+  plus grouped **dropdown menus** (`ActionDropdown.tsx`, new): **Organize** (Add to
+  Album/Tag), **Stack** (Stack N Photos, Smart Stack, Unstack), **Edit** (rotate, RAW/
+  External editor launch), **Copy/Paste** (Image Processing + Metadata, §1.5), **Share**
+  (Export to Folder…, Share to Flickr…, §1.7), and **More**, with Move to Trash (and
+  Remove from Album/Tag, where relevant) staying trailing destructive inline buttons. Each
+  page builds its own `MenuAction[]` grouped by the shared `lib/actionMenu.ts`, with the
+  actual handlers centralized in the new `lib/useAssetActions.ts` (376 lines) so labels/
+  gating can't drift between pages the way six independent copies previously could — this
+  is also what brought Copy/Paste Image Processing, Copy/Paste Metadata, Show in File
+  Manager, and batch Rotate to Albums/People/Tags/Search for the first time (previously
+  Photos/Folders-only). The bottom status bar's redundant text links were removed once the
+  bar covered the same actions (§7.17). A right-click **context menu** (**Stack N Photos**,
   **Smart Stack N Photos**, **Unstack** — §7.13) remains for per-tile access. **Add to
-  Album** is now real too, in both the selection bar and context menu (§7.26). Paste
-  Settings from the prototype's bar is still deliberately left out — no Copy/Paste Image
-  Processing/Metadata "Settings" combined concept exists in the real app (§1.5); those two
-  are separate real actions elsewhere (§7.24).
+  Album** and **Add to Tag** are real in both the selection bar and context menu (§7.26,
+  §7.29).
 - ✅ Detail view (`Viewer.tsx`) with zoomable preview, EXIF info panel, and a filmstrip of
   the current set (§7.5).
-- 🟡 Adjustable thumbnail size and file-type badges are real and always-on. They are **not**
-  configurable via Preferences in the real app (Preferences → Configuration is still a
-  placeholder, §7.15) — the prototype's "expose as a toggle" framing doesn't apply yet.
+- 🟡 Adjustable thumbnail size and file-type badges are real and always-on, not configurable
+  via Preferences — the prototype's "expose as a toggle" framing doesn't apply. Separately,
+  the hover-preview **loupe pane**'s own size (distinct from thumbnail size) *is* now a real
+  Preferences → Configuration toggle (Small/Large, §7.36) — Large shrinks the grid to a thin
+  strip so the loupe fills most of the view (`gridLoupeSettings.tsx`, `GridLoupePane.tsx`).
 
 ### 1.3 Ratings & favorites
 - ✅ 1–5 star ratings, editable on thumbnails and in the detail/metadata panel; 0 clears
@@ -72,7 +96,9 @@
 - ✅ Filter panel: minimum rating, favorites-only, media type (photos/videos), file type
   (RAW / JPEG / both) (§7.11).
 - ⬜ "Toggle ratings/favorites off globally in Preferences" is prototype only — Preferences
-  → Configuration (where this would live) is still a placeholder in the real app (§7.15).
+  → Configuration is real now (§7.32/§7.36) but has no such toggle; it covers Appearance,
+  Window, Config File Location, and Thumbnail Cache, not a ratings/favorites visibility
+  switch.
 - 🟡 **Rating keyboard shortcuts**: keys `1`–`5` set the rating, `0` clears, `f` toggles
   favorite, applied to the open photo (Viewer) or the entire selection (grid/Folders),
   fully rebindable (§7.8). There's no confirmation toast — the real app has no toast/
@@ -81,15 +107,36 @@
 ### 1.4 Stacks
 > Stage 1 (manual create, inline expand/collapse, pick, unstack, a first context menu) and
 > Stage 2 (Smart Stack auto-grouping) are both now real — see §7.13/§7.14 for the full log.
-> No dedicated Stacks tab (confirmed dead even in the prototype, removed per §5) and no
-> drag-to-reorder (Immich has no server-side concept of member order to persist it to —
-> see §7.13).
+> `d7794f4`/`39de7b0`/`d5b0811` (v1.1, §7.35) then refactored stacking to be consistent
+> across all six browser pages (Photos, Folders, Albums, People, Tags, Search Results),
+> not just Photos/Folders. No dedicated Stacks tab (confirmed dead even in the prototype,
+> removed per §5) and no drag-to-reorder (Immich has no server-side concept of member order
+> to persist it to — see §7.13).
 - ✅ Create a stack from any 2+ selected thumbnails (Edit menu, status bar link, context
-  menu, or `S`) (§7.13).
+  menu, or `S`) — now consistently available on every browser page, not just Photos/Folders
+  (§7.13, §7.35).
 - 🟡 Inline expand/collapse in the grid and a per-member pick control are real; drag-to-
-  reorder is not (§7.13).
+  reorder is not (§7.13). Stage 1's own commit (`39de7b0`) is explicitly marked "untested"
+  by the author, and the follow-up v1.1 release (`d5b0811`) did not touch
+  `stack_queue.rs`/`useStacking.ts`/`stackQueue.tsx` further — the underlying create/
+  dissolve queue itself is real, working code (mirrors the already-tested `edit_queue.rs`
+  pattern) but has no live-confirmed round beyond what §7.13/§7.14 already verified for the
+  pre-refactor version, so it's tagged 🟡, not ✅, pending the user's own exercise of it
+  post-refactor (§7.35).
 - ✅ **Smart Stack** auto-grouping (Name / Version / Time modes), with a live preview
-  dialog and persisted settings (§7.14).
+  dialog and persisted settings (§7.14). `d7794f4` (§7.35) added two refinements: **Name**
+  mode gained a "Prefer as pick" RAW/JPEG toggle (`smartStack.ts`'s `NamePickPreference`),
+  and **Version** mode gained an opt-in checkbox to automatically pull in unselected RAW/
+  JPEG siblings elsewhere in the library that share the same base filename (a library-wide
+  `searchAssetsByFilename` lookup, cross-referenced against real stack membership so an
+  already-stacked sibling isn't double-counted).
+- ✅ **Fixed: a stack's row jumped position in the grid/filmstrip when its pick changed.**
+  Root cause: which array slot a stack's one visible row occupies was tied to the *current
+  pick's* position in the page's own asset order, so re-picking moved which slot passed the
+  hidden-stack-child filter. Fixed by `lib/stacks.ts`'s new `resolveVisibleStackAssets` —
+  anchors each stack's visible row to whichever member is *first* in the caller's existing
+  (pick-independent) array order, then renders the current pick's data at that stable slot
+  (§7.35).
 - ✅ Stacks are also fully usable from the **detail/lightbox view**, not just the grid: a
   filmstrip badge marks stacked frames, an info-panel section lists every member with a
   **Set Pick** button and lets you preview any non-pick member without leaving the
@@ -111,6 +158,10 @@
   launch-only and becomes the deterministic **RAW CLI round trip** instead (§1.6/§7.25/§7.30)
   — the button relabels to "Tweak RAW Roundtrip". With no converter selected as active at
   all, there's simply no RAW Editor app configured, same as an unset External Editor.
+  `d5b0811` (v1.1, §7.36) widened eligibility for both the plain launch and the CLI round
+  trip beyond RAW-only: `filters.ts`'s new `isRoundTripEligible()` (RAW **or** JPG/JPEG/TIF/
+  TIFF) now gates the RAW Editor button/shortcut and both round-trip variants, so the RAW
+  editors can also be used to touch up JPEG/TIFF files, not only camera RAW originals.
 - 🟡 **Metadata panel** is real (`MetadataPanel.tsx` / `MetadataRows.tsx`, §7.6) but with a
   much smaller field set than the prototype:
   - ⬜ IPTC (title, caption, keywords, creator, copyright) — not implemented; Immich's
@@ -122,17 +173,24 @@
   - 🟡 Bulk edit — only rating/favorite have a bulk path, and only via keyboard shortcuts
     over the current grid selection (§7.8), not a Copy Settings → Paste Settings flow.
     Description, and everything else, is single-asset-only (the panel says so explicitly).
-  - ⬜ **Copy Image Processing / Paste Image Processing** — copies the RAW-edit sidecar's
-    develop **adjustments** wholesale (e.g. ART's `.arp`, RawTherapee's `.pp3`, darktable's
-    `.xmp` develop history) from a source asset onto one or more target assets. A separate
-    function from Metadata below, not a combined "Settings" concept — prototype only so far;
-    §7.18's intro already flagged this split ("wholesale sidecar copy vs. this feature's
-    targeted field patch") before it had these names.
-  - ⬜ **Copy Metadata / Paste Metadata** — copies **EXIF/IPTC fields and ratings** (DB +
+  - ✅ **Copy Image Processing / Paste Image Processing** — copies the RAW-edit sidecar's
+    develop **adjustments** wholesale (ART's `.arp`, RawTherapee's `.pp3` — darktable's
+    `.xmp` develop history deliberately not supported, see below) from a source asset onto
+    one or more target assets. A separate function from Metadata below, not a combined
+    "Settings" concept — §7.18's intro had already flagged this split ("wholesale sidecar
+    copy vs. this feature's targeted field patch") before it had these names; **§7.24 built
+    and live-tested it** end to end against the user's real Immich server and NFS-mounted
+    library, including two real bugs found and fixed live (context menu not wired up on
+    stacked members; multi-selection paste silently targeting only the right-clicked tile).
+  - ✅ **Copy Metadata / Paste Metadata** — copies **EXIF/IPTC fields and ratings** (DB +
     XMP) from a source asset onto one or more target assets — the bulk-multi-asset
     counterpart to the single-asset field sync §7.18 Stages A/B already built (rating/
-    description via `.xmp`/embedded/`.pp3` read and `.xmp` patch-write). Prototype only so
-    far as a distinct Copy/Paste function.
+    description via `.xmp`/embedded/`.pp3` read and `.xmp` patch-write). Built in §7.24
+    (`lib/clipboard.tsx`, in-memory only, never persisted) — reuses the existing
+    `commitEdit`/`commitEditMany` write path, so it needed almost no new backend code. Not
+    separately live-tested against the real server the same round Copy/Paste Image
+    Processing was (§7.24 flags this as a still-open manual check), so treat the live-tested
+    claim above as Image-Processing-specific.
 
 ### 1.6 Versioning & round-trip
 > The prototype's "Create Version" concept (version lineage, auto-stacked renditions, a
@@ -171,11 +229,39 @@
   fire, same as it already doesn't for RawTherapee).
 
 ### 1.7 Sharing & export
-> **Prototype only — none of this exists in the real app.** No Sharing preferences content,
-> no Share context-menu action, no Export to Folder, no Activity/recent-writes system.
-- ⬜ Preferences → Sharing (Flickr/Mastodon/PixelFed/Loops + custom services).
-- ⬜ Share via context menu; Export to Folder dialog.
-- ⬜ Activity (recent writes) panel.
+> Found already fully real during this documentation sync (§7.31) — `git log` shows
+> `ExportToFlickrDialog.tsx`/`FlickrSetupDialog.tsx`/`ExportToFolderDialog.tsx` existing
+> essentially unchanged since before this file's §7 log begins, so there's no dated
+> "built this round" narrative to cite here the way most of §7 has; this section was simply
+> stale, not describing a real gap. This is the opposite direction from most of this sync's
+> other corrections — the app was *ahead* of the doc, not behind it.
+- ✅ **Export to Folder** (`ExportToFolderDialog.tsx`) — format/size/quality/metadata-policy
+  export of the current selection to a chosen local folder, enqueued onto the backend
+  `export_queue.rs` (one `ExportJob` per asset) and tracked in the Activity panel's Export
+  section. A RAW asset with no saved processing sidecar gets an interstitial
+  (`NoSidecarDialog`) offering to export with the converter's default profile or exclude it.
+  Reachable from the File menu and every browser page's selection-bar **Share** dropdown
+  (§1.2, §7.33).
+- ✅ **Share to Flickr** (`ExportToFlickrDialog.tsx` + `FlickrSetupDialog.tsx`, backend
+  `flickr.rs`) — same export pipeline as above, delivered via a real OAuth 1.0a upload
+  instead of a local file write: album (existing/new/none) and privacy (public/friends &
+  family/private) pickers, backed by `flickrListAlbums`/`exportToFlickr`. First-run setup is
+  a 4-step wizard (API key + secret → browser authorize → paste verifier code → connected)
+  matching the design prototype's own 4-step flow, ending on a "Flickr connected" state with
+  a **Disconnect** option. Reachable the same two ways as Export to Folder.
+- 🟡 **Preferences → Sharing** (`PreferencesSharing.tsx`) is real, not a placeholder —
+  Flickr is the one working "Share Target" card (status dot, "Set up API access"/"Manage…").
+  Mastodon, PixelFed, and Loops render as visibly disabled "COMING SOON" cards for visual
+  parity with the prototype's card grid, with no real upload logic behind any of them.
+- ⬜ Custom/self-hosted share services (beyond the four named targets) — not implemented,
+  matching the prototype's own scope.
+- ⬜ Share via a dedicated context-menu action — there's no separate "Share" context-menu
+  entry; Export to Folder/Share to Flickr are File-menu + selection-bar only, not on the
+  per-tile right-click menu.
+- ✅ **Activity (recent writes) panel exists and covers export/share too** — `ActivityPanel.tsx`
+  has a dedicated Export section (job title, target Folder/Flickr, status pill, cancel for
+  in-flight jobs) alongside Edits/Imports/Processing/RAW-round-trip/Stacks (§7.20, §7.22,
+  §7.24, §7.25, §7.35) — one combined panel, not the prototype's separate concept.
 
 ### 1.8 Printing
 - 🟡 **Print dialog is real** (§7.27) — real OS printers, papers, and print resolutions
@@ -186,17 +272,21 @@
   RAW photos can't be printed at all (deliberate v1 cut, not a bug — see §7.27).
 
 ### 1.9 Preferences
-- 🟡 Tabs: **Library**, **Shortcuts**, and now **Applications** are real and fully
-  functional (§7.2, §7.8, §7.21). **Sharing** and **Configuration** still exist as tabs in
-  the UI shell but each renders the same literal placeholder message (§7.15).
-- ✅ Library, Shortcuts, and Applications config now persist to a real `config.json` in the
+- ✅ All five tabs are real: **Library**, **Shortcuts**, **Applications** (§7.2, §7.8,
+  §7.21), and now also **Sharing** (`PreferencesSharing.tsx`, §1.7) and **Configuration**
+  (`PreferencesConfiguration.tsx`, §7.32, §7.36) — neither renders a placeholder message anymore.
+  Configuration holds Appearance (theme), Window (button side, loupe size), Config File
+  Location (shareable settings folder + optional shared credential vault, §2.6/§7.32), and
+  Thumbnail Cache (location/size/clear).
+- ✅ Library, Shortcuts, and Applications config persist to a real `config.json` in the
   app's config directory via `serde_json` (§7.2, §7.21) — not `localStorage`. A user-
-  **chosen** settings folder (rather than the fixed app config dir) is still ⬜ (§2.6).
-- ⬜ **New this round, not yet exposed in Preferences at all**: the SD-card/disk import
-  feature's own settings (folder-layout choice, last-used source path, §7.22) persist to
-  `config.json` the same way, but there's no dedicated Preferences pane for them — the
-  choice lives entirely inside the Import dialog itself (§7.22). Revisit if a standalone
-  Import settings section turns out to be wanted.
+  **chosen** settings folder (rather than the fixed app config dir) is now real too
+  (§2.6/§7.32) — Preferences → Configuration's "Choose Folder…"/"Use Default" pair.
+- ⬜ **Not yet exposed in Preferences at all**: the SD-card/disk import feature's own
+  settings (folder-layout choice, last-used source path, §7.22) persist to `config.json` the
+  same way, but there's no dedicated Preferences pane for them — the choice lives entirely
+  inside the Import dialog itself (§7.22). Revisit if a standalone Import settings section
+  turns out to be wanted.
 
 ---
 
@@ -209,6 +299,17 @@
   detected by scanning `.desktop` entries (including Flatpak's and Snap's own desktop-export
   directories); AppImage has no such registry to scan, so it's only reachable via the app
   picker's own custom-executable file-browse fallback, matching the prototype's own design.
+  **Not to be confused with the next bullet** — this one is about BrightTable *detecting
+  other apps'* Flatpak/Snap installs for the app picker, unrelated to how BrightTable itself
+  ships.
+- ✅ **BrightTable itself now ships as a Flatpak** (`2a83e98`/`cfe3dfb`/`4980a6c`, §7.32) —
+  manifest (`io.github.brownphotographic.BrightTable.yml`), desktop/metainfo files,
+  `build-flatpak.mjs`, and `flatpak.rs` (routes subprocess spawns through
+  `flatpak-spawn --host` when sandboxed, since editor/CLI launches need to reach the host,
+  not the sandbox). **`78fda92` (v1.0.3) dropped AppImage entirely** — BrightTable ships as
+  Flatpak-only now, with AppImage's build scripts/docs removed; the app-detection bullet
+  above (scanning for *other* apps' AppImages via the file-browse fallback) is unaffected,
+  since that was never about how BrightTable itself is packaged.
 
 ### 2.2 Immich integration
 - ✅ Connect to an Immich server via endpoint URL + API key (§7.2).
@@ -217,7 +318,7 @@
   (§7.26).
 - ✅ Read assets/timeline (§7.3); real writes so far are asset metadata (rating/favorite/
   description, §7.6), delete/restore/trash (§7.7), stacks (§7.13), and albums (§7.26).
-- ⬜ Wire Search field to Immich search.
+- ✅ Search field wired to Immich search (`POST /search/smart`) — see §1.1/§7.31.
 
 ### 2.3 Filesystem & round-trip
 > "Originals on Disk" path mapping (§7.18 Stage 0) and editor launch (§7.21) are both real
@@ -271,10 +372,30 @@
   but grouped here as another direct OS-integration touchpoint alongside editor launch.
 
 ### 2.6 Persistence
-- 🟡 Library, Shortcuts, and Applications settings are real, persisted to `config.json` in
-  the app's config directory (§7.2, §7.8, §7.21) — not `localStorage`. Sharing/Configuration
-  prefs aren't real yet (nothing to persist — those panes are still placeholders). A user-
-  **chosen** settings folder (vs. the fixed OS config dir) is still ⬜.
+- ✅ Library, Shortcuts, Applications, Sharing (Flickr OAuth tokens excepted, see below), and
+  Configuration settings are all real, persisted to `config.json` in the app's config
+  directory (§7.2, §7.8, §7.21) — not `localStorage`.
+- ✅ **User-chosen, shareable settings folder** (`fec4b65`, §7.32) — Preferences →
+  Configuration → Config File Location can relocate `config.json` to any folder, so dev,
+  Flatpak, and (formerly) AppImage installs can share one set of settings while testing
+  across them. A pointer-stub file at the OS-default config location lets a fresh launch
+  discover the redirect before reading anything else. Resolves the previously-open item
+  here.
+- ✅ **Shareable credential vault** (`fec4b65`, §7.32) — a separate opt-in toggle (off by
+  default) additionally relocates the encrypted Immich/Flickr sign-in vault
+  (`SecretVault`/Stronghold snapshot) into the same chosen folder, so every install shares
+  one sign-in too. Deliberately opt-in and separate from the settings-folder move above,
+  since the vault's decryption key is machine-local — sharing it via a synced/cloud folder
+  would expose real credentials anywhere that folder ends up. Takes effect on next restart,
+  and only ever adopts a vault already present there rather than overwriting one.
+  `SecretVault::open` was also moved off the main thread onto a background thread (its
+  Stronghold decrypt cost confirmed via `gdb` to be enough, unoptimized, to trip the
+  desktop's "not responding" watchdog on a debug build) — `AppState.secret_vault` is now
+  `Arc<OnceLock<SecretVault>>`, and the frontend re-checks the library connection on a
+  `vault-ready` event in case the first check ran before real credentials were available.
+  `78fda92` (v1.0.3) further fixed the vault being folded/opened slowly (up to ~40s) due to
+  unnecessary encryption overhead, and a false "No API key configured" flash on pages that
+  loaded before the vault finished opening.
 - ✅ SD-card import's own dedupe cache (`import_history.json`, §7.22) is a separate file
   from `config.json`, always in the OS app-config dir regardless of a chosen settings
   folder — it's a content-hash cache, not a setting, and churns far more (potentially tens
@@ -299,16 +420,37 @@
     inline-stack-info feature genuinely hasn't shipped in any released version yet, not a
     quirk specific to the old one), and `GET /stacks` returns the identical shape. No code
     changes needed; Stacks (§7.13) behaves identically on both versions.
+  - **Immich 3.1.0** — current floor (`MIN_TESTED_SERVER_VERSION` in `immich/models.rs`).
+    Bumped via `bump-version.mjs`'s release-time `TESTED_IMMICH_VERSION` prompt (policy: no
+    backward-compat testing, so the tested version doubles as both the floor and the
+    version shown in the About dialog) across the 1.0.3/1.0.4/1.1 release builds — 🟡 not a
+    separately narrated live-verification round the way 2.7.5/3.0.1 above were, just the
+    honest current value of the constant.
+- **`9d724c3` (v1.0.4) — "bug fix for photos tab not loading and app crashing."** Worth
+  flagging the commit message doesn't match its own diff: the only change is
+  `immich/mod.rs`'s `list_people()`, capping its per-person `/statistics` fan-out at 16
+  concurrent requests (`buffered`, order-preserving, since results are zipped positionally
+  with the people list) instead of firing one request per person at once — a large People
+  list was exhausting the process's file-descriptor limit ("Too many open files"), which is
+  plausible as a real crash cause but isn't specifically a "Photos tab" bug as described.
 
 ## 3. Open questions / notes
 - Confirm Immich API surface for version-as-stack mapping and cover assignment.
 - Define the sidecar schema for version lineage (which suffixes, ordering, pick).
 - Decide conflict handling when Immich DB metadata and sidecar metadata disagree.
 - **Scope the rest of Immich's metadata surface for the real app** (raised, not yet
-  prioritized): **Tags** — a hierarchical tag menu (view + add/remove), People
-  (view-only), Location (view + edit GPS/place), Date/time (view + edit capture time).
+  prioritized): Location (view + edit GPS/place), Date/time (view + edit capture time).
   Rating/favorite/description are already done (§7.6) — this would extend the same
-  metadata panel to the remaining fields Immich's API exposes.
+  metadata panel to the remaining fields Immich's API exposes. **Partially resolved since
+  this was raised**, though not through a dated §7.x round: `MetadataRows.tsx`'s
+  `useAssetTags` already shows an asset's real tags **read-only** in the metadata panel
+  (`GET /assets/{id}`, found already present and unchanged since before this file's §7 log
+  begins — no add/remove from the panel itself, just display; add/remove exists but lives
+  in Tags' own collection view and the Add-to-Tag dialog, §7.29). **People** similarly has
+  its own full collection view now (§7.28, browse/rename) rather than a metadata-panel
+  field — neither one was built as "extend the metadata panel," so this item stays open in
+  the metadata-panel-specific sense originally scoped, even though the underlying
+  capability (view tags, browse people) now exists elsewhere in the app.
 - **Bulk metadata update** (raised, not yet prioritized) — two sub-features, both needing
   write access to EXIF/IPTC fields beyond what's currently editable (rating/favorite/
   description only, per §1.5), so they'd need scoping alongside the metadata-surface item
@@ -2304,3 +2446,201 @@
   synthetic PNG was available in this sandbox — RawTherapee's non-raw processing path was
   exercised, not its raw demosaic path) and RAM usage under `MAX_CONCURRENT_RAW_CLI_JOBS`
   concurrency. The user plans to test with real RAW assets and DarkTable personally.
+
+### 7.31 Documentation sync: Search and Sharing/Flickr export found already real (August 2026)
+> This file went untouched from `ed96921` ("Initial public release") through `d5b0811`
+> ("1.1 — So Fresh and So Clean") — every commit in between was undocumented here. Working
+> through that backlog (this round) turned up two features that were **already fully real
+> in the app** but had **zero §7 log entries of their own** — `git log` on their source
+> files shows them present, essentially unchanged, since before `ed96921` itself, so there's
+> no dated "built this round" story to reconstruct; §1.1/§1.7/§2.2 above were simply stale,
+> describing a gap that hadn't existed for a while.
+- ✅ **Search** (`SearchResultsBrowser.tsx`, 863 lines) — real Immich smart search
+  (`POST /search/smart`), replacing whichever browser tab was showing with a flat results
+  grid. Windows its own fetch (`search_paginated`'s ~4000-asset page cap) the same way the
+  bucketed grids do, cross-references stack membership, and shares the same selection-bar/
+  context-menu/Copy-Paste/Rotate machinery every other page has via `useAssetActions.ts`
+  (§7.33) and `useStacking.ts` (§7.35) — it was one of the six pages both of those hooks
+  were extracted to cover, so it's not a second-class page relative to Photos/Folders.
+- ✅ **Sharing/export** (`ExportToFolderDialog.tsx`, `ExportToFlickrDialog.tsx`,
+  `FlickrSetupDialog.tsx`, `PreferencesSharing.tsx`; backend `flickr.rs`/`export_queue.rs`/
+  `export_naming.rs`) — see the rewritten §1.7 for the full current shape. Flickr's OAuth
+  1.0a handshake, album/privacy pickers, and the shared `ExportQueue` backing both Folder
+  and Flickr exports are all real and wired into the Activity panel's Export section.
+- **Why this matters going forward**: both features are proof this file can drift stale in
+  the *optimistic* direction too, not just by falling behind on new work — a feature can be
+  fully built and never make it into a §7.x entry at all. Worth a periodic spot-check
+  against `git log`/actual source rather than assuming "not mentioned in §7" means "not
+  built."
+
+### 7.32 Flatpak packaging, shareable config folder & credential vault (August 2026)
+> Three commits, same theme: get BrightTable distributable as a Flatpak, then make that
+> distribution actually usable for cross-install testing during development.
+- ✅ **`2a83e98` — Flatpak packaging (initially WIP)**: manifest
+  (`io.github.brownphotographic.BrightTable.yml`), `.desktop`/metainfo files,
+  `build-flatpak.mjs`, and `flatpak.rs` (new) routing subprocess spawns through
+  `flatpak-spawn --host` when running sandboxed — editor launches, CLI round trips, and
+  file-manager reveals all need to reach the host system, not the Flatpak sandbox. Initially
+  blocked at launch on this dev machine: xdg-desktop-portal's Realtime portal failed a
+  `PIDFD_GET_PID_NAMESPACE` ioctl (`ENOTTY`) that WebKitGTK's own startup RT-priority
+  request treated as fatal — not fixable from this repo's manifest/code, tracked as an
+  upstream flatpak/xdg-desktop-portal bug, worked around by continuing on another machine.
+- ✅ **`cfe3dfb` — Fix Flatpak runtime**: the release build needed
+  `--features tauri/custom-protocol` — without it, a plain `cargo build --release` binary
+  tries to load the Vite dev server on startup and fails ("Could not connect to localhost"),
+  confirmed live in a Flatpak test container. Also: documented the required
+  `--share=network` grant after install (not covered by the manifest's own `finish-args`),
+  a `SKIP_VERSION_BUMP` escape hatch for local iteration builds, and excluded
+  flatpak-builder's own build/sandbox dirs from Vite's dev-server file watcher (mirroring
+  `/run`, including circular `/run/udev/watch` symlinks, was crashing chokidar with `ELOOP`).
+- ✅ **`fec4b65` — Shareable config folder + credential vault** — see §2.6 for the full
+  write-up (user-chosen `config.json` location, opt-in shared encrypted vault,
+  `SecretVault::open` moved off the main thread). Merged via `4980a6c`.
+- ✅ **`78fda92` (v1.0.3) — "flatpak support, custom config folder"** (What changed:
+  1.0.1 → 1.0.3): **AppImage dropped** — BrightTable ships Flatpak-only now, with a
+  simplified README install guide (§2.1). Settings folder / shared vault can now be moved
+  **while the app is running**, no restart required. Bug fixes: a false "No API key
+  configured" flash on screens that loaded before the vault finished opening; the vault
+  taking up to ~40s to open/save due to unnecessary encryption overhead, now near-instant;
+  the Flatpak's listed version number being frozen/stale (now updates per release); video
+  playback failing under Flatpak's sandboxed temp directory in some cases. Cleanup: removed
+  now-unused AppImage build scripts/docs; the dev-only resource-usage chart
+  (`ResourceChart.tsx`, surfaced in `ConnectionStatusPill`'s popover, §7.34) no longer shows
+  in production builds.
+- ✅ **`9d724c3` (v1.0.4)** — see §2.7's compatibility-log entry: fixes `list_people()`'s
+  unbounded `/statistics` fan-out (file-descriptor exhaustion on a large People list),
+  despite the commit message describing it as a Photos-tab fix.
+
+### 7.33 Selection bar / ActionDropdown refactor (v1.1, August 2026)
+> User request, per the release commit message: "refactor Selection Bar for consistency
+> across tabs, and clean up options to logical dropdowns." See §1.2 for the resulting
+> product-facing shape; this entry covers the mechanics.
+- ✅ **`SelectionBar.tsx`** shrank from a wall of always-visible inline buttons to a fixed
+  set (Cancel, rating group, Favorite) plus grouped dropdowns, net ~150 fewer lines despite
+  covering more actions across more pages. `lib/actionMenu.ts` (new) defines the shared
+  `MenuAction`/`ActionGroup` shape (`primary`/`organize`/`stack`/`edit`/`copyPaste`/`share`/
+  `more`/`destructive`) and `groupActions()`, so every page builds one flat `MenuAction[]`
+  the same way it already built `ContextMenuItem[]`, and `SelectionBar` just buckets and
+  renders it — labels/gating live in one place (`lib/useAssetActions.ts`, see below) instead
+  of drifting across six per-page copies.
+- ✅ **`ActionDropdown.tsx`** (new, 150 lines) — a popup-list button mirroring
+  `ContextMenu.tsx`'s own popup styling, with a `'dark'` variant for `SelectionBar`'s
+  always-dark bar and a `'plain'` variant for a theme-following host (`Viewer.tsx`'s
+  header). Click-outside/Escape-to-close, same as every other popover in the app.
+- ✅ **Extraction of six pages' worth of duplicated actions** — Copy/Paste Image Processing,
+  Copy/Paste Metadata (§1.5, §7.24), Show in File Manager, and batch Rotate previously only
+  existed on Photos/Folders; `lib/useAssetActions.ts` (new, 376 lines) centralizes the
+  handlers so Albums, People, Tags, and Search Results (§7.31) got them for the first time
+  in this round too, with no per-page reimplementation.
+
+### 7.34 Nav tabs, window chrome & connectivity resilience (v1.1, August 2026)
+> Three unrelated-but-shipped-together changes from the same release commit message:
+> "Removed side tab bar and system status in favor of using existing space in horizontal
+> bars at top of UI," "Added faint border and shadow to UI window," "Added better checking
+> and support for unstable external library connectivity."
+- ✅ **Sidebar → NavTabs** — `Sidebar.tsx` (177 lines) deleted outright, replaced by
+  `NavTabs.tsx` (95 lines), a horizontal tab strip meant to render inline inside
+  `MenuBar.tsx`'s own toolbar row rather than as a standalone left-hand column. The
+  connection-status readout and dev-only resource chart that used to live in the sidebar's
+  footer moved to a new `ConnectionStatusPill.tsx` (177 lines), docked in `TitleBar.tsx`
+  next to `ActivityIndicator` — a click-to-expand popover (resolved server URL, error text,
+  `ResourceChart` in dev builds, "Library Settings…" shortcut) rather than an
+  always-visible footer block. See §1.1 for the product-facing description.
+- ✅ **Window border/shadow + custom resize** — the Tauri window is undecorated and
+  transparent (GNOME/Mutter draws no CSD chrome of its own around an undecorated surface),
+  so `index.css`'s new `.window-frame` rule hand-draws libadwaita's own actual CSD recipe
+  (12px radius, the same three-layer box-shadow GTK's `_window.scss` uses) rather than an
+  invented look, collapsing to a flat 0-radius/no-shadow window when maximized/tiled (driven
+  by a `data-window-maximized` attribute on `<html>`, kept in sync by the new
+  `useSyncWindowFrameMaximized()` in `lib/windowFrame.ts` since Tauri has no dedicated
+  maximize-changed event to listen to — it polls on resize). `ResizeHandles.tsx`'s edge hit
+  zone widened from 8px to 16px to span the new `--window-frame-margin` gap between the
+  window's true edge (where the handles are anchored) and the frame's visible/shadowed
+  border — a thinner strip left a dead zone the user couldn't grab.
+- ✅ **Connectivity resilience** — `libraryStatus.tsx` gained a `localMountAlert` (a brief,
+  8-second, self-clearing red-blink notice) separate from the existing `status`/`error`
+  (which track the Immich *server* connection, not the local Originals-on-Disk mount).
+  `reportLocalMountAlert()` is called from `useAssetActions.ts`'s `scanUnsyncedMetadata`
+  catch handler — a rejected (not just empty-result) sidecar-metadata scan, confirmed live
+  as a real failure mode when an NFS-mounted library briefly dropped out (§7.19), now
+  surfaces through the same pill every other connectivity problem does instead of silently
+  leaving Copy Image Processing/Sync Metadata looking permanently unavailable with no
+  explanation.
+
+### 7.35 Stacks refactor: consistency across tabs, pick preferences, position stability (v1.1, August 2026)
+> `d7794f4` → `39de7b0` → `d5b0811`. The middle commit's own message is explicit:
+> "(partial work towards stacks refactor - **untested**)." The final release commit
+> (`d5b0811`) did not touch `stack_queue.rs`/`useStacking.ts`/`stackQueue.tsx` at all — see
+> §1.4 for why that keeps this whole area 🟡, not ✅, despite being substantial, carefully-
+> reasoned, real code.
+- ✅ **`stack_queue.rs`** (new, 368 lines) — a decoupled, bounded-concurrency background
+  queue for stack create/dissolve, modeled directly on `edit_queue.rs`. Two job kinds only
+  (`Dissolve`/`Create`); no per-asset lock (unlike `edit_queue`/`processing_queue`, which
+  serialize same-asset jobs over a shared local `.xmp` sidecar — stack mutations never touch
+  local files, and Immich's stack membership is exclusive per asset, so concurrent
+  `Dissolve`s of distinct stacks or `Create`s from disjoint id sets can't race); no
+  cancellation (every job is one fast atomic HTTP call, nothing meaningful to interrupt
+  mid-job, unlike `art_queue.rs`/`export_queue.rs`). `MAX_CONCURRENT_JOBS = 6`, deliberately
+  higher than `edit_queue`'s 4 since these are small single-request server calls, not
+  disk/NFS-bound writes.
+- ✅ **`lib/stackQueue.tsx`** (new, 102 lines) — mirrors the other job-queue providers
+  (`editQueue.tsx`/`processingQueue.tsx`/`artQueue.tsx`/`exportQueue.tsx`) exactly: 1s poll,
+  shared context, `waitForStackJobs` for the higher-level orchestration in `useStacking.ts`
+  to await a whole wave settling.
+- ✅ **`useStacking.ts` heavily rewritten** (263 new lines in `d7794f4`, then a further
+  rewrite to 360/399 lines in `39de7b0`) — every multi-stack operation (bulk Unstack, Smart
+  Stack apply, manual multi-select Stack, dissolve-before-trash) now builds on two low-level
+  batch primitives (`dissolveMany`/`createMany`) that enqueue a whole wave onto
+  `stack_queue.rs` in one call, instead of a frontend loop awaiting one Immich round trip at
+  a time. Shared by all six browser pages (Photos, Folders, Albums, People, Tags, Search
+  Results, §7.31) — Albums/People/Tags/Search previously had no stacking support of their
+  own at all; `PhotosBrowser.tsx`/`FoldersBrowser.tsx` shrank substantially (228/230 fewer
+  lines respectively) as their own duplicated stacking logic moved into the shared hook.
+- ✅ **Progress panel gained a sixth queue** — `ActivityIndicator.tsx`/`ActivityPanel.tsx`
+  now poll `useStackQueue()` alongside Edit/Import/Processing/ART(RAW)/Export, with the
+  panel's own per-job label deriving "Stack (N photos)"/"Unstack (N photos)" from the job's
+  `kind`. See §7.36 for the panel's broader "sync" → "in progress" relabeling.
+- ✅ **Smart Stack Name-mode JPEG/RAW pick preference** — a "Prefer as pick" RAW/JPEG toggle
+  (`smartStack.ts`'s `NamePickPreference`, plumbed through `pickForGroup`/`agGroups`/
+  `mergeExistingStacks`) lets the user choose which format Name-mode picks as a group's
+  cover when both a RAW and a JPEG share a base filename, defaulting to RAW (matching prior
+  behavior).
+- ✅ **Smart Stack Version-mode sibling auto-include** — an opt-in checkbox
+  (`versionIncludeSiblings`) fires a library-wide `searchAssetsByFilename` lookup per group's
+  base name, cross-references real stack membership onto the results (so an
+  already-differently-stacked sibling isn't silently double-counted — `stackByAssetId` is
+  threaded into `SmartStackDialog` specifically for this), and merges matches into the group
+  via the new `mergeFilenameSiblings()` in `smartStack.ts`.
+- ✅ **Fixed: a stack's grid/filmstrip row jumped position when its pick changed** — see
+  §1.4 for the root cause and fix (`lib/stacks.ts`'s new `resolveVisibleStackAssets`,
+  anchoring each stack's visible slot to a pick-independent array position rather than the
+  current pick's own position).
+- ⬜ **Not independently re-verified against a live Immich server this round** — `39de7b0`'s
+  own commit message says "untested," and `d5b0811` (the release that shipped it) made no
+  further changes to any of the three files above. The pre-refactor version of stacking was
+  live-verified in §7.13/§7.14/§7.16; this refactor carries that confidence forward by
+  construction (same queue idiom as the already-tested `edit_queue.rs`, same orchestration
+  logic just moved into a shared hook) but hasn't itself been exercised live yet.
+
+### 7.36 v1.1 misc: RAW editors on JPEG/TIFF, loupe size, progress-panel relabeling
+> The remaining line items from the `d5b0811` commit message not covered by §7.33–§7.35.
+- ✅ **RAW editors usable on JPEG/TIFF** — see §1.5. `filters.ts`'s new
+  `isRoundTripEligible()` (RAW **or** JPG/JPEG/TIF/TIFF) replaces the RAW-only
+  `isRawAsset()` check at every RAW-Editor-launch gate (Viewer toolbar button, its keyboard
+  shortcut, the selection-bar/context-menu Tweak Roundtrip entries) — both the plain
+  launch-only round trip (§7.21) and the CLI round trip (§7.25/§7.30) now accept a JPEG/TIFF
+  target, not only camera RAW originals.
+- ✅ **Grid loupe size option** — `lib/gridLoupeSettings.tsx` (new, 59 lines,
+  `GridLoupeSettingsProvider`/`useGridLoupeSettings`, same provider shape as
+  `useWindowControls`) persists a `large: boolean` via `saveGridLoupeLarge`/`config.json`,
+  exposed as a Small/Large segmented control in Preferences → Configuration → Window.
+  `GridLoupePane.tsx` grew from a fixed layout to a `large`-aware one (Large shrinks the
+  grid to a thin strip so the loupe fills most of the view). Distinct from the Viewer's own
+  in-lightbox loupe (§7.5), which is unaffected.
+- ✅ **Progress panel generalized** — per the release commit message, "Refactored sync panel
+  to be a general 'progress' panel for additional use cases." `ActivityIndicator.tsx`'s
+  pending-state label changed from `"${n} syncing…"` to `"${n} in progress…"`, since (as of
+  the stack queue landing, §7.35) not every queued job is really a server sync — stack/
+  processing/RAW-CLI jobs are as much "local background work" as network writes. Mechanical
+  plumbing otherwise: both `ActivityIndicator.tsx` and `ActivityPanel.tsx` now sum/list six
+  queues instead of five.

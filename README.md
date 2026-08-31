@@ -22,7 +22,7 @@ _How it works:_
 - The light table (this app): A front end app that uses the above, and creates a (I think) great user experience for editing your photos.
 
 _An LLM coded project. Human generated requirements and testing._
-While this tool uses LLMs to generate code, the concept, requirements, and testing is performed by the author. I absolutely hate the term 'vibe coding'. 
+While this tool uses LLMs to generate code, the concept, requirements, and testing is performed by the author. 
 This is Human Concept --> Requirements --> LLM Coding --> Human Testing.
 
 If you disagree, take your neo-luddite principles elsewhere.
@@ -57,10 +57,14 @@ Since moving over to Linux I have been trying to find the perfect experience, bu
 
 ## System Requirements
 
-- Linux desktop only. Designed and tested on GNU/Linux — while it could technically be extended to Mac or Windows, I don't have either platform to test.
-- **Flatpak**: just needs Flatpak itself installed — most modern distros ship it by default; otherwise `sudo apt install flatpak` (Debian/Ubuntu) or your distro's equivalent. Sandboxed, and not tied to your system's glibc version.
-
-Building from source instead needs Node.js, Rust/Cargo, and the Tauri CLI — see [Developers](#developers) below.
+- This is NOT a standalone app — it requires the following to be configured. It may take you 5 mins to 30 mins to set up depending on your experience and what you have already configured. Once it is set up there is no repeat configuration.
+- You must have an **Immich Server** instance running. BrightTable will access it via its API.
+- For roundtrip photo editing (with **ART, RawTherapee or Darktable**) you must have those applications installed (obviously).
+- For roundtrip photo editing you must have an **Immich External Library** folder set up in your Immich configuration, and that same folder must be mounted on your local system (via SMB, NFS). It will NOT work if you just use Immich's default library location! More advanced photography users may already have an external library set up on their NAS / homelabsystem as a folder of images that they organize. Giving Immich and your local desktop access to this folder will allow you to use it with BrightTable.
+- **Linux desktop only**. Designed and tested on GNU/Linux — while it could technically be extended to Mac or Windows, I don't have either platform to test.
+- **Flatpak**: just needs Flatpak itself installed — most modern distros ship it by default; otherwise `sudo apt install flatpak` (Debian/Ubuntu) or your distro's equivalent.
+- Since Flatpak is a sandboxed container, you may need to configure your system to allow BrightTable to access all of the necessary system resources (e.g. network, file system). **Flatseal** is a recommended app to allow you to configure these permissions. Instructions are provided below.
+- To access your library away from home, you must set up **Tailscale** and have end points configured for your Immich server container, plus the network share for the external library folder.
 
 ## Quickstart
 
