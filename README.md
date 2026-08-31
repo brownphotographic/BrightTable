@@ -36,6 +36,8 @@ Let's call this need a 'digital light table'.
 - Processing: Uses open source RAW editors for photo processing e.g. ART, RawTherapee. 
 - The light table (this app): A front end app that uses the above, and creates a (I think) great user experience for editing your photos.
 
+### Warning
+
 _An LLM coded project. Human generated requirements and testing._
 While this tool uses LLMs to generate code, the concept, requirements, and testing is performed by the author. 
 This is Human Concept --> Requirements --> LLM Coding --> Human Testing.
@@ -44,18 +46,6 @@ If you disagree, take your neo-luddite principles elsewhere.
 
 If you decide to use this, please read the warnings below.
 
-### What does it do?
-_Background (the inspiration):_
-For those of you who have actually used a real light table and loupe to view transparency film you will understand the purpose of this tool. Light tables to me were the most enjoyable part of my photography workflow back when I shot film: heading to my local pro film label, getting that processed film back and sticking it on their light table to view the goods. It was fun, and tactile.
-
-As I entered the digital world in 2005 I intially used tools like Pixmantec Rawshooter (Adobe bought them out and it became Lightroom), and in 2006 the great Apple Aperture. Aperture was a rare tool that had a great user experience and brought it all together.
-
-Since moving over to Linux I have been trying to find the perfect experience, but could not find it all in one package. Where I ended up before this tool...
-- Shotwell for desktop DAM, printing, and culling. Great UX. But struggled with larger libraries. Round trip experience to raw editor basic. Also didn't play nice with my network share connected to Immich. 
-- ART for raw editing. As a fork of RawTherapee this has the quality and look and feel I wanted with great film like rendering, and a simple UX.
-- Immich. A self hosted DAM with API and great phone app for auto upload and viewing. Super snappy. It just never played well with my dedicated camera RAW editing workflow.
-
-### Warning!
 - This tool was created by me, for me. I am giving it to the community to allow others who are interested to use it, and accept the risks involved.
 
 - Use at your own risk! You are responsible for using this tool. Read the code and understand what it does before using it. Test it on a sandbox first.
