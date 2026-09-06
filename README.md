@@ -12,7 +12,7 @@ _above:Auto-stacking images: stacking is performed locally, but synced with Immi
 - 🔗 Sits on top of #Immich as the DAM backend.
 - 🖼️ Round-trip RAW editing with #ART, #RawTherapee, or #darktable. Open, edit, close, done!
 - 📋 Copy/paste image processing & metadata across photos
-- -⚡ Headless batch reprocessing: apply RAW edits to whole selections without opening a GUI
+- ⚡ Headless batch reprocessing: apply RAW edits to whole selections without opening a GUI
 - 🔍 Loupe: hover-magnify thumbnails for that light-table-and-loupe feel
 - 🗂️ Smart Stacking: auto-groups RAW+JPEG pairs, edit versions, or burst shots time (sub second to 1 minute).
 - ⭐ Fast culling: star ratings, favorites, and rejects
