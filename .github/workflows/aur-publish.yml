@@ -1,0 +1,59 @@
+name: Publish to AUR
+
+# Bare-version tags ("1.1.0"), not "v1.1.0" - packaging/arch/PKGBUILD's
+# source= URL assumes the git tag equals pkgver exactly (see that file's own
+# NOTE comment). Keep tagging releases without a "v" prefix going forward,
+# or this whole pipeline needs to change alongside it.
+#
+# The glob below is intentionally loose (it also matches a "v"-prefixed tag)
+# because GitHub's tag-filter syntax can't express "exactly three numeric
+# dot-groups" - the pkgver-match guard step below is the real enforcement,
+# and fails closed if a pushed tag doesn't match what's already committed to
+# the PKGBUILD.
+#
+# DISABLED as of 2026-09-06: AUR account registration is temporarily closed
+# (aur.archlinux.org shows "New account registration is temporarily closed"),
+# so there's no AUR_SSH_PRIVATE_KEY secret yet and this job would just fail
+# on every tag push. Manual-trigger only for now - once an AUR account +
+# secret exist (see README/session notes for the one-time setup steps),
+# restore the `tags: - '*.*.*'` block above instead of workflow_dispatch.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  aur-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # bump-version.mjs already sets packaging/arch/PKGBUILD's pkgver when
+      # cutting a release build - this just refuses to publish if a tag ever
+      # gets pushed without that step having run and been committed first.
+      - name: Verify PKGBUILD pkgver matches the pushed tag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKGVER=$(grep -m1 '^pkgver=' packaging/arch/PKGBUILD | cut -d= -f2)
+          if [ "$TAG" != "$PKGVER" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME (app version $TAG) doesn't match packaging/arch/PKGBUILD's pkgver=$PKGVER. Run 'npm run bump-version', commit, then tag."
+            exit 1
+          fi
+
+      # Builds the package in a container to catch a broken PKGBUILD before
+      # it ever reaches the AUR, computes the real sha256 (replacing the
+      # SKIP placeholder) via updpkgsums, regenerates .SRCINFO, and pushes
+      # both to ssh://aur@aur.archlinux.org/brighttable.git. Pinned by full
+      # commit SHA (not a mutable tag) since this step holds an SSH key with
+      # push access to the AUR package - see README's Arch section / repo
+      # docs for the one-time AUR account + secret setup this depends on.
+      - name: Build, checksum, and publish brighttable to the AUR
+        uses: KSXGitHub/github-actions-deploy-aur@084b0d9b15415bf9cdb65d44dad1efe37a354050 # v4.2.0
+        with:
+          pkgname: brighttable
+          pkgbuild: packaging/arch/PKGBUILD
+          updpkgsums: true
+          test: true
+          commit_username: Rob Brown
+          commit_email: brownphotographic@gmail.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${{ github.ref_name }}"

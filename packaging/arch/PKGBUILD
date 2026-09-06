@@ -1,0 +1,48 @@
+# Maintainer: Rob Brown <brownphotographic@gmail.com>
+#
+# Mirrors the Flatpak module's build recipe (see app/flatpak/*.yml and
+# app/scripts/build-flatpak.mjs): a plain `cargo build --release` against
+# the app's own Cargo.toml with `tauri/custom-protocol` explicitly enabled
+# (not `cargo tauri build` - the bundling that CLI adds on top isn't needed
+# here, makepkg does that job), then a manual install of the resulting
+# binary + the existing Flatpak .desktop/icon/metainfo files, which describe
+# the app identically regardless of packaging format.
+#
+# NOTE: BrightTable's git tags aren't consistently named (mix of "1.0.3",
+# "v1.0.4", "1.1.0" as of this writing) - this PKGBUILD assumes the current
+# release tag matches pkgver exactly (no "v" prefix), which is true for
+# 1.1.0. If a future tag is "vX.Y.Z" instead, update the source= URL to
+# match (GitHub's archive URL and its extracted directory name both use the
+# tag string verbatim).
+pkgname=brighttable
+pkgver=1.1.1
+pkgrel=1
+pkgdesc="Connect an Immich library to external RAW editors"
+arch=('x86_64')
+url="https://github.com/brownphotographic/BrightTable"
+license=('GPL-3.0-or-later')
+depends=('webkit2gtk-4.1' 'gtk3' 'libayatana-appindicator' 'librsvg' 'openssl' 'hicolor-icon-theme' 'desktop-file-utils')
+makedepends=('rust' 'cargo' 'nodejs' 'npm' 'pkgconf' 'xdotool' 'file')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/brownphotographic/BrightTable/archive/refs/tags/$pkgver.tar.gz")
+sha256sums=('SKIP') # replace with the real hash via `updpkgsums` before publishing
+
+build() {
+  cd "$srcdir/BrightTable-$pkgver/app"
+
+  npm ci
+  npm run build
+  cargo build --release --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol
+}
+
+package() {
+  cd "$srcdir/BrightTable-$pkgver/app"
+
+  install -Dm755 "src-tauri/target/release/app" "$pkgdir/usr/bin/brighttable"
+  install -Dm644 "flatpak/io.github.brownphotographic.BrightTable.desktop" \
+    "$pkgdir/usr/share/applications/io.github.brownphotographic.BrightTable.desktop"
+  install -Dm644 "src-tauri/icons/icon.png" \
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps/io.github.brownphotographic.BrightTable.png"
+  install -Dm644 "flatpak/io.github.brownphotographic.BrightTable.metainfo.xml" \
+    "$pkgdir/usr/share/metainfo/io.github.brownphotographic.BrightTable.metainfo.xml"
+  install -Dm644 "../LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

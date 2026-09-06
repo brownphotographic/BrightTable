@@ -152,4 +152,27 @@ writeFileSync(
 );
 console.log(`Set Flatpak metainfo release to ${displayVersion} (${releaseDate}).`);
 
+// The Arch PKGBUILD's pkgver must match the app version exactly (it's also
+// the literal git tag the source= URL fetches - see that file's own NOTE
+// comment on tag-naming). pkgrel resets to 1 on every version bump: it only
+// exists to version *packaging* changes against an unchanged pkgver, which
+// don't apply to a version that didn't exist a moment ago.
+const pkgbuildPath = join(scriptDir, "..", "..", "packaging", "arch", "PKGBUILD");
+const pkgbuild = readFileSync(pkgbuildPath, "utf8");
+const pkgverLine = /^pkgver=\d+\.\d+\.\d+$/m;
+const pkgrelLine = /^pkgrel=\d+$/m;
+if (!pkgverLine.test(pkgbuild) || !pkgrelLine.test(pkgbuild)) {
+  throw new Error(`Could not find "pkgver=x.y.z" and "pkgrel=n" lines in ${pkgbuildPath}`);
+}
+writeFileSync(
+  pkgbuildPath,
+  pkgbuild.replace(pkgverLine, `pkgver=${nextVersion}`).replace(pkgrelLine, "pkgrel=1"),
+);
+console.log(`Set packaging/arch/PKGBUILD pkgver to ${nextVersion} (pkgrel reset to 1).`);
+console.log(
+  "NOTE: sha256sums is left as SKIP - it can't be computed until the matching git tag " +
+    `("${nextVersion}", no "v" prefix - see the PKGBUILD's own tag-naming note) is pushed. ` +
+    "Run `updpkgsums` from packaging/arch/ after tagging the release.",
+);
+
 console.log("Remember to also add a row for this build to COMPATIBILITY.md by hand.");

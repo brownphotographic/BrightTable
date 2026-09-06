@@ -11,6 +11,8 @@ actually been verified live, not a guarantee about untested versions.
 | 0.2.4 | 2.7.5 (floor), 3.0.1 (confirmed) | Same floor and confirmed server version as 0.2.3 — no compatibility-relevant server-facing changes since. |
 | 0.2.6 | 3.1.0 (floor and confirmed) | Floor raised to match the confirmed version — backward compatibility with pre-3.1.0 servers is no longer being tested, so the floor now tracks whatever's actually verified instead of trailing it. |
 | 1.0.0 | 3.1.0 (floor and confirmed) | v1.0 launch release — same tested server version as 0.2.6, no compatibility-relevant server-facing changes since. |
+| 1.1.0 | 3.1.0 (floor and confirmed) | no compatibility-relevant server-facing changes since. |
+| 1.1.1 | 3.1.0 (floor and confirmed) | no compatibility-relevant server-facing changes since. |
 
 ## Keeping this current
 

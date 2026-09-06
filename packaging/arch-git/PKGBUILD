@@ -1,0 +1,49 @@
+# Maintainer: Rob Brown <brownphotographic@gmail.com>
+#
+# Rolling variant tracking main - same build recipe as packaging/arch/PKGBUILD
+# (see that file's header comment), just sourced from a git clone instead of
+# a release tarball, with pkgver() deriving its version from `git describe`
+# instead of a fixed release number.
+pkgname=brighttable-git
+pkgver=1.1.0.r0.g0000000
+pkgrel=1
+pkgdesc="Connect an Immich library to external RAW editors (git version)"
+arch=('x86_64')
+url="https://github.com/brownphotographic/BrightTable"
+license=('GPL-3.0-or-later')
+depends=('webkit2gtk-4.1' 'gtk3' 'libayatana-appindicator' 'librsvg' 'openssl' 'hicolor-icon-theme' 'desktop-file-utils')
+makedepends=('rust' 'cargo' 'nodejs' 'npm' 'pkgconf' 'xdotool' 'file' 'git')
+provides=('brighttable')
+conflicts=('brighttable')
+source=("$pkgname::git+https://github.com/brownphotographic/BrightTable.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$srcdir/$pkgname"
+  # BrightTable's tags mix "1.0.3" and "v1.0.4" styles - strip a leading "v"
+  # if present so the resulting pkgver is consistent either way. Falls back
+  # to a 0.0.0 base if the checkout has no reachable tag at all.
+  git describe --long --tags 2>/dev/null | sed 's/^v//; s/-/.r/; s/-/./' \
+    || printf '0.0.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cd "$srcdir/$pkgname/app"
+
+  npm ci
+  npm run build
+  cargo build --release --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol
+}
+
+package() {
+  cd "$srcdir/$pkgname/app"
+
+  install -Dm755 "src-tauri/target/release/app" "$pkgdir/usr/bin/brighttable"
+  install -Dm644 "flatpak/io.github.brownphotographic.BrightTable.desktop" \
+    "$pkgdir/usr/share/applications/io.github.brownphotographic.BrightTable.desktop"
+  install -Dm644 "src-tauri/icons/icon.png" \
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps/io.github.brownphotographic.BrightTable.png"
+  install -Dm644 "flatpak/io.github.brownphotographic.BrightTable.metainfo.xml" \
+    "$pkgdir/usr/share/metainfo/io.github.brownphotographic.BrightTable.metainfo.xml"
+  install -Dm644 "../LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

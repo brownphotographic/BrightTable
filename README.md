@@ -126,6 +126,33 @@ flatpak run io.github.brownphotographic.BrightTable
 
 > **Not showing up in your app menu?** Flatpak installs export a `.desktop` file automatically — no extra step needed — but your desktop environment only picks up new ones from a fresh session. Log out and back in (or reboot), then check again.
 
+### Alternative: Arch Linux
+
+Not on the AUR yet — this repo ships a `PKGBUILD` you build locally instead. It compiles the app from
+source on your machine (same recipe as the Flatpak build, just installed natively via `pacman` rather than
+into a sandbox) and installs it like any other Arch package: tracked by `pacman`, cleanly removable, no
+container.
+
+```bash
+git clone https://github.com/brownphotographic/BrightTable.git
+cd BrightTable/packaging/arch
+makepkg -si
+```
+
+`makepkg -si` builds and installs in one step, pulling in `depends`/`makedepends` for you (confirm each
+with `pacman`/`sudo` prompts as usual). Once installed, launch it the same way as any other app:
+
+```bash
+brighttable
+```
+
+Since this is a native build rather than a Flatpak, there's no sandbox — no Flatseal step, no
+`--filesystem=` grants needed. It reads whatever files your user account can already access.
+
+> This PKGBUILD tracks tagged releases (`pkgver` is bumped automatically alongside the app version — see
+> `app/scripts/bump-version.mjs`). It is not yet published to the AUR, so `pacman`/`yay` won't find it by
+> package name; you have to clone this repo and build it yourself as shown above.
+
 ### Configuring and using the app
 Once launched, go to the Preferences menu (Edit >> Preferences) to configure the app. Visit the user guide for more information on configuring and using the app. [User Guide](User-Guide.md) 
 
