@@ -637,7 +637,7 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
   // hook wiring comment above this page deliberately omits those RAW-
   // workflow-specific actions, unlike PhotosBrowser.tsx/FoldersBrowser.tsx.
   const selectionBarActions: MenuAction[] = [
-    { id: 'addToTag', group: 'organize', label: 'Add to Tag', disabled: !!TAG_ASSIGN_DISABLED_REASON, disabledReason: TAG_ASSIGN_DISABLED_REASON ?? undefined, onClick: () => setAddToTagTargets([...selected]) },
+    { id: 'addToTag', group: 'primary', label: 'Add to Tag', disabled: !!TAG_ASSIGN_DISABLED_REASON, disabledReason: TAG_ASSIGN_DISABLED_REASON ?? undefined, onClick: () => setAddToTagTargets([...selected]) },
     { id: 'addToAlbum', group: 'organize', label: 'Add to Album', onClick: () => setAddToAlbumTargets([...selected]) },
     { id: 'stack', group: 'stack', label: stackBusy ? 'Working…' : `Stack ${selected.size} Photos`, disabled: !canStack || stackBusy, onClick: () => createStackForSelection([...selected]).catch(() => {}) },
     { id: 'smartStack', group: 'stack', label: stackBusy ? 'Working…' : 'Smart Stack', disabled: !canStack || stackBusy, onClick: () => setSmartStackOpen(true) },

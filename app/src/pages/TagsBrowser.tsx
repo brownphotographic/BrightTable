@@ -47,6 +47,7 @@ import ContextMenu, { DIVIDER, type ContextMenuEntry } from '../components/Conte
 import AddToAlbumDialog from '../components/AddToAlbumDialog';
 import AddToTagDialog, { TAG_COLORS } from '../components/AddToTagDialog';
 import { TAG_ASSIGN_DISABLED_REASON } from '../lib/featureFlags';
+import { bumpTagsVersion } from '../lib/tagsVersion';
 import ExportToFolderDialog from '../components/ExportToFolderDialog';
 import ExportToFlickrDialog from '../components/ExportToFlickrDialog';
 import MetadataPanel from '../components/MetadataPanel';
@@ -393,6 +394,7 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
     async (ids: string[]) => {
       if (!tag) return;
       await untagAssets(tag.id, ids);
+      ids.forEach(bumpTagsVersion);
       removeAssetsLocal(ids);
     },
     [tag, removeAssetsLocal],
@@ -947,7 +949,7 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
             const copyImageProcessingBarEntry =
               selectedAssets.length === 1 ? copyImageProcessingEntry(selectedAssets[0], scannedForProcessingSidecar, handleCopyImageProcessing) : null;
             const actions: MenuAction[] = [
-              { id: 'addToTag', group: 'organize', label: 'Add to Tag', disabled: !!TAG_ASSIGN_DISABLED_REASON, disabledReason: TAG_ASSIGN_DISABLED_REASON ?? undefined, onClick: () => setAddToTagTargets([...selected]) },
+              { id: 'addToTag', group: 'primary', label: 'Add to Tag', disabled: !!TAG_ASSIGN_DISABLED_REASON, disabledReason: TAG_ASSIGN_DISABLED_REASON ?? undefined, onClick: () => setAddToTagTargets([...selected]) },
               { id: 'addToAlbum', group: 'organize', label: 'Add to Album', onClick: () => setAddToAlbumTargets([...selected]) },
               { id: 'stack', group: 'stack', label: stackBusy ? 'Working…' : `Stack ${selected.size} Photos`, disabled: !canStack || stackBusy, onClick: () => createStackForSelection([...selected]).catch(() => {}) },
               { id: 'smartStack', group: 'stack', label: stackBusy ? 'Working…' : 'Smart Stack', disabled: !canStack || stackBusy, onClick: () => setSmartStackOpen(true) },
@@ -1120,7 +1122,7 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
         />
       )}
       {addToAlbumTargets && <AddToAlbumDialog assetIds={addToAlbumTargets} onClose={() => setAddToAlbumTargets(null)} />}
-      {addToTagTargets && <AddToTagDialog assetIds={addToTagTargets} onClose={() => setAddToTagTargets(null)} />}
+      {addToTagTargets && <AddToTagDialog assetIds={addToTagTargets} onClose={() => setAddToTagTargets(null)} onAdded={refreshTagList} />}
       {exportFolderAssets && (
         <ExportToFolderDialog assets={exportFolderAssets} onClose={() => setExportFolderAssets(null)} onExported={() => {}} />
       )}

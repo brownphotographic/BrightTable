@@ -21,6 +21,7 @@ import { activeFilterCount, DEFAULT_FILTERS, type FileTypeFilter, type Filters, 
 import { Star } from './MetadataRows';
 import Switch from './Switch';
 import NavTabs, { type LeftTab } from './NavTabs';
+import { Icon } from './Icons';
 
 type MenuKey = 'file' | 'edit' | 'view' | 'help' | 'filter' | null;
 
@@ -662,7 +663,7 @@ export default function MenuBar({
             background: loupeOn ? '#3584e4' : 'var(--overlay-medium)',
           }}
         >
-          <LoupeIcon />
+          <Icon name="loupe" size={15} />
           Loupe
         </div>
       )}
@@ -682,6 +683,7 @@ export default function MenuBar({
           background: metaOpen ? '#3584e4' : 'var(--overlay-medium)',
         }}
       >
+        <Icon name="info" size={15} />
         Metadata
       </div>
     </div>
@@ -772,16 +774,6 @@ function MenuItem({ label, shortcut, onClick }: { label: string; shortcut?: stri
 
 function Divider() {
   return <div style={{ height: 1, background: 'var(--border)', margin: '6px 9px' }} />;
-}
-
-// The magnifying-glass glyph used by the Loupe button.
-function LoupeIcon() {
-  return (
-    <div style={{ position: 'relative', width: 13, height: 13, flexShrink: 0 }}>
-      <div style={{ position: 'absolute', left: 0, top: 0, width: 9, height: 9, border: '1.7px solid currentColor', borderRadius: '50%' }} />
-      <div style={{ position: 'absolute', left: 8, top: 8, width: 5, height: 1.7, background: 'currentColor', borderRadius: 1, transformOrigin: 'left center', transform: 'rotate(45deg)' }} />
-    </div>
-  );
 }
 
 function segStyle(active: boolean): CSSProperties {

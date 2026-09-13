@@ -15,7 +15,7 @@
 # match (GitHub's archive URL and its extracted directory name both use the
 # tag string verbatim).
 pkgname=brighttable
-pkgver=1.1.1
+pkgver=1.2.0
 pkgrel=1
 pkgdesc="Connect an Immich library to external RAW editors"
 arch=('x86_64')

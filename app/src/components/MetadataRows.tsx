@@ -16,13 +16,14 @@
  */
 
 import { useEffect, useState } from 'react';
-import { getAsset, type AssetMetadataPatch, type AssetSummary, type TagSummary } from '../lib/api';
+import { getAsset, untagAssets, type AssetMetadataPatch, type AssetSummary, type TagSummary } from '../lib/api';
 import { formatCamera, formatDims, formatExposure, formatSize, formatTaken } from '../lib/exifFormat';
+import { bumpTagsVersion, useTagsVersion } from '../lib/tagsVersion';
 
 // Shared EXIF row list used by both the viewer's Info panel and the grid's
 // Metadata panel, so the two stay visually and factually consistent.
-// `onEdit` is optional - pass it to make Rating/Favorite clickable; omit it
-// for a purely read-only render.
+// `onEdit` is optional - pass it to make Rating/Favorite/Tags clickable; omit
+// it for a purely read-only render.
 export default function MetadataRows({
   asset,
   onEdit,
@@ -38,7 +39,7 @@ export default function MetadataRows({
   // /assets/{id} (see getAsset's doc comment in lib/api.ts). Fetched fresh
   // whenever the shown asset changes, since this is a single-asset panel,
   // not a grid tile.
-  const { tags, error: tagsError } = useAssetTags(asset.id);
+  const { tags, error: tagsError, removeTag } = useAssetTags(asset.id);
 
   async function apply(patch: AssetMetadataPatch) {
     if (!onEdit || busy) return;
@@ -68,7 +69,7 @@ export default function MetadataRows({
           title={onEdit ? (asset.isFavorite ? 'Remove from favorites' : 'Add to favorites') : undefined}
           style={{ cursor: 'default', opacity: busy ? 0.5 : 1 }}
         >
-          <Heart filled={asset.isFavorite} size={16} filledColor="var(--text)" dimColor="var(--text-faint)" />
+          <Heart filled={asset.isFavorite} size={16} filledColor="var(--icon-filled)" dimColor="var(--text-faint)" />
         </div>
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '9px 0', marginTop: 2 }}>
@@ -77,7 +78,7 @@ export default function MetadataRows({
           <div style={{ display: 'flex', gap: 4 }}>
             {[1, 2, 3, 4, 5].map((v) => (
               <div key={v} onClick={() => apply({ rating: v === (asset.rating || 0) ? 0 : v })} style={{ cursor: 'default' }}>
-                <Star filled={v <= (asset.rating || 0)} size={18} color="var(--text)" dimColor="var(--text-faint)" />
+                <Star filled={v <= (asset.rating || 0)} size={18} color="var(--icon-filled)" dimColor="var(--text-faint)" />
               </div>
             ))}
           </div>
@@ -106,14 +107,28 @@ export default function MetadataRows({
                   display: 'flex',
                   alignItems: 'center',
                   gap: 5,
-                  padding: '3px 9px',
+                  padding: onEdit ? '3px 5px 3px 9px' : '3px 9px',
                   borderRadius: 999,
-                  background: 'var(--overlay-medium)',
+                  // Fixed dark chip regardless of theme (unlike the
+                  // ✕/border colors elsewhere in this file) - the user asked
+                  // for a consistent, always-legible pill rather than one
+                  // that goes low-contrast in light mode.
+                  background: '#3a3a3a',
+                  color: '#fff',
                   fontSize: 11.5,
                 }}
               >
-                <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: t.color ?? 'var(--text-dimmer)' }} />
+                <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: t.color ?? '#fff' }} />
                 {t.name}
+                {onEdit && (
+                  <div
+                    onClick={() => removeTag(t.id)}
+                    title={`Remove "${t.name}" tag`}
+                    style={{ cursor: 'default', color: '#fff', fontSize: 11, padding: '0 2px' }}
+                  >
+                    ✕
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -212,9 +227,15 @@ export function Heart({
 // diagnosing a stale build (a Tauri command added this session not yet
 // picked up by a running `tauri dev`/binary shows up here as "command
 // get_asset not found") versus a real "this asset genuinely has none".
-function useAssetTags(assetId: string): { tags: TagSummary[] | null; error: string | null } {
+function useAssetTags(assetId: string): { tags: TagSummary[] | null; error: string | null; removeTag: (tagId: string) => void } {
   const [tags, setTags] = useState<TagSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Bumped by AddToTagDialog/TagsBrowser's Remove from Tag/this hook's own
+  // removeTag below whenever a tag<->asset link changes anywhere in the app -
+  // see lib/tagsVersion.ts's doc comment. `assetId` alone doesn't change when
+  // the *currently shown* asset's tags are edited, so without this the panel
+  // kept showing whatever it fetched on mount until the asset was reselected.
+  const tagsVersion = useTagsVersion(assetId);
 
   useEffect(() => {
     let cancelled = false;
@@ -231,7 +252,22 @@ function useAssetTags(assetId: string): { tags: TagSummary[] | null; error: stri
     return () => {
       cancelled = true;
     };
-  }, [assetId]);
+  }, [assetId, tagsVersion]);
 
-  return { tags, error };
+  // DELETE /tags/{id}/assets isn't gated by TAG_ASSIGN_DISABLED_REASON (that
+  // only covers *assignment*, see featureFlags.ts), so this needs no flag
+  // check. Re-fetches via the version bump rather than removing the pill
+  // optimistically, so this stays the single code path (shared with
+  // AddToTagDialog/TagsBrowser) that keeps every open panel for this asset
+  // in sync rather than just the one the click happened in.
+  function removeTag(tagId: string) {
+    untagAssets(tagId, [assetId])
+      .catch((e) => {
+        console.error('Failed to remove tag', tagId, 'from asset', assetId, e);
+        setError(String(e));
+      })
+      .finally(() => bumpTagsVersion(assetId));
+  }
+
+  return { tags, error, removeTag };
 }

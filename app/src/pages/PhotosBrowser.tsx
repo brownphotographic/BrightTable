@@ -718,15 +718,17 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // completion drives.
   const [artLaunchBusy, setArtLaunchBusy] = useState(false);
   const { resolve: resolveArtRoundTripOutcome, dialog: noSidecarDialog } = useNoSidecarChoice();
-  const launchEditorForSelection = useCallback(
-    async (role: 'rawEditor' | 'externalEditor') => {
-      if (selectedAssets.length !== 1) return;
+  // Factored out of launchEditorForSelection so the right-click context
+  // menu's Tweak Roundtrip item (which targets the right-clicked asset, not
+  // necessarily the current selection) can share the same launch/round-trip
+  // logic instead of duplicating it.
+  const launchEditorForAsset = useCallback(
+    async (asset: AssetSummary, role: 'rawEditor' | 'externalEditor') => {
       const choice = role === 'rawEditor' ? activeRawEditorApp : applications.externalEditor;
       if (!choice) {
         onOpenApplicationsPreferences?.();
         return;
       }
-      const asset = selectedAssets[0];
       if (role === 'rawEditor' && rawRoundTripEnabled) {
         setArtLaunchBusy(true);
         try {
@@ -740,7 +742,14 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       }
       await launchEditor(asset.originalPath, choice, asset.id, asset.fileName);
     },
-    [selectedAssets, applications, activeRawEditorApp, rawRoundTripEnabled, onOpenApplicationsPreferences, resolveArtRoundTripOutcome, trackArtJobs],
+    [applications, activeRawEditorApp, rawRoundTripEnabled, onOpenApplicationsPreferences, resolveArtRoundTripOutcome, trackArtJobs],
+  );
+  const launchEditorForSelection = useCallback(
+    async (role: 'rawEditor' | 'externalEditor') => {
+      if (selectedAssets.length !== 1) return;
+      await launchEditorForAsset(selectedAssets[0], role);
+    },
+    [selectedAssets, launchEditorForAsset],
   );
 
   // Headless RAW Roundtrip (ART CLI round trip Variant 2) - fully headless,
@@ -906,6 +915,13 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       items.push({ label: 'Rotate Left', onClick: () => rotateSelection([asset.id], false, assetByIdAll).catch(() => {}) });
       items.push({ label: 'Rotate Right', onClick: () => rotateSelection([asset.id], true, assetByIdAll).catch(() => {}) });
     }
+    if (asset && selected.size <= 1 && isRoundTripEligible(asset)) {
+      items.push({
+        label: artLaunchBusy ? 'Working…' : 'Tweak Roundtrip',
+        onClick: () => launchEditorForAsset(asset, 'rawEditor').catch((e) => setEnqueueError(String(e))),
+        disabled: artLaunchBusy,
+      });
+    }
     if (rawRoundTripEnabled) {
       const rawTargetIds = pasteTargetIds.filter((id) => {
         const a = assetByIdAll.get(id);
@@ -998,6 +1014,8 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     removeAssets,
     rawRoundTripEnabled,
     requestBatchArtRoundTrip,
+    artLaunchBusy,
+    launchEditorForAsset,
   ]);
 
   // Right-clicking a RAW asset that doesn't currently show Copy Image
@@ -1544,7 +1562,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   const copyImageProcessingBarEntry =
     selectedAssets.length === 1 ? copyImageProcessingEntry(selectedAssets[0], scannedForProcessingSidecar, handleCopyImageProcessing) : null;
   const selectionBarActions: MenuAction[] = [
-    { id: 'addToTag', group: 'organize', label: 'Add to Tag', disabled: !!TAG_ASSIGN_DISABLED_REASON, disabledReason: TAG_ASSIGN_DISABLED_REASON ?? undefined, onClick: () => setAddToTagTargets([...selected]) },
+    { id: 'addToTag', group: 'primary', label: 'Add to Tag', disabled: !!TAG_ASSIGN_DISABLED_REASON, disabledReason: TAG_ASSIGN_DISABLED_REASON ?? undefined, onClick: () => setAddToTagTargets([...selected]) },
     { id: 'addToAlbum', group: 'organize', label: 'Add to Album', onClick: () => setAddToAlbumTargets([...selected]) },
     { id: 'stack', group: 'stack', label: stackBusy ? 'Working…' : `Stack ${selected.size} Photos`, disabled: !canStack || stackBusy, onClick: () => createStackForSelection([...selected]).catch(() => {}) },
     { id: 'smartStack', group: 'stack', label: stackBusy ? 'Working…' : 'Smart Stack', disabled: !canStack || stackBusy, onClick: () => setSmartStackOpen(true) },

@@ -15,16 +15,22 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+import { Icon, type IconName } from './Icons';
+
 export type LeftTab = 'photos' | 'albums' | 'people' | 'tags' | 'folders' | 'trash';
 
-// Left-to-right order of the primary views in the toolbar's tab strip.
-const navDefs: { id: LeftTab; label: string; color: string }[] = [
-  { id: 'photos', label: 'Photos', color: '#62a0ea' },
-  { id: 'folders', label: 'Folders', color: '#9aa0a6' },
-  { id: 'albums', label: 'Albums', color: '#2ec27e' },
-  { id: 'people', label: 'People', color: '#e5a50a' },
-  { id: 'tags', label: 'Tags', color: '#9141ac' },
-  { id: 'trash', label: 'Trash', color: '#e01b24' },
+// Left-to-right order of the primary views in the toolbar's tab strip. Each
+// keeps its own tint (so the tabs stay quickly distinguishable at a glance,
+// same as the color dots they replace) but now renders as a Material icon
+// rather than a plain colored square, matching the icon+label buttons
+// elsewhere in the toolbar (Viewer.tsx, SelectionBar.tsx).
+const navDefs: { id: LeftTab; label: string; icon: IconName; color: string }[] = [
+  { id: 'photos', label: 'Photos', icon: 'photos', color: '#62a0ea' },
+  { id: 'folders', label: 'Folders', icon: 'folder', color: '#9aa0a6' },
+  { id: 'albums', label: 'Albums', icon: 'albums', color: '#2ec27e' },
+  { id: 'people', label: 'People', icon: 'people', color: '#e5a50a' },
+  { id: 'tags', label: 'Tags', icon: 'tags', color: '#9141ac' },
+  { id: 'trash', label: 'Trash', icon: 'trash', color: '#e01b24' },
 ];
 
 // Formerly a standalone left-hand sidebar; now a horizontal strip of tabs
@@ -80,7 +86,9 @@ export default function NavTabs({
               whiteSpace: 'nowrap',
             }}
           >
-            <div style={{ width: 9, height: 9, borderRadius: 3, flexShrink: 0, background: n.color }} />
+            <span style={{ color: n.color, display: 'flex' }}>
+              <Icon name={n.icon} size={15} />
+            </span>
             {n.label}
             {counts[n.id] && (
               <span style={{ fontSize: 11, color: 'var(--text-dimmer)', fontVariantNumeric: 'tabular-nums' }}>

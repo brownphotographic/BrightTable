@@ -42,10 +42,13 @@
   unnamed person). Hide/unhide and merging duplicate people were both raised and
   explicitly declined as out of scope for this pass.
 - ✅ **Tags**: real Immich tags (§7.29), new fifth collection view — list/create/delete a
-  tag, browse its photos, and tag/untag photos from anywhere Add to Album already exists
-  (Photos, Folders, Albums, People, and Tags itself). No rename (Immich's own API has no
-  rename-tag endpoint) and no per-tag photo counts in the list view (no cheap statistics
-  endpoint exists for tags the way People has).
+  tag, browse its photos, assign/untag photos from anywhere Add to Album already exists
+  (Photos, Folders, Albums, People, and Tags itself, plus its own dedicated SelectionBar
+  button, right-click entry, and keyboard shortcut), and Tags itself. Assigning was blocked
+  for a while by an upstream Immich server bug (immich-app/immich#23915, fixed in v3.2.0 —
+  see §7.29) but is now enabled. No rename UI yet (Immich's API gained one in v3.2.0 but
+  BrightTable hasn't built the feature) and no per-tag photo counts in the list view (no
+  cheap statistics endpoint exists for tags the way People has).
 - 🟡 Menu bar (File / Edit / View / Help) is real, but only some items are wired: Select
   All / Deselect All, Refresh Timeline, Preferences, Quit, Stack Selected (§7.13), Smart
   Stack… (§7.14), the Filters dropdown (§7.11), **Export to Folder… and Share to Flickr…**
@@ -65,8 +68,9 @@
   page (Photos, Folders, Albums, People, Tags, Search Results) whenever the selection is
   non-empty. `d5b0811` (v1.1, §7.33) refactored the bar from ~15 always-visible inline
   buttons down to a fixed handful — Cancel, a rating group (0–5 stars + Reject), Favorite —
-  plus grouped **dropdown menus** (`ActionDropdown.tsx`, new): **Organize** (Add to
-  Album/Tag), **Stack** (Stack N Photos, Smart Stack, Unstack), **Edit** (rotate, RAW/
+  plus grouped **dropdown menus** (`ActionDropdown.tsx`, new): **Organize** (Add to Album,
+  at the time also Add to Tag — moved back out to its own inline button next to Favorite in
+  September 2026, §7.29), **Stack** (Stack N Photos, Smart Stack, Unstack), **Edit** (rotate, RAW/
   External editor launch), **Copy/Paste** (Image Processing + Metadata, §1.5), **Share**
   (Export to Folder…, Share to Flickr…, §1.7), and **More**, with Move to Trash (and
   Remove from Album/Tag, where relevant) staying trailing destructive inline buttons. Each
@@ -306,10 +310,13 @@
   manifest (`io.github.brownphotographic.BrightTable.yml`), desktop/metainfo files,
   `build-flatpak.mjs`, and `flatpak.rs` (routes subprocess spawns through
   `flatpak-spawn --host` when sandboxed, since editor/CLI launches need to reach the host,
-  not the sandbox). **`78fda92` (v1.0.3) dropped AppImage entirely** — BrightTable ships as
-  Flatpak-only now, with AppImage's build scripts/docs removed; the app-detection bullet
-  above (scanning for *other* apps' AppImages via the file-browse fallback) is unaffected,
-  since that was never about how BrightTable itself is packaged.
+  not the sandbox). **`78fda92` (v1.0.3) dropped AppImage entirely** — AppImage's build
+  scripts/docs were removed; the app-detection bullet above (scanning for *other* apps'
+  AppImages via the file-browse fallback) is unaffected, since that was never about how
+  BrightTable itself is packaged.
+- ✅ **Arch Linux: local `PKGBUILD`, not yet on the AUR** (`3863504`, §7.37) — so as of
+  v1.1.1 BrightTable ships Flatpak (sandboxed) **and** a native Arch package built locally
+  via `makepkg -si` (unsandboxed, tracked by `pacman`); it's no longer Flatpak-only.
 
 ### 2.2 Immich integration
 - ✅ Connect to an Immich server via endpoint URL + API key (§7.2).
@@ -423,9 +430,11 @@
   - **Immich 3.1.0** — current floor (`MIN_TESTED_SERVER_VERSION` in `immich/models.rs`).
     Bumped via `bump-version.mjs`'s release-time `TESTED_IMMICH_VERSION` prompt (policy: no
     backward-compat testing, so the tested version doubles as both the floor and the
-    version shown in the About dialog) across the 1.0.3/1.0.4/1.1 release builds — 🟡 not a
-    separately narrated live-verification round the way 2.7.5/3.0.1 above were, just the
-    honest current value of the constant.
+    version shown in the About dialog) across the 1.0.3/1.0.4/1.1/1.1.0/1.1.1 release
+    builds — 🟡 not a separately narrated live-verification round the way 2.7.5/3.0.1 above
+    were, just the honest current value of the constant. `COMPATIBILITY.md` logs 1.1.0 and
+    1.1.1 both against 3.1.0 with no compatibility-relevant server-facing change since 1.0.0
+    (§7.37).
 - **`9d724c3` (v1.0.4) — "bug fix for photos tab not loading and app crashing."** Worth
   flagging the commit message doesn't match its own diff: the only change is
   `immich/mod.rs`'s `list_people()`, capping its per-person `/statistics` fan-out at 16
@@ -1790,7 +1799,8 @@
     icon and plain-text buttons for older, unrelated actions (Loupe has an icon, Info/
     Filmstrip/Unstack/RAW-editor buttons don't), so matching that existing mixed style rather
     than introducing new icons was the deliberately narrower fix; revisit if the user wants
-    a real icon pass.
+    a real icon pass. **Done in §7.38** (September 2026) — every toolbar button and nav tab
+    now has a real icon via the new shared `components/Icons.tsx`.
 - ✅ **Paste Image Processing gets a `ConfirmDialog`** ("Paste image processing onto N
   photo(s)? This replaces any existing RawTherapee/ART edits on each one.") before calling
   the backend — an explicit decision with the user, since it silently overwrites real edit
@@ -2266,10 +2276,14 @@
   `untag_assets` (`PUT`/`DELETE /tags/{id}/assets`). All mutations gated by the same
   read-only safety net as every other write (§7.2); `tag_assets`/`untag_assets` also gated
   by the `max_writes_per_batch` cap, same as `add_assets_to_album`/`remove_assets_from_album`.
-- ✅ **No rename**: confirmed against Immich's own source (`tag.controller.ts`/`tag.dto.ts`)
-  that `PUT /tags/{id}` (`updateTag`) accepts *only* `color`, not `name` — Immich has no
-  rename-tag endpoint at all, unlike Albums/People. So this feature has no Rename action;
-  color is only ever set once, at creation time.
+- ✅ **No rename (as of this round)**: confirmed against Immich's own source
+  (`tag.controller.ts`/`tag.dto.ts`) that `PUT /tags/{id}` (`updateTag`) accepted *only*
+  `color`, not `name` at the time this was built — so this feature has no Rename action;
+  color is only ever set once, at creation time. **Now stale**: Immich v3.2.0's
+  `TagUpdateDto` gained a `name` field (shipped alongside the #23915-shaped fix below, via
+  a separate PR — "feat(web): tag renaming v2", #27909), so `PUT /tags/{id}` can rename a
+  tag today. BrightTable doesn't build a Rename UI for it yet — that's new scope, not part
+  of un-disabling Add to Tag below.
 - ✅ **Flat list, not a tree**: Immich tags can be hierarchical (`parentId`, with `value`
   being the full `"Parent/Child"` path and `name` just the leaf). BrightTable deliberately
   treats tags as one flat, alphabetically-sorted list using `value` (exposed to the frontend
@@ -2300,6 +2314,48 @@
   live count from `TagsBrowser`'s `onCount` callback (count of *tags*, not photos — matches
   Albums'/People's "count of items in this collection" convention for the sidebar row, not
   the deliberately-omitted per-tag photo count above).
+- ✅ **"Add to Tag" re-enabled (September 2026)** — the confirmed Immich server-side bug
+  (`PUT /tags/{id}/assets` reported success but didn't durably persist the tag↔asset link,
+  tracked upstream as immich-app/immich#23915, also #17165/#14194) traced to `createTag` not
+  populating the `tag_closure` table, so a newly-created tag's own closure row was missing
+  and any lookup walking that table (search-by-tag, browsing a tag) came up empty even
+  though the direct tag↔asset link existed — matching #23915's exact symptom. Fixed
+  server-side by immich-app/immich@1b3aa9c ("fix(server): correct tag create operations",
+  PR #30877), shipped in v3.2.0; user upgraded and `lib/featureFlags.ts`'s
+  `TAG_ASSIGN_DISABLED_REASON` is nulled. (#23915 itself is still shown open upstream — the
+  fix wasn't linked to it via a closing keyword — so this isn't 100%-certified, but the root
+  cause matches exactly; re-disable the constant if assignment turns out not to persist.)
+  No API shape changed for any `/tags` endpoint across this — every request/response DTO is
+  identical to before the fix, this was purely a server-side data bug.
+- ✅ **Add to Tag promoted to its own SelectionBar button**: restored to a dedicated
+  `primary`-group button rendered right after Favorite (`lib/actionMenu.ts`'s `primary`
+  group, previously unused since the "So Fresh and So Clean" refactor moved Add to Tag into
+  the Organize dropdown) rather than living only in Organize — matches how it worked
+  pre-refactor. Each of the six browser pages' `addToTag` `MenuAction` changed from
+  `group: 'organize'` to `group: 'primary'`; the context-menu entry (a separate flat
+  `ContextMenuItem[]` per page, not the `MenuAction` system) was already present and
+  un-greys automatically now that the constant is null. `Viewer.tsx`'s own keydown handler
+  was also missing an `addToTag` case (the shortcut only fired from the grid pages, not the
+  single-photo view) — added, calling `onAddToTag` the same way the grid pages call
+  `setAddToTagTargets`.
+- ✅ **Untag from the metadata panel's Tags pills** — `MetadataRows.tsx`'s read-only Tags
+  row (used by both `MetadataPanel.tsx` and `Viewer.tsx`'s info panel) previously had no way
+  to remove a tag, even though Tags' own detail view already supported delete. Each pill now
+  gets a small circular ✕ to the right of the name (shown whenever `onEdit` is provided, same
+  gating as the Rating/Favorite rows) that calls `untagAssets` and removes the pill
+  optimistically, reverting via a re-fetch if the call fails. Untag isn't gated by
+  `TAG_ASSIGN_DISABLED_REASON` (assignment-only, see above) so this needed no flag check.
+- ✅ **Metadata panel tags now stay live** — `MetadataRows.tsx`'s tags fetch only re-ran when
+  `assetId` itself changed, so assigning a tag via `AddToTagDialog` (or removing one via
+  TagsBrowser's Remove from Tag, or the ✕ above) to the *currently shown* asset left an
+  already-open panel (Viewer's info panel, the grid's Metadata panel) showing stale tags
+  until the asset was reselected or the app reloaded - same class of problem
+  `lib/imageVersion.ts` already solved for post-rotate thumbnail staleness. New
+  `lib/tagsVersion.ts` mirrors that module's per-asset-id version-bump/subscribe pattern;
+  `useAssetTags`'s fetch effect now also depends on `useTagsVersion(assetId)`, and all three
+  tag<->asset mutation sites (`AddToTagDialog`'s Assign, `MetadataRows`' own removeTag,
+  TagsBrowser's removeFromTag) call `bumpTagsVersion` after their API call, so every open
+  panel for that asset re-fetches - not just the one the action happened in.
 
 ### 7.30 Multi-tool RAW roundtrip: RawTherapee + DarkTable (both real, August 2026)
 > §7.25's ART CLI round trip was written ART-specific throughout — module names (`art.rs`,
@@ -2498,7 +2554,8 @@
   `SecretVault::open` moved off the main thread). Merged via `4980a6c`.
 - ✅ **`78fda92` (v1.0.3) — "flatpak support, custom config folder"** (What changed:
   1.0.1 → 1.0.3): **AppImage dropped** — BrightTable ships Flatpak-only now, with a
-  simplified README install guide (§2.1). Settings folder / shared vault can now be moved
+  simplified README install guide (§2.1; **superseded by `3863504`/§7.37**, which adds a
+  native Arch `PKGBUILD` alongside the Flatpak). Settings folder / shared vault can now be moved
   **while the app is running**, no restart required. Bug fixes: a false "No API key
   configured" flash on screens that loaded before the vault finished opening; the vault
   taking up to ~40s to open/save due to unnecessary encryption overhead, now near-instant;
@@ -2644,3 +2701,115 @@
   processing/RAW-CLI jobs are as much "local background work" as network writes. Mechanical
   plumbing otherwise: both `ActivityIndicator.tsx` and `ActivityPanel.tsx` now sum/list six
   queues instead of five.
+
+### 7.37 Arch Linux packaging: local `PKGBUILD`, version bump to v1.1.1 (September 2026)
+> User request, per the release commit message: "added Arch PKGBUILD based on user
+> request." Single commit, `3863504`.
+- ✅ **`packaging/arch/PKGBUILD`** (new, tagged-release recipe) and
+  **`packaging/arch-git/PKGBUILD`** (new, tracks `main` directly) — both build BrightTable
+  from source and install it natively via `pacman`/`makepkg -si`, no sandbox (unlike the
+  Flatpak, §7.32): no Flatseal step, no `--filesystem=` grants, reads whatever the
+  installing user's account can already access. Not yet published to the AUR — "New account
+  registration for AUR is temporarily closed" per the commit message, so for now this is a
+  clone-and-`makepkg` install only, documented in the new README "Alternative: Arch Linux"
+  section. §2.1 updated accordingly — BrightTable is no longer accurately described as
+  Flatpak-only.
+- ✅ **`.github/workflows/aur-publish.yml`** (new) — CI workflow scaffolded ahead of actual
+  AUR publishing: builds the PKGBUILD in a container, computes the real `sha256sums` via
+  `updpkgsums` (replacing the `SKIP` placeholder), regenerates `.SRCINFO`, and pushes to
+  the AUR git remote. **Deliberately `workflow_dispatch`-only for now, not tag-triggered**
+  — the file's own comment explains the tag-push trigger is commented out because there's
+  no `AUR_SSH_PRIVATE_KEY` secret yet (AUR account registration is closed), so it would
+  fail on every release tag; a guard step re-verifies the pushed tag matches the PKGBUILD's
+  committed `pkgver` regardless of how the run is triggered.
+- ✅ **`app/scripts/bump-version.mjs` grew an Arch-specific step**: on every version bump it
+  now also rewrites `packaging/arch/PKGBUILD`'s `pkgver` to match the new app version
+  (`pkgver` doubles as the literal git tag its `source=` URL fetches) and resets `pkgrel` to
+  `1` (pkgrel only versions *packaging* changes against an unchanged `pkgver`, which don't
+  apply to a version that didn't exist a moment ago). `sha256sums` is deliberately left
+  `SKIP` — it can't be computed until the matching tag is pushed — with a console reminder
+  to run `updpkgsums` from `packaging/arch/` after tagging.
+- ✅ **Version bumped 1.1.0 → 1.1.1** (`app/src-tauri/Cargo.toml`,
+  `io.github.brownphotographic.BrightTable.metainfo.xml`) — packaging-only change, no
+  app-code diff; `COMPATIBILITY.md` gained matching 1.1.0/1.1.1 rows, both against Immich
+  3.1.0 with no compatibility-relevant server-facing change since 1.0.0 (§2.7).
+
+### 7.38 Real icon pass, Add to Tag combo-box, per-tile Tweak Roundtrip (September 2026)
+> Three unrelated small changes bundled into one round the same way §7.36 did. The icon
+> pass is the "revisit if the user wants a real icon pass" item flagged as deliberately
+> skipped back in §7.18 — the two mixed styles (a real Loupe icon next to Info/Filmstrip/
+> Unstack/RAW-editor plain-text buttons) called out there are now unified.
+- ✅ **New shared `components/Icons.tsx`** — a fixed set of Google Material Symbols (filled
+  variant) glyph paths, kept as plain inline SVG `<path>` data (Apache 2.0) rather than
+  pulling in the icon font/npm package, exported as one `Icon({ name, size })` component
+  taking `currentColor` from its surrounding text so it follows the same active/disabled/
+  theme styling as the label beside it. Every toolbar button and nav tab across the app now
+  renders one of these instead of a bespoke hand-drawn shape or a plain color square:
+  - `NavTabs.tsx`'s six tabs swap their `9×9` color-dot square for a tinted Material icon
+    (photos/folder/albums/people/tags/trash) — each tab keeps its existing per-tab tint
+    color so they're still quickly distinguishable at a glance, just applied to an icon now
+    instead of a dot.
+  - `MenuBar.tsx`'s bespoke `LoupeIcon()` (two hand-positioned `<div>`s forming a
+    magnifying glass) is deleted in favor of `<Icon name="loupe">`; the Metadata toggle
+    button gains an icon it previously had none.
+  - `SelectionBar.tsx`'s six `ActionDropdown` triggers (Organize/Stack/Edit/Copy-Paste/
+    Share/More) and its Add to Tag/Move to Trash/Remove-from-Album/Remove-from-Tag inline
+    buttons all gain a leading icon — `ActionDropdown.tsx` grew a new optional `icon`
+    prop (a `ReactNode` rendered before the label) for callers to pass one through.
+  - `Viewer.tsx`'s header row gains icons on every button that lacked one (Back, Unstack,
+    Print, Open in Video Player, Move to Trash, Remove from Album/Tag, Filmstrip, Metadata)
+    and its own hand-drawn Back chevron and loupe glyph are replaced with `Icon` the same
+    way MenuBar's was; its five `ActionDropdown`s (Organize/Edit/Copy-Paste/Share/More) get
+    the same icon prop treatment as SelectionBar's.
+  - `FoldersBrowser.tsx`/`PhotosBrowser.tsx`/`AlbumsBrowser.tsx`/`PeopleBrowser.tsx`/
+    `TagsBrowser.tsx`/`SearchResultsBrowser.tsx` needed no direct changes — they all consume
+    `SelectionBar`/`NavTabs` rather than building their own dropdown chrome.
+- ✅ **New `--icon-filled` CSS variable** (`index.css`, both themes) — `MetadataRows.tsx`'s
+  Favorite heart and Rating stars switched their filled-in color from `var(--text)` to this
+  new token (white in dark mode, `#3a3a3a` in light mode) so they read clearly against the
+  metadata panel's Tags pills below, which moved to a fixed-dark-chip look regardless of
+  theme (see next bullet) — `var(--text)` would have gone low-contrast against a light-mode
+  background otherwise.
+- ✅ **Metadata panel Tags pills restyled** — `MetadataRows.tsx`'s tag pills (Viewer's info
+  panel and the grid's Metadata panel; not TagsBrowser's own list, which is unaffected)
+  switched from a theme-following `var(--overlay-medium)` background to a fixed `#3a3a3a`/
+  white-text chip, matching the user's ask for a pill that stays legible regardless of
+  light/dark theme rather than going low-contrast in light mode; the per-tag color dot's
+  fallback (when a tag has no `color`) changed from `var(--text-dimmer)` to white to match.
+- ✅ **`AddToTagDialog.tsx` reworked into a single autocomplete combo box** — the previous
+  two-box layout (a "Search tags…" filter box above a separate "New tag name…" + Add button
+  row) is now one "Enter tag…" box that does both jobs:
+  - Typing filters the tag list below (old search behavior) while also live-computing an
+    `exactMatch` (case-insensitive) against existing tags — needed because Immich's
+    `POST /tags` 400s on a name that already exists, and "no tag currently on this asset"
+    doesn't mean the tag object itself is gone (Remove from Tag/the metadata panel's ✕ only
+    delete the asset↔tag *link*, never the tag). An exact match flips the trailing button
+    from **New** (queue a create) to **Add** (queue the existing tag by id) and hides the
+    color-swatch picker, since color only means anything for a tag being created.
+  - A ghost-text **autocomplete suggestion** — the first (alphabetically) existing tag whose
+    name starts with what's typed — renders as dim trailing text layered under the real
+    input (`comboWrapperStyle`/`comboInputStyle`/`ghostTextStyle`, an absolutely-positioned
+    stack so the ghost and real text line up exactly) rather than being written into the
+    input's actual value. Deliberately never mutates the input value/selection itself —
+    an earlier version of this idea that forced the full suggestion into the box and
+    async-reselected the typed prefix raced against real typing (worse with more candidates,
+    since the top match could flip mid-keystroke) and could leave stray/duplicated
+    characters; the ghost-text-only approach can't race because it never touches the input.
+  - **Tab** accepts the ghost suggestion into the box (without submitting it) rather than
+    moving focus, matching a browser address bar's autocomplete convention; it only hijacks
+    Tab when a suggestion actually exists, so normal focus-tabbing still works otherwise.
+  - **Enter** with text in the box adds/creates it (same as clicking Add/New); Enter on an
+    *empty* box with something already queued instead finishes up (same as clicking Assign),
+    so it's never possible to accidentally trigger Assign while a typed name still sits
+    unsubmitted.
+  - The dialog's stale doc-comment about being "currently unreachable" behind
+    `TAG_ASSIGN_DISABLED_REASON` is removed, matching Add to Tag's re-enabling (§7.29).
+- ✅ **Per-tile "Tweak Roundtrip" added to the right-click context menu** (`PhotosBrowser.tsx`/
+  `FoldersBrowser.tsx` only — Albums/People/Tags/Search Results deliberately don't have it,
+  same as they already lacked Headless Roundtrip) — right-clicking a single RAW/JPEG-eligible
+  asset (`isRoundTripEligible`) now offers "Tweak Roundtrip" directly, without first needing
+  to select it and reach the SelectionBar's Edit ▾ dropdown. Implemented by factoring the
+  launch/round-trip logic out of `launchEditorForSelection` (which read `selectedAssets[0]`
+  directly) into a new `launchEditorForAsset(asset, role)` that both the context menu and
+  `launchEditorForSelection` now call — no behavior change for the existing selection-based
+  entry points, just a shared implementation for the new per-tile one.

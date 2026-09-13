@@ -40,6 +40,11 @@
   --overlay-medium: rgba(255, 255, 255, 0.12);
   --overlay-strong: rgba(255, 255, 255, 0.18);
   --scrim: rgba(0, 0, 0, 0.5);
+  /* A filled/selected icon's solid color (MetadataRows.tsx's Favorite heart
+     and Rating stars) - white here since #3a3a3a (the fixed dark chip color
+     those match in light mode, e.g. the Tags pills) would be nearly
+     invisible against this theme's dark surfaces. */
+  --icon-filled: #ffffff;
   color-scheme: dark;
   /* See the .window-frame rule below - kept as a variable (not baked into
      that rule) so the margin, and every fixed-position overlay's `inset`,
@@ -76,6 +81,7 @@
   --overlay-medium: rgba(0, 0, 0, 0.08);
   --overlay-strong: rgba(0, 0, 0, 0.14);
   --scrim: rgba(0, 0, 0, 0.35);
+  --icon-filled: #3a3a3a;
   color-scheme: light;
 }
 

@@ -36,7 +36,7 @@ pub struct ServerVersion {
 /// to connect below it - just the honest boundary of what's actually been
 /// tested, surfaced as a warning in Preferences -> Library rather than
 /// silently leaving the user to wonder why something behaves oddly.
-pub const MIN_TESTED_SERVER_VERSION: (u32, u32, u32) = (3, 1, 0);
+pub const MIN_TESTED_SERVER_VERSION: (u32, u32, u32) = (3, 2, 0);
 
 impl ServerVersion {
     pub fn display(&self) -> String {

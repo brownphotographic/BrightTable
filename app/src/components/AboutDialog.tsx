@@ -24,7 +24,7 @@ const REPO_URL = 'https://github.com/brownphotographic/BrightTable';
 // Kept in sync by hand with COMPATIBILITY.md's row for the current app
 // version (and MIN_TESTED_SERVER_VERSION in immich/models.rs for the floor)
 // - there's no runtime channel to read either from the frontend.
-const TESTED_SERVER_VERSIONS = '3.1.0 (floor and confirmed)';
+const TESTED_SERVER_VERSIONS = '3.2.0 (floor and confirmed)';
 
 // Cargo.toml (and therefore getVersion()) must carry a full semver x.y.z,
 // but a trailing ".0" patch reads as noise in the UI - "1.1" not "1.1.0".

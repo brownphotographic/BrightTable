@@ -40,6 +40,7 @@ import { formatDims, formatSize } from '../lib/exifFormat';
 import MetadataRows, { Star } from './MetadataRows';
 import ConfirmDialog from './ConfirmDialog';
 import ActionDropdown from './ActionDropdown';
+import { Icon } from './Icons';
 import { groupActions, type MenuAction } from '../lib/actionMenu';
 import { isTypingTarget, matchesShortcut, useShortcuts } from '../lib/shortcuts';
 import { overlayRawOverrides, useRawOverrides } from '../lib/rawOverrides';
@@ -679,6 +680,7 @@ const Viewer = forwardRef<ViewerHandle, {
       else if (matchesShortcut(e, shortcuts.toggleFilmstrip)) setFilmstripOpen((v) => !v);
       else if (matchesShortcut(e, shortcuts.loupe)) setLoupeOn((v) => !v);
       else if (matchesShortcut(e, shortcuts.favorite)) handleEdit(shown.id, { isFavorite: !shown.isFavorite }).catch(() => {});
+      else if (matchesShortcut(e, shortcuts.addToTag) && onAddToTag && !TAG_ASSIGN_DISABLED_REASON) onAddToTag(shown.id);
       else if (matchesShortcut(e, shortcuts.copyMetadata)) handleCopyMetadata();
       else if (matchesShortcut(e, shortcuts.pasteMetadata) && copiedMetadata) handlePasteMetadata();
       else if (matchesShortcut(e, shortcuts.copyImageProcessing) && isRawAsset(shown)) handleCopyImageProcessing();
@@ -714,6 +716,7 @@ const Viewer = forwardRef<ViewerHandle, {
     shown,
     isVideo,
     onEdit,
+    onAddToTag,
     handleEdit,
     handleLaunch,
     artBusy,
@@ -937,15 +940,7 @@ const Viewer = forwardRef<ViewerHandle, {
             cursor: 'default',
           }}
         >
-          <div
-            style={{
-              width: 8,
-              height: 8,
-              borderLeft: '1.8px solid var(--text)',
-              borderBottom: '1.8px solid var(--text)',
-              transform: 'rotate(45deg)',
-            }}
-          />
+          <Icon name="back" size={15} />
           Back
         </div>
         <div style={{ minWidth: 0 }}>
@@ -960,25 +955,38 @@ const Viewer = forwardRef<ViewerHandle, {
         <div style={{ flex: 1 }} />
         {onUnstack && (
           <div onClick={() => onUnstack().catch(() => {})} style={headerButtonStyle(false)}>
+            <Icon name="unstack" size={15} />
             Unstack
           </div>
         )}
         {onPrint && !isRawAsset(shown) && !isVideo && (
           <div onClick={() => onPrint(shown)} style={headerButtonStyle(false)}>
+            <Icon name="print" size={15} />
             Print
           </div>
         )}
         {isVideo && shown.originalPath && (
           <div onClick={handleOpenInVideoPlayer} style={headerButtonStyle(false)}>
+            <Icon name="video" size={15} />
             Open in Video Player
           </div>
         )}
         {hasDropdownActions && <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />}
-        {menuGroups.organize.length > 0 && <ActionDropdown variant="plain" label="Organize" actions={menuGroups.organize} />}
-        {menuGroups.edit.length > 0 && <ActionDropdown variant="plain" label="Edit" actions={menuGroups.edit} />}
-        {menuGroups.copyPaste.length > 0 && <ActionDropdown variant="plain" label="Copy/Paste" actions={menuGroups.copyPaste} />}
-        {menuGroups.share.length > 0 && <ActionDropdown variant="plain" label="Share" actions={menuGroups.share} />}
-        {menuGroups.more.length > 0 && <ActionDropdown variant="plain" label="More" actions={menuGroups.more} />}
+        {menuGroups.organize.length > 0 && (
+          <ActionDropdown variant="plain" label="Organize" icon={<Icon name="organize" size={15} />} actions={menuGroups.organize} />
+        )}
+        {menuGroups.edit.length > 0 && (
+          <ActionDropdown variant="plain" label="Edit" icon={<Icon name="edit" size={15} />} actions={menuGroups.edit} />
+        )}
+        {menuGroups.copyPaste.length > 0 && (
+          <ActionDropdown variant="plain" label="Copy/Paste" icon={<Icon name="copyPaste" size={15} />} actions={menuGroups.copyPaste} />
+        )}
+        {menuGroups.share.length > 0 && (
+          <ActionDropdown variant="plain" label="Share" icon={<Icon name="share" size={15} />} actions={menuGroups.share} />
+        )}
+        {menuGroups.more.length > 0 && (
+          <ActionDropdown variant="plain" label="More" icon={<Icon name="more" size={15} />} actions={menuGroups.more} />
+        )}
         {rotateError && (
           <div style={{ fontSize: 11.5, color: 'var(--danger)', maxWidth: 220, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={rotateError}>
             {rotateError}
@@ -991,15 +999,18 @@ const Viewer = forwardRef<ViewerHandle, {
         )}
         <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />
         <div onClick={() => setConfirmDelete(true)} style={destructiveButtonStyle()}>
+          <Icon name="trash" size={15} />
           Move to Trash
         </div>
         {onRemoveFromAlbum && (
           <div onClick={() => setConfirmRemove('album')} style={destructiveButtonStyle()}>
+            <Icon name="remove" size={15} />
             Remove from Album
           </div>
         )}
         {onRemoveFromTag && (
           <div onClick={() => setConfirmRemove('tag')} style={destructiveButtonStyle()}>
+            <Icon name="remove" size={15} />
             Remove from Tag
           </div>
         )}
@@ -1061,18 +1072,17 @@ const Viewer = forwardRef<ViewerHandle, {
             </div>
             <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />
             <div onClick={() => setLoupeOn((v) => !v)} style={headerButtonStyle(loupeOn)}>
-              <div style={{ position: 'relative', width: 13, height: 13, flexShrink: 0 }}>
-                <div style={{ position: 'absolute', left: 0, top: 0, width: 9, height: 9, border: '1.7px solid currentColor', borderRadius: '50%' }} />
-                <div style={{ position: 'absolute', left: 8, top: 8, width: 5, height: 1.7, background: 'currentColor', borderRadius: 1, transformOrigin: 'left center', transform: 'rotate(45deg)' }} />
-              </div>
+              <Icon name="loupe" size={15} />
               Loupe
             </div>
           </>
         )}
         <div onClick={() => setFilmstripOpen((v) => !v)} style={headerButtonStyle(filmstripOpen)}>
+          <Icon name="filmstrip" size={15} />
           Filmstrip
         </div>
         <div onClick={() => setInfoOpen((v) => !v)} style={headerButtonStyle(infoOpen)}>
+          <Icon name="info" size={15} />
           Metadata
         </div>
       </div>

@@ -15,8 +15,9 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { createTag, listTags, tagAssets, type TagSummary } from '../lib/api';
+import { bumpTagsVersion } from '../lib/tagsVersion';
 
 // Small fixed palette for the "New tag" create row - Immich's TagCreateDto
 // accepts any hex color, but a free-form color picker is more UI than this
@@ -45,14 +46,6 @@ interface PendingNewTag {
 // row queues a not-yet-created tag the same way - so Cancel (or the ✕, or
 // clicking outside) truly does nothing at all, matching AlbumsBrowser's
 // "nothing happens until you confirm" convention elsewhere in this app.
-//
-// Currently unreachable in practice: every entry point that would open this
-// (SelectionBar's button, each browser's context-menu item, the `addToTag`
-// shortcut) is greyed out/disabled via TAG_ASSIGN_DISABLED_REASON (see
-// lib/featureFlags.ts) because of a known Immich server-side bug where tag
-// assignment reports success but doesn't persist - not a bug in this dialog
-// or in tagAssets/createTag below. Once that constant is nulled out (fixed
-// upstream), this component itself needs no changes.
 export default function AddToTagDialog({
   assetIds,
   onClose,
@@ -64,8 +57,10 @@ export default function AddToTagDialog({
 }) {
   const [tags, setTags] = useState<TagSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [newName, setNewName] = useState('');
+  // Doubles as both "search" (filters the list below) and "new tag name" -
+  // there's only the one box now; which of those it means is decided by
+  // whether it exactly matches an existing tag (see `exactMatch` below).
+  const [query, setQuery] = useState('');
   const [newColor, setNewColor] = useState<string | null>(null);
   const [pendingExisting, setPendingExisting] = useState<Set<string>>(new Set());
   const [pendingNew, setPendingNew] = useState<PendingNewTag[]>([]);
@@ -78,12 +73,41 @@ export default function AddToTagDialog({
       .catch((e) => setError(String(e)));
   }, []);
 
+  const trimmedQuery = query.trim();
+
   const filtered = useMemo(() => {
     if (!tags) return [];
-    const q = search.trim().toLowerCase();
+    const q = trimmedQuery.toLowerCase();
     if (!q) return tags;
     return tags.filter((t) => t.name.toLowerCase().includes(q));
-  }, [tags, search]);
+  }, [tags, trimmedQuery]);
+
+  // Immich rejects POST /tags for a name that already exists (case-
+  // insensitively) with a 400 - easy to hit here since "no tag on this
+  // image" only means nothing's *assigned*, not that the tag itself is gone
+  // (deleting a tag from an asset via Remove from Tag/the metadata panel's
+  // ✕ never deletes the tag object, only the link). Rather than let that
+  // 400 happen, an exact (case-insensitive) match flips the box into
+  // "select the existing tag" mode - see the Add/New button below.
+  const exactMatch = useMemo(
+    () => (trimmedQuery ? tags?.find((t) => t.name.toLowerCase() === trimmedQuery.toLowerCase()) : undefined),
+    [tags, trimmedQuery],
+  );
+
+  // Ghost-text completion candidate for the box - the first (tags are
+  // alphabetical) existing tag whose name starts with what's typed so far,
+  // shown as dim trailing text rather than written into the input itself
+  // (see the render below). Never mutates `query`/the input's value or
+  // selection, unlike an earlier version of this that tried to - forcing the
+  // box's actual value to the full suggestion and asynchronously
+  // re-selecting the tail raced against real typing (worse the more
+  // candidates existed, since the top match could flip between different
+  // tags keystroke to keystroke) and could leave stray/duplicated
+  // characters behind. Purely cosmetic here, so no such race is possible.
+  const suggestion = useMemo(
+    () => (query && !exactMatch ? tags?.find((t) => t.name.toLowerCase().startsWith(query.toLowerCase())) : undefined),
+    [tags, query, exactMatch],
+  );
 
   const count = assetIds.length;
   const totalPending = pendingExisting.size + pendingNew.length;
@@ -97,12 +121,41 @@ export default function AddToTagDialog({
     });
   }
 
-  function handleQueueNewTag() {
-    const name = newName.trim();
-    if (!name) return;
-    nextTempId.current += 1;
-    setPendingNew((p) => [...p, { tempId: `new-${nextTempId.current}`, name, color: newColor }]);
-    setNewName('');
+  function handleQueryKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Tab' && suggestion) {
+      // Accepts the ghost suggestion into the box (doesn't submit it - Enter
+      // or the Add button, now showing since this makes it an exact match,
+      // still does that) rather than tabbing focus away, same convention as
+      // a browser address bar/most other inline-autocomplete fields. Only
+      // hijacks Tab when there's actually a suggestion to accept, so it
+      // still moves focus normally otherwise.
+      e.preventDefault();
+      setQuery(suggestion.name);
+      return;
+    }
+    if (e.key === 'Enter') {
+      // An empty box with something already queued means Enter is finishing
+      // up, not adding yet another tag - matches Assign's own button, which
+      // only needs totalPending > 0. A non-empty box still adds/creates
+      // first (same as before), so it's never possible to accidentally
+      // Assign while a typed name is sitting unsubmitted in the box.
+      if (!trimmedQuery && totalPending > 0 && !assigning) handleAssign();
+      else handleSubmit();
+    }
+  }
+
+  // Add (existing tag matched) or New (no match - queue a create), same
+  // logic either way: land in "to assign" and clear the box for the next
+  // tag.
+  function handleSubmit() {
+    if (!trimmedQuery) return;
+    if (exactMatch) {
+      setPendingExisting((s) => new Set(s).add(exactMatch.id));
+    } else {
+      nextTempId.current += 1;
+      setPendingNew((p) => [...p, { tempId: `new-${nextTempId.current}`, name: trimmedQuery, color: newColor }]);
+    }
+    setQuery('');
     setNewColor(null);
   }
 
@@ -117,6 +170,11 @@ export default function AddToTagDialog({
         ...created.map((t) => ({ id: t.id, name: t.name })),
       ];
       await Promise.all(targets.map((t) => tagAssets(t.id, assetIds)));
+      // Lets any already-open MetadataRows panel for one of these assets
+      // (Viewer's info panel, the grid's Metadata panel) pick up the new
+      // tag immediately instead of showing stale data until reselected -
+      // see lib/tagsVersion.ts.
+      assetIds.forEach(bumpTagsVersion);
       for (const t of targets) onAdded?.(t.id, t.name);
       onClose();
     } catch (e) {
@@ -166,41 +224,50 @@ export default function AddToTagDialog({
         </div>
 
         <div style={{ flexShrink: 0, padding: '14px 18px 12px', borderBottom: '1px solid rgba(0,0,0,0.3)' }}>
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tags…" style={inputStyle} />
-        </div>
-
-        <div style={{ flexShrink: 0, padding: '12px 18px', borderBottom: '1px solid rgba(0,0,0,0.3)' }}>
           <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleQueueNewTag();
-              }}
-              placeholder="New tag name…"
-              style={inputStyle}
-            />
-            <button onClick={handleQueueNewTag} disabled={!newName.trim()} style={btnPrimary(!!newName.trim())}>
-              Add
-            </button>
-          </div>
-          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-            {TAG_COLORS.map((c) => (
-              <div
-                key={c}
-                onClick={() => setNewColor(newColor === c ? null : c)}
-                title={c}
-                style={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: '50%',
-                  background: c,
-                  cursor: 'default',
-                  boxShadow: newColor === c ? '0 0 0 2px var(--dialog-bg), 0 0 0 4px var(--border-strong)' : '0 0 0 1px var(--border-strong)',
-                }}
+            <div style={comboWrapperStyle}>
+              {suggestion && (
+                <div aria-hidden style={ghostTextStyle}>
+                  <span style={{ visibility: 'hidden' }}>{query}</span>
+                  <span style={{ color: 'var(--text-dimmer)' }}>{suggestion.name.slice(query.length)}</span>
+                </div>
+              )}
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleQueryKeyDown}
+                placeholder="Enter tag…"
+                style={comboInputStyle}
+                autoFocus
               />
-            ))}
+            </div>
+            {trimmedQuery && (
+              <button onClick={handleSubmit} style={btnPrimary(true)}>
+                {exactMatch ? 'Add' : 'New'}
+              </button>
+            )}
           </div>
+          {/* Color only means anything for a tag about to be created - an
+              existing match already has one. */}
+          {trimmedQuery && !exactMatch && (
+            <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+              {TAG_COLORS.map((c) => (
+                <div
+                  key={c}
+                  onClick={() => setNewColor(newColor === c ? null : c)}
+                  title={c}
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: '50%',
+                    background: c,
+                    cursor: 'default',
+                    boxShadow: newColor === c ? '0 0 0 2px var(--dialog-bg), 0 0 0 4px var(--border-strong)' : '0 0 0 1px var(--border-strong)',
+                  }}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         {totalPending > 0 && (
@@ -228,7 +295,7 @@ export default function AddToTagDialog({
           {!tags && !error && <div style={{ padding: '20px 8px', color: 'var(--text-dimmer)', fontSize: 13 }}>Loading tags…</div>}
           {tags && filtered.length === 0 && (
             <div style={{ padding: '20px 8px', color: 'var(--text-dimmer)', fontSize: 13 }}>
-              {tags.length === 0 ? 'No tags yet — add one above.' : 'No tags match your search.'}
+              {tags.length === 0 ? 'No tags yet — add one above.' : 'No tags match.'}
             </div>
           )}
           {filtered.map((t) => {
@@ -322,6 +389,43 @@ const inputStyle: CSSProperties = {
   borderRadius: 9,
   color: 'var(--text)',
   fontSize: 13,
+};
+
+// The ghost-suggestion box (Enter tag…) carries the same visual chrome as
+// inputStyle, but on a wrapper - the ghost text and the real input both sit
+// inside it as absolutely-positioned layers so their text lines up exactly,
+// see the render above.
+const comboWrapperStyle: CSSProperties = {
+  ...inputStyle,
+  position: 'relative',
+  padding: 0,
+};
+
+const comboInputStyle: CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  width: '100%',
+  height: '100%',
+  padding: '0 12px',
+  background: 'transparent',
+  border: 'none',
+  borderRadius: 9,
+  color: 'var(--text)',
+  fontSize: 13,
+  boxSizing: 'border-box',
+};
+
+const ghostTextStyle: CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  display: 'flex',
+  alignItems: 'center',
+  padding: '0 12px',
+  fontSize: 13,
+  whiteSpace: 'pre',
+  overflow: 'hidden',
+  pointerEvents: 'none',
+  boxSizing: 'border-box',
 };
 
 const btnBase: CSSProperties = {

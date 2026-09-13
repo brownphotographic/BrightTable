@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { MenuAction } from '../lib/actionMenu';
 
 // A button that opens a small popup list of MenuActions on click - used by
@@ -26,10 +27,16 @@ import type { MenuAction } from '../lib/actionMenu';
 // inventing a second style for "a list of clickable labels".
 export default function ActionDropdown({
   label,
+  icon,
   actions,
   variant = 'dark',
 }: {
   label: string;
+  // Rendered before the label on the trigger button - callers pass an
+  // `<Icon name=.../>` so every dropdown trigger gets the same icon+label
+  // treatment as the app's other toolbar buttons, instead of some having an
+  // icon and others just text.
+  icon?: ReactNode;
   actions: MenuAction[];
   // 'dark' (default) is SelectionBar's always-dark-bar look (hardcoded white-on-rgba).
   // 'plain' follows the app's light/dark theme via CSS vars instead - for use in a
@@ -83,6 +90,7 @@ export default function ActionDropdown({
           cursor: 'default',
         }}
       >
+        {icon}
         {label}
         <div
           style={{

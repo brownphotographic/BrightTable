@@ -18,6 +18,7 @@
 import type { ReactNode } from 'react';
 import { Heart, RejectIcon, Star } from './MetadataRows';
 import ActionDropdown from './ActionDropdown';
+import { Icon } from './Icons';
 import { groupActions, type MenuAction } from '../lib/actionMenu';
 
 // Floating action bar shown above the grid whenever the selection is
@@ -34,10 +35,11 @@ import { groupActions, type MenuAction } from '../lib/actionMenu';
 // stays a fixed handful of controls instead of one button per action
 // wrapping to multiple lines - see the design discussion this replaced the
 // old named-prop version for. `primary` is for anything that should stay an
-// inline button rather than nest in a dropdown (nothing currently uses it -
-// Add to Album/Add to Tag moved into the `organize` group - but the slot
-// stays available); `destructive` actions (Move to Trash, Remove from
-// Album/Tag) stay trailing inline buttons in the danger color.
+// inline button rather than nest in a dropdown - Add to Tag uses it (each
+// page's `addToTag` MenuAction) so it renders right after Favorite the same
+// way it did before this refactor, rather than buried in the Organize
+// dropdown; `destructive` actions (Move to Trash, Remove from Album/Tag)
+// stay trailing inline buttons in the danger color.
 export default function SelectionBar({
   count,
   onCancel,
@@ -102,19 +104,21 @@ export default function SelectionBar({
       </BarButton>
       {groups.primary.map((action) => (
         <BarButton key={action.id} onClick={action.onClick} disabled={action.disabled} title={action.disabledReason}>
+          <Icon name="tags" size={14} />
           {action.label}
         </BarButton>
       ))}
       {hasDropdowns && <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)' }} />}
-      {groups.organize.length > 0 && <ActionDropdown label="Organize" actions={groups.organize} />}
-      {groups.stack.length > 0 && <ActionDropdown label="Stack" actions={groups.stack} />}
-      {groups.edit.length > 0 && <ActionDropdown label="Edit" actions={groups.edit} />}
-      {groups.copyPaste.length > 0 && <ActionDropdown label="Copy/Paste" actions={groups.copyPaste} />}
-      {groups.share.length > 0 && <ActionDropdown label="Share" actions={groups.share} />}
-      {groups.more.length > 0 && <ActionDropdown label="More" actions={groups.more} />}
+      {groups.organize.length > 0 && <ActionDropdown label="Organize" icon={<Icon name="organize" size={14} />} actions={groups.organize} />}
+      {groups.stack.length > 0 && <ActionDropdown label="Stack" icon={<Icon name="unstack" size={14} />} actions={groups.stack} />}
+      {groups.edit.length > 0 && <ActionDropdown label="Edit" icon={<Icon name="edit" size={14} />} actions={groups.edit} />}
+      {groups.copyPaste.length > 0 && <ActionDropdown label="Copy/Paste" icon={<Icon name="copyPaste" size={14} />} actions={groups.copyPaste} />}
+      {groups.share.length > 0 && <ActionDropdown label="Share" icon={<Icon name="share" size={14} />} actions={groups.share} />}
+      {groups.more.length > 0 && <ActionDropdown label="More" icon={<Icon name="more" size={14} />} actions={groups.more} />}
       <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)' }} />
       {groups.destructive.map((action) => (
         <BarButton key={action.id} onClick={action.onClick} disabled={action.disabled} title={action.disabledReason} color="#ff8080">
+          <Icon name={action.id === 'moveToTrash' ? 'trash' : 'remove'} size={14} />
           {action.label}
         </BarButton>
       ))}
