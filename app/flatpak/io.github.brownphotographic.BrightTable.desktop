@@ -6,3 +6,4 @@ Exec=brighttable %U
 Icon=io.github.brownphotographic.BrightTable
 Categories=Graphics;Photography;
 Terminal=false
+StartupWMClass=brighttable

@@ -11,3 +11,11 @@ scan-secrets.sh
 # .../Documents/BrightTable) - never intentional repo content.
 secrets.key
 secrets.stronghold*
+
+# makepkg build byproducts (packaging/arch/) - source download, extracted
+# tree, staged package dir, and built artifacts. Never intentional repo
+# content; `makepkg -si` regenerates these from PKGBUILD every time.
+packaging/arch/pkg/
+packaging/arch/src/
+packaging/arch/*.tar.gz
+packaging/arch/*.pkg.tar.zst
