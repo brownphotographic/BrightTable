@@ -176,3 +176,18 @@ console.log(
 );
 
 console.log("Remember to also add a row for this build to COMPATIBILITY.md by hand.");
+
+// Order matters here and is easy to get backwards: `git tag` snapshots
+// whatever the last *commit* was, not your working directory or whatever
+// this script just wrote to disk. Tag before committing and the tag silently
+// points at the previous release's commit instead - which is exactly what
+// happened to produce a "v1.2.1" tag whose source was actually still 1.2.0.
+console.log(
+  `\nRelease checklist (commit/push BEFORE tagging - see PKGBUILD's tag-naming note):\n` +
+    `  1. Build/test as needed - the Flatpak build reads this working tree directly, no tag required.\n` +
+    `  2. git add -u && git commit -m "${nextVersion}"\n` +
+    `  3. git push origin main\n` +
+    `  4. git tag ${nextVersion} && git push origin ${nextVersion}   # NOW it points at the real commit\n` +
+    `  5. cd packaging/arch && updpkgsums   # only resolves once step 4's tag is live on GitHub\n` +
+    `  6. git commit -am "${nextVersion}: real sha256sum" && git push origin main\n`,
+);

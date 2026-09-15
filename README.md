@@ -1,11 +1,17 @@
 <img src="requirements/BrightTable-icon.svg" width="96" height="96" alt="BrightTable icon" />
 
-# BrightTable // Copyright (C) 2026 Rob Brown
+# BrightTable
 
 **A Digital Light Table for the Linux desktop: Immich + open source RAW editors = BrightTable.**
 
+Copyright (C) 2026 Rob Brown
+
 ![Auto-stacking images](assets/Autostack.gif)
 _above:Auto-stacking images: stacking is performed locally, but synced with Immich via the Immich API. One of the many features of BrightTable._
+
+![BrightTable Explainer](assets/BrightTable-Explainer-1.png)
+
+![BrightTable Explainer - Detail](assets/BrightTable-Explainer-2.png)
 
 ## Summary of features
 
@@ -216,6 +222,35 @@ Then, from `app/`:
   bump also updates the About dialog's compatibility line. Still update
   [COMPATIBILITY.md](COMPATIBILITY.md) by hand afterwards — that part isn't automated.
 - Output lands at `app/src-tauri/target/release/bundle/flatpak/BrightTable_<version>_x86_64.flatpak`.
+
+#### Publishing a release (required for the Arch package to work)
+
+The Flatpak build above needs none of this - it compiles straight from your working tree, tag or no
+tag. `packaging/arch/PKGBUILD` is different: its `source=` downloads a tarball from a **published GitHub
+tag**, never your local checkout. A version only becomes `makepkg -si`-installable once a tag exists
+that points at a commit which actually contains the bump.
+
+The gotcha: `git tag` snapshots whatever the last *commit* was, not your working directory or whatever
+`npm run build:flatpak` just wrote to disk. Tag before committing and the tag silently points at the
+*previous* release's commit instead - e.g. a "1.2.1" tag whose downloaded source is still 1.2.0. So the
+order has to be commit-then-tag, never the reverse:
+
+```bash
+# 1. Bump (npm run build:flatpak) and build/test the Flatpak - no tag needed yet.
+# 2. Commit the bump once you're happy with it.
+git add -u && git commit -m "X.Y.Z"
+git push origin main
+
+# 3. Only now tag the commit that actually has the bump.
+git tag X.Y.Z          # match Cargo.toml exactly - see PKGBUILD's own tag-naming note above
+git push origin X.Y.Z
+
+# 4. The real checksum only resolves once that tag is live on GitHub.
+cd packaging/arch && updpkgsums
+git commit -am "X.Y.Z: real sha256sum" && git push origin main
+```
+
+Also update [COMPATIBILITY.md](COMPATIBILITY.md) by hand - that part isn't automated.
 
 #### Installing your local build
 
