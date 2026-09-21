@@ -1343,6 +1343,14 @@ export interface PrintOptions {
   // fitMode is 'fit'; independently chosen when 'crop'.
   imageWidthIn: number;
   imageHeightIn: number;
+  // Where the crop window sits within the source photo when fitMode is
+  // 'crop' and the photo's aspect doesn't match imageWidthIn/imageHeightIn's
+  // — 0.5 (centered) matches print.rs's own default and is what a payload
+  // that omits these falls back to. 0 pins the crop to the source's
+  // left/top edge, 1 to its right/bottom edge. Ignored (harmless) when
+  // fitMode is 'fit' or no cropping is actually needed.
+  cropOffsetX: number;
+  cropOffsetY: number;
 }
 
 export function printAsset(asset: PrintAssetTarget, options: PrintOptions): Promise<void> {

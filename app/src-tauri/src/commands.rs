@@ -2424,7 +2424,9 @@ pub async fn print_asset(state: State<'_, AppState>, asset: print::PrintAssetTar
     let image_h = options.image_height_in;
     let dpi = options.dpi;
     let fit_mode = options.fit_mode;
-    let composited = tokio::task::spawn_blocking(move || print::composite_for_print(&bytes, paper_w, paper_h, image_w, image_h, dpi, fit_mode))
+    let crop_offset_x = options.crop_offset_x;
+    let crop_offset_y = options.crop_offset_y;
+    let composited = tokio::task::spawn_blocking(move || print::composite_for_print(&bytes, paper_w, paper_h, image_w, image_h, dpi, fit_mode, crop_offset_x, crop_offset_y))
         .await
         .map_err(|e| e.to_string())??;
 

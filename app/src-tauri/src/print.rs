@@ -188,6 +188,22 @@ pub struct PrintOptions {
     /// since `composite_for_print` crops the source to match in that mode.
     pub image_width_in: f64,
     pub image_height_in: f64,
+    /// Where the crop window sits within the source when `fit_mode` is
+    /// `Crop` and the source's aspect doesn't match the target rectangle's -
+    /// `0.5` (the default, and what older/omitted payloads fall back to via
+    /// `serde`'s `default`) reproduces the previous always-centered
+    /// behavior. `0.0` pins the crop to the source's left/top edge, `1.0` to
+    /// its right/bottom edge, matching `crop_to_aspect`'s `x`/`y` derivation.
+    /// Ignored (any value is harmless) when `fit_mode` is `Fit` or the
+    /// aspects already match, since no cropping happens in either case.
+    #[serde(default = "default_crop_offset")]
+    pub crop_offset_x: f64,
+    #[serde(default = "default_crop_offset")]
+    pub crop_offset_y: f64,
+}
+
+fn default_crop_offset() -> f64 {
+    0.5
 }
 
 // ── Paper-size keyword lookup ──────────────────────────────────────────────
@@ -672,12 +688,19 @@ pub async fn submit_print_job(_composited_path: &Path, _options: &PrintOptions) 
 
 // ── Compositing ─────────────────────────────────────────────────────────────
 
-/// Center-crops `img` to exactly `target_aspect` (width/height), trimming
-/// whichever dimension is relatively longer than the target - the source's
-/// own aspect ratio is otherwise left alone (no distortion). A no-op (returns
-/// `img` untouched) when the aspect already matches within floating-point
-/// tolerance.
-fn crop_to_aspect(img: image::DynamicImage, target_aspect: f64) -> image::DynamicImage {
+/// Crops `img` to exactly `target_aspect` (width/height), trimming whichever
+/// dimension is relatively longer than the target - the source's own aspect
+/// ratio is otherwise left alone (no distortion). A no-op (returns `img`
+/// untouched) when the aspect already matches within floating-point
+/// tolerance - `offset_x`/`offset_y` are irrelevant in that case.
+///
+/// `offset_x`/`offset_y` (each clamped to `[0,1]`) place the crop window
+/// within the leftover space on whichever axis actually gets trimmed: `0.5`
+/// centers it (the only behavior before per-photo crop adjustment existed),
+/// `0.0` pins it to the source's left/top edge, `1.0` to its right/bottom
+/// edge. The axis that isn't trimmed ignores its offset, since there's no
+/// leftover space to place it within.
+fn crop_to_aspect(img: image::DynamicImage, target_aspect: f64, offset_x: f64, offset_y: f64) -> image::DynamicImage {
     let (w, h) = (img.width(), img.height());
     let current_aspect = w as f64 / h as f64;
     if (current_aspect - target_aspect).abs() < 1e-6 {
@@ -686,12 +709,14 @@ fn crop_to_aspect(img: image::DynamicImage, target_aspect: f64) -> image::Dynami
     if current_aspect > target_aspect {
         // Relatively wider than the target - crop the left/right edges.
         let new_w = ((h as f64 * target_aspect).round() as u32).clamp(1, w);
-        let x = (w - new_w) / 2;
+        let max_x = w - new_w;
+        let x = (max_x as f64 * offset_x.clamp(0.0, 1.0)).round() as u32;
         img.crop_imm(x, 0, new_w, h)
     } else {
         // Relatively taller than the target - crop the top/bottom edges.
         let new_h = ((w as f64 / target_aspect).round() as u32).clamp(1, h);
-        let y = (h - new_h) / 2;
+        let max_y = h - new_h;
+        let y = (max_y as f64 * offset_y.clamp(0.0, 1.0)).round() as u32;
         img.crop_imm(0, y, w, new_h)
     }
 }
@@ -736,6 +761,8 @@ pub fn composite_for_print(
     image_height_in: f64,
     dpi: u32,
     fit_mode: FitMode,
+    crop_offset_x: f64,
+    crop_offset_y: f64,
 ) -> Result<Vec<u8>, String> {
     let reader = image::ImageReader::new(io::Cursor::new(source_bytes))
         .with_guessed_format()
@@ -760,7 +787,7 @@ pub fn composite_for_print(
     // `object-fit: cover`.
     let img = match fit_mode {
         FitMode::Fit => img,
-        FitMode::Crop => crop_to_aspect(img, image_w as f64 / image_h as f64),
+        FitMode::Crop => crop_to_aspect(img, image_w as f64 / image_h as f64, crop_offset_x, crop_offset_y),
     };
     let resized = img.resize_exact(image_w, image_h, image::imageops::FilterType::Lanczos3).to_rgb8();
 
@@ -1066,7 +1093,17 @@ pub fn composite_test_pattern_for_print(options: &PrintOptions) -> Result<Vec<u8
     encoder.set_pixel_density(image::codecs::jpeg::PixelDensity::dpi(options.dpi.min(u16::MAX as u32) as u16));
     image::DynamicImage::ImageRgb8(pattern).write_with_encoder(encoder).map_err(|e| format!("Could not encode test pattern JPEG: {e}"))?;
 
-    composite_for_print(&src_bytes, options.paper_width_in, options.paper_height_in, options.image_width_in, options.image_height_in, options.dpi, options.fit_mode)
+    composite_for_print(
+        &src_bytes,
+        options.paper_width_in,
+        options.paper_height_in,
+        options.image_width_in,
+        options.image_height_in,
+        options.dpi,
+        options.fit_mode,
+        options.crop_offset_x,
+        options.crop_offset_y,
+    )
 }
 
 #[cfg(test)]
@@ -1290,7 +1327,7 @@ mod tests {
             .write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, 95))
             .unwrap();
 
-        let out = composite_for_print(&src, 4.0, 6.0, 4.0, 6.0, 100, FitMode::Fit).unwrap();
+        let out = composite_for_print(&src, 4.0, 6.0, 4.0, 6.0, 100, FitMode::Fit, 0.5, 0.5).unwrap();
         assert_eq!(extract_pdf_mediabox(&out), (288.0, 432.0)); // 4in x 6in in points
         let decoded = image::load_from_memory(&extract_pdf_jpeg(&out)).unwrap();
         assert_eq!(decoded.width(), 400);
@@ -1311,7 +1348,7 @@ mod tests {
     fn crop_to_aspect_trims_a_relatively_wider_source() {
         // 300x100 (aspect 3.0) cropped to a 1.0 target -> 100x100, centered.
         let img = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(300, 100, image::Rgb([0, 0, 0])));
-        let cropped = crop_to_aspect(img, 1.0);
+        let cropped = crop_to_aspect(img, 1.0, 0.5, 0.5);
         assert_eq!(cropped.width(), 100);
         assert_eq!(cropped.height(), 100);
     }
@@ -1320,7 +1357,7 @@ mod tests {
     fn crop_to_aspect_trims_a_relatively_taller_source() {
         // 100x300 (aspect 0.333) cropped to a 1.0 target -> 100x100.
         let img = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(100, 300, image::Rgb([0, 0, 0])));
-        let cropped = crop_to_aspect(img, 1.0);
+        let cropped = crop_to_aspect(img, 1.0, 0.5, 0.5);
         assert_eq!(cropped.width(), 100);
         assert_eq!(cropped.height(), 100);
     }
@@ -1328,9 +1365,20 @@ mod tests {
     #[test]
     fn crop_to_aspect_is_a_noop_when_already_matching() {
         let img = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(200, 100, image::Rgb([0, 0, 0])));
-        let cropped = crop_to_aspect(img, 2.0);
+        let cropped = crop_to_aspect(img, 2.0, 0.0, 0.0);
         assert_eq!(cropped.width(), 200);
         assert_eq!(cropped.height(), 100);
+    }
+
+    #[test]
+    fn crop_to_aspect_offset_pins_the_crop_to_the_requested_edge() {
+        // 300x100 (aspect 3.0) cropped to a 1.0 target leaves 200px of
+        // horizontal slack - offset 0.0 keeps the left 100px, 1.0 the right.
+        let img = || image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(300, 100, |x, _y| if x < 100 { image::Rgb([255, 0, 0]) } else { image::Rgb([0, 0, 255]) }));
+        let left = crop_to_aspect(img(), 1.0, 0.0, 0.5).get_pixel(0, 0);
+        assert!(left[0] > 200 && left[2] < 50, "expected offset 0.0 to keep the red left edge, got {left:?}");
+        let right = crop_to_aspect(img(), 1.0, 1.0, 0.5).get_pixel(0, 0);
+        assert!(right[2] > 200 && right[0] < 50, "expected offset 1.0 to keep the blue right edge, got {right:?}");
     }
 
     #[test]
@@ -1340,7 +1388,7 @@ mod tests {
         // is the image, no letterboxing), unlike Fit mode which would only
         // reach that size on one axis.
         let src = encode_solid_jpeg(600, 900);
-        let out = composite_for_print(&src, 5.0, 7.0, 5.0, 7.0, 100, FitMode::Crop).unwrap();
+        let out = composite_for_print(&src, 5.0, 7.0, 5.0, 7.0, 100, FitMode::Crop, 0.5, 0.5).unwrap();
         let decoded = image::load_from_memory(&extract_pdf_jpeg(&out)).unwrap();
         assert_eq!(decoded.width(), 500);
         assert_eq!(decoded.height(), 700);
@@ -1366,7 +1414,7 @@ mod tests {
     #[test]
     fn composite_embeds_the_requested_dpi_in_the_jfif_header() {
         let src = encode_solid_jpeg(100, 100);
-        let out = composite_for_print(&src, 5.0, 7.0, 5.0, 7.0, 300, FitMode::Crop).unwrap();
+        let out = composite_for_print(&src, 5.0, 7.0, 5.0, 7.0, 300, FitMode::Crop, 0.5, 0.5).unwrap();
         let (units, x_density, y_density) = jfif_density(&extract_pdf_jpeg(&out));
         assert_eq!(units, 1, "units must be dots-per-inch, not the encoder's default PixelAspectRatio");
         assert_eq!(x_density, 300);
@@ -1422,7 +1470,7 @@ mod tests {
         // landscape; a correctly oriented decode is 20x40 with the original
         // left (red) edge now forming the top.
         let src = jpeg_with_exif_orientation(&encode_two_tone_jpeg(40, 20), 6);
-        let out = composite_for_print(&src, 20.0, 40.0, 20.0, 40.0, 1, FitMode::Fit).unwrap();
+        let out = composite_for_print(&src, 20.0, 40.0, 20.0, 40.0, 1, FitMode::Fit, 0.5, 0.5).unwrap();
         let decoded = image::load_from_memory(&extract_pdf_jpeg(&out)).unwrap();
         assert_eq!((decoded.width(), decoded.height()), (20, 40));
 
@@ -1474,6 +1522,8 @@ mod tests {
             paper_height_in: 5.0,
             image_width_in: 7.0,
             image_height_in: 5.0,
+            crop_offset_x: 0.5,
+            crop_offset_y: 0.5,
         };
         let out = composite_test_pattern_for_print(&options).unwrap();
         // Portrait-native MediaBox even though the canvas itself is

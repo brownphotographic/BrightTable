@@ -1242,6 +1242,12 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       } else if (matchesShortcut(e, shortcuts.addToTag) && selected.size > 0 && !TAG_ASSIGN_DISABLED_REASON) {
         e.preventDefault();
         setAddToTagTargets([...selected]);
+      } else if (matchesShortcut(e, shortcuts.print) && selectedAssets.length === 1 && !isRawAsset(selectedAssets[0])) {
+        // Grid-level counterpart to Viewer.tsx's own shortcuts.print handling
+        // (that one only ever fires while the Viewer is open) - single-asset
+        // only, same as the Print… context-menu item and openPrint() above.
+        e.preventDefault();
+        setPrintAsset(selectedAssets[0]);
       } else if (selected.size > 0 || (loupeOn && hoveredAssetId)) {
         const ratingByShortcut: [ShortcutId, number][] = [
           ['rate0', 0],
@@ -1287,6 +1293,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     copiedMetadata,
     copiedProcessingSource,
     setAddToTagTargets,
+    setPrintAsset,
     onToggleLoupe,
     loupeOn,
     hoveredAssetId,

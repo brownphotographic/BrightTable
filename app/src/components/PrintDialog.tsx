@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { listPrinters, printAsset, printTestPattern, thumbnailSrc, type AssetSummary, type PaperSize, type PrintOptions, type Printer, type PrintFitMode, type PrintOrientation } from '../lib/api';
 import { isRawAsset } from '../lib/filters';
 import { closeBtnStyle, btnSecondary, btnPrimary } from './ExportToFolderDialog';
@@ -103,6 +103,35 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
   // null = "fit the printable area" (mirrors the mockup's imgW/imgH: null).
   const [imgW, setImgW] = useState<number | null>(null);
   const [imgH, setImgH] = useState<number | null>(null);
+  // Normalized (0..1) position of the crop window within the source photo,
+  // on whichever axis 'crop' mode actually trims - 0.5 (centered) is the
+  // default and matches print.rs's own fallback. Only meaningful in 'crop'
+  // mode when the photo's aspect doesn't match the chosen print size (see
+  // `cropped` below); reset to center whenever the crop geometry itself
+  // changes (printer/paper/orientation/fit mode) since the old offset no
+  // longer means the same thing against a differently-shaped crop window.
+  const [cropOffsetX, setCropOffsetX] = useState(0.5);
+  const [cropOffsetY, setCropOffsetY] = useState(0.5);
+  const cropDragRef = useRef<{ startClientX: number; startClientY: number; startOffsetX: number; startOffsetY: number; maxX: number; maxY: number } | null>(null);
+  const [cropDragging, setCropDragging] = useState(false);
+  // The pixel box the paper/photo preview (or crop adjuster) may size itself
+  // up to - measured live off previewImgAreaRef rather than hardcoded, so it
+  // fills however much room the dialog actually has (which itself now scales
+  // with the app window - see the dialog's own width/height below) instead
+  // of being capped at some guessed constant.
+  const previewImgAreaRef = useRef<HTMLDivElement>(null);
+  const [previewMax, setPreviewMax] = useState<[number, number]>([300, 250]);
+
+  useEffect(() => {
+    const el = previewImgAreaRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setPreviewMax([Math.max(40, width), Math.max(40, height)]);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const [printerMenuOpen, setPrinterMenuOpen] = useState(false);
   const [paperMenuOpen, setPaperMenuOpen] = useState(false);
   const [dpiMenuOpen, setDpiMenuOpen] = useState(false);
@@ -147,12 +176,18 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
     return fitMode === 'fit' ? fitSize(aspect, area) : area;
   }, [area, aspect, imgW, imgH, fitMode]);
 
+  function resetCropOffset() {
+    setCropOffsetX(0.5);
+    setCropOffsetY(0.5);
+  }
+
   function selectPrinter(p: Printer) {
     setPrinterId(p.id);
     setPaperId(p.papers[0]?.id ?? null);
     setDpi(defaultDpi(p.dpis));
     setImgW(null);
     setImgH(null);
+    resetCropOffset();
     setPrinterMenuOpen(false);
   }
 
@@ -160,6 +195,7 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
     setPaperId(p.id);
     setImgW(null);
     setImgH(null);
+    resetCropOffset();
     setPaperMenuOpen(false);
   }
 
@@ -167,12 +203,14 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
     setOrientation(o);
     setImgW(null);
     setImgH(null);
+    resetCropOffset();
   }
 
   function setFitModeAndReset(m: PrintFitMode) {
     setFitMode(m);
     setImgW(null);
     setImgH(null);
+    resetCropOffset();
   }
 
   const toUnit = (v: number) => (units === 'cm' ? v * 2.54 : v);
@@ -232,6 +270,8 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
       paperHeightIn: paperDims[1],
       imageWidthIn: size[0],
       imageHeightIn: size[1],
+      cropOffsetX,
+      cropOffsetY,
     };
   }
 
@@ -272,10 +312,57 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
 
   const ready = !raw && printers != null && printers.length > 0 && printerId && paperId && dpi != null && size != null;
 
-  const previewMax: [number, number] = [300, 250];
   const previewScale = paperDims ? Math.min(previewMax[0] / paperDims[0], previewMax[1] / paperDims[1]) : 1;
   const paperPx: [number, number] = paperDims ? [Math.round(paperDims[0] * previewScale), Math.round(paperDims[1] * previewScale)] : [0, 0];
   const photoPx: [number, number] = size ? [Math.max(4, Math.round(size[0] * previewScale)), Math.max(4, Math.round(size[1] * previewScale))] : [0, 0];
+
+  // True once 'crop' mode will actually trim the source (its aspect doesn't
+  // match the chosen print rectangle's) - only then is there a crop window
+  // to show/adjust at all. Matches the epsilon composite_for_print's own
+  // crop_to_aspect uses to decide "already matching" is scaled up here since
+  // this compares aspect ratios (small numbers) rather than pixel dims.
+  const cropped = fitMode === 'crop' && size != null && Math.abs(aspect - size[0] / size[1]) > 1e-3;
+
+  // Lays the full, uncropped source photo out at its own aspect within the
+  // measured preview canvas (previewMax), then sizes the draggable crop
+  // window within that photo to exactly the chosen print rectangle's aspect
+  // - this mirrors print.rs's crop_to_aspect geometry 1:1 (same "trim
+  // whichever axis is relatively longer, offset picks where within the
+  // leftover space" logic), just in preview pixels instead of source pixels.
+  const [cropDispW, cropDispH] = cropped ? fitSize(aspect, previewMax) : [0, 0];
+  let cropBoxW = cropDispW;
+  let cropBoxH = cropDispH;
+  if (cropped && size) {
+    const targetAspect = size[0] / size[1];
+    if (aspect > targetAspect) {
+      cropBoxW = cropDispH * targetAspect;
+    } else {
+      cropBoxH = cropDispW / targetAspect;
+    }
+  }
+  const cropMaxX = cropDispW - cropBoxW;
+  const cropMaxY = cropDispH - cropBoxH;
+  const cropBoxX = cropMaxX * cropOffsetX;
+  const cropBoxY = cropMaxY * cropOffsetY;
+
+  function onCropPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    cropDragRef.current = { startClientX: e.clientX, startClientY: e.clientY, startOffsetX: cropOffsetX, startOffsetY: cropOffsetY, maxX: cropMaxX, maxY: cropMaxY };
+    setCropDragging(true);
+  }
+
+  function onCropPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const drag = cropDragRef.current;
+    if (!drag) return;
+    if (drag.maxX > 0) setCropOffsetX(clamp(drag.startOffsetX + (e.clientX - drag.startClientX) / drag.maxX, 0, 1));
+    if (drag.maxY > 0) setCropOffsetY(clamp(drag.startOffsetY + (e.clientY - drag.startClientY) / drag.maxY, 0, 1));
+  }
+
+  function onCropPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    cropDragRef.current = null;
+    setCropDragging(false);
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  }
 
   return (
     <div
@@ -292,9 +379,11 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 720,
-          maxWidth: '95%',
-          maxHeight: '90vh',
+          // 10% smaller than the app window in each dimension independently
+          // - CSS-native (vw/vh) rather than a window.innerWidth/Height
+          // listener, so it also tracks a live window resize for free.
+          width: '90vw',
+          height: '90vh',
           background: 'var(--dialog-bg)',
           borderRadius: 14,
           boxShadow: '0 24px 70px rgba(0,0,0,0.7)',
@@ -329,7 +418,7 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
             RAW photos can't be printed yet — open the edited version or export a JPEG first.
           </div>
         ) : (
-          <div style={{ display: 'flex', padding: 20, gap: 22, overflow: 'auto' }}>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', padding: 20, gap: 22, overflow: 'auto' }}>
             <div style={{ width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 15 }}>
               <div style={{ position: 'relative' }}>
                 <div style={{ fontSize: 12, color: 'var(--text-dimmer)', marginBottom: 6 }}>Printer</div>
@@ -529,9 +618,50 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
               </div>
             </div>
 
-            <div style={{ flex: 1, background: '#181818', borderRadius: 11, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 18, minHeight: 330 }}>
-              {curPaper && size ? (
-                <>
+            <div style={{ flex: 1, background: '#181818', borderRadius: 11, display: 'flex', flexDirection: 'column', padding: 18, gap: 12, minWidth: 0, minHeight: 0 }}>
+              {/* flex:1 + minHeight:0 so this fills whatever vertical room the
+                  dialog actually has (the dialog itself now scales with the
+                  app window - see its width/height above) - previewMax is
+                  measured directly off this element via ResizeObserver, so
+                  the paper/photo box or crop adjuster below always sizes
+                  itself up to the real available space instead of a guessed
+                  constant. */}
+              <div ref={previewImgAreaRef} style={{ flex: 1, minWidth: 0, minHeight: 0, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {curPaper && size && cropped ? (
+                  <div style={{ position: 'relative', width: cropDispW, height: cropDispH, borderRadius: 2, boxShadow: '0 8px 26px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
+                    <img
+                      src={thumbnailSrc(asset.id, 'preview')}
+                      alt=""
+                      draggable={false}
+                      style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', userSelect: 'none', pointerEvents: 'none' }}
+                    />
+                    {/* The crop window: what stays in the print. Its box-shadow
+                        spread (clipped by the parent's overflow:hidden to exactly
+                        cropDispW x cropDispH) dims everything outside it, showing
+                        which edges of the photo get cut - matches print.rs's
+                        crop_to_aspect 1:1 (same target-aspect + offset math, see
+                        cropBoxW/H above). Dragging it calls the exact same
+                        setCropOffsetX/Y the printed job itself is built from. */}
+                    <div
+                      onPointerDown={onCropPointerDown}
+                      onPointerMove={onCropPointerMove}
+                      onPointerUp={onCropPointerUp}
+                      onPointerCancel={onCropPointerUp}
+                      style={{
+                        position: 'absolute',
+                        left: cropBoxX,
+                        top: cropBoxY,
+                        width: cropBoxW,
+                        height: cropBoxH,
+                        boxShadow: '0 0 0 9999px rgba(0,0,0,0.6)',
+                        outline: '1.5px solid #fff',
+                        outlineOffset: -1.5,
+                        cursor: cropDragging ? 'grabbing' : 'grab',
+                        touchAction: 'none',
+                      }}
+                    />
+                  </div>
+                ) : curPaper && size ? (
                   <div style={{ position: 'relative', width: paperPx[0], height: paperPx[1], background: '#fff', borderRadius: 2, boxShadow: '0 8px 26px rgba(0,0,0,0.5)' }}>
                     <div
                       style={{
@@ -545,11 +675,12 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
                         boxShadow: '0 1px 4px rgba(0,0,0,0.25)',
                       }}
                     >
-                      {/* object-fit: cover is correct for both modes here, not just
-                          Crop - in Fit mode this box's own aspect already equals the
-                          source photo's (see fitSize), so cover and contain render
-                          identically; in Crop mode it visually matches exactly what
-                          composite_for_print's crop_to_aspect does server-side. */}
+                      {/* object-fit: cover is correct here - in Fit mode this box's
+                          own aspect already equals the source photo's (see
+                          fitSize), so cover and contain render identically; Crop
+                          mode only reaches this branch when it isn't actually
+                          cropping anything (see `cropped` above) for the same
+                          reason. */}
                       <img
                         src={thumbnailSrc(asset.id, 'preview')}
                         alt=""
@@ -557,12 +688,30 @@ export default function PrintDialog({ asset, onClose }: { asset: AssetSummary; o
                       />
                     </div>
                   </div>
-                  <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)', fontVariantNumeric: 'tabular-nums' }}>
-                    {curPaper.name.split(' (')[0]} · image {Math.round(toUnit(size[0]) * 100) / 100}×{Math.round(toUnit(size[1]) * 100) / 100} {units}
-                  </div>
-                </>
-              ) : (
-                <span style={{ fontSize: 12.5, color: 'var(--text-dimmer)' }}>{loadError ?? (printers == null ? 'Loading printers…' : 'No printers found')}</span>
+                ) : (
+                  <span style={{ fontSize: 12.5, color: 'var(--text-dimmer)' }}>{loadError ?? (printers == null ? 'Loading printers…' : 'No printers found')}</span>
+                )}
+              </div>
+              {curPaper && size && (
+                <div style={{ flexShrink: 0, fontSize: 11.5, color: 'var(--text-dimmer)', fontVariantNumeric: 'tabular-nums', textAlign: 'center' }}>
+                  {curPaper.name.split(' (')[0]} · image {Math.round(toUnit(size[0]) * 100) / 100}×{Math.round(toUnit(size[1]) * 100) / 100} {units}
+                  {cropped && (
+                    <>
+                      <br />
+                      <span style={{ fontSize: 11 }}>
+                        Drag to reposition the crop
+                        {(cropOffsetX !== 0.5 || cropOffsetY !== 0.5) && (
+                          <>
+                            {' · '}
+                            <span onClick={resetCropOffset} style={{ textDecoration: 'underline', cursor: 'default' }}>
+                              Reset to center
+                            </span>
+                          </>
+                        )}
+                      </span>
+                    </>
+                  )}
+                </div>
               )}
             </div>
           </div>
