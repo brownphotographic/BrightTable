@@ -251,6 +251,17 @@ pub struct AppConfig {
     /// files still deserialize cleanly.
     #[serde(default)]
     pub grid_loupe_large: bool,
+    /// Grid thumbnail framing - Preferences → Configuration → Appearance.
+    /// `false` (Crop) fills each 3:2 tile edge to edge, cropping whatever
+    /// doesn't fit; `true` (Original) letterboxes the whole image inside the
+    /// tile at its own aspect ratio instead.
+    #[serde(default)]
+    pub thumbnail_original_aspect: bool,
+    /// Shows each asset's file name (minus extension - the tile's own
+    /// extension badge already covers that) in a caption under its grid
+    /// thumbnail - Preferences → Configuration → Appearance.
+    #[serde(default)]
+    pub thumbnail_show_file_name: bool,
 }
 
 /// Preferences → Sharing. Only Flickr has a real, working connection today -

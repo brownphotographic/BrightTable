@@ -18,6 +18,7 @@
 import { forwardRef, useCallback, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { retryOnVaultReady } from '../lib/vaultReadyRetry';
+import { useRestoredSelection, usePersistedState } from '../lib/persistedState';
 import {
   batchRawCliRoundTrip,
   deleteAssets,
@@ -67,6 +68,7 @@ import { useArtJobReconciliation } from '../lib/useArtJobReconciliation';
 import { useBucketMemo } from '../lib/bucketMemo';
 import { ingestRoundTripExport, subscribeLateRoundTripOutcome, type RoundTripIngestOutcome } from '../lib/roundTrip';
 import { useNoSidecarChoice } from '../lib/useNoSidecarChoice';
+import { FILE_NAME_CAPTION_HEIGHT, useThumbnailSettings } from '../lib/thumbnailSettings';
 import { centerAssetInContainerSoon } from '../lib/scrollCenter';
 
 // See PhotosBrowser.tsx's identical helper for the full explanation -
@@ -131,7 +133,14 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // update_asset_metadata itself rejects synchronously (read-only mode,
   // over the batch cap), before anything was enqueued.
   const [enqueueError, setEnqueueError] = useState<string | null>(null);
-  const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
+  // Both remembered across launches. Stale expanded entries are harmless;
+  // the selected node is only restored once the tree has loaded and still
+  // contains it (see useRestoredSelection), otherwise it stays on "all".
+  const [expandedPaths, setExpandedPaths] = usePersistedState<Record<string, boolean>>(
+    'folderExpandedPaths',
+    {},
+    (v): v is Record<string, boolean> => typeof v === 'object' && v !== null && !Array.isArray(v),
+  );
   const [selectedNode, setSelectedNode] = useState<string>('all');
   // Keyed by time_bucket, same cache shape as PhotosBrowser - shared nowhere
   // (each tab keeps its own copy), but cheap enough (ids/dates, not images)
@@ -234,7 +243,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           if (cancelled) return;
           setFolderPaths(paths);
           const tree = buildFolderTree(paths);
-          if (tree.children.length === 1) setExpandedPaths({ [tree.children[0].path]: true });
+          if (tree.children.length === 1) setExpandedPaths((e) => ({ ...e, [tree.children[0].path]: true }));
           setError(null);
         })
         .catch((e) => {
@@ -250,6 +259,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   }, []);
 
   const tree = useMemo(() => buildFolderTree(folderPaths ?? []), [folderPaths]);
+  useRestoredSelection('folderSelectedNode', selectedNode, setSelectedNode, folderPaths !== null, (path) => path === 'all' || !!findFolderNode(tree, path));
 
   // Which real folder paths feed the currently selected tree node - "all" is
   // every asset-holding folder in the whole tree, otherwise every
@@ -1148,7 +1158,8 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // Unlike the timeline's month buckets, real folders' sizes aren't known
   // upfront (Immich's folder API has no per-folder count) - a fixed guess is
   // corrected once each section actually renders via virtualizer.measure().
-  const rowHeightGuess = Math.round((thumbSize * 2) / 3) + 12;
+  const { showFileName } = useThumbnailSettings();
+  const rowHeightGuess = Math.round((thumbSize * 2) / 3) + (showFileName ? FILE_NAME_CAPTION_HEIGHT : 0) + 12;
   const virtualizer = useVirtualizer({
     count: activeBucketKeys.length,
     getScrollElement: () => containerRef.current,

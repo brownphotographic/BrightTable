@@ -161,6 +161,11 @@ export interface AppConfig {
   // the grid down to a thin strip so the pane (and its circle) fills most of
   // the view.
   gridLoupeLarge: boolean;
+  // Grid thumbnails - Preferences → Configuration → Appearance. `false` crops
+  // each tile to fill 3:2; `true` letterboxes the image at its own aspect.
+  thumbnailOriginalAspect: boolean;
+  // Caption under each grid thumbnail with its file name (extension dropped).
+  thumbnailShowFileName: boolean;
 }
 
 export interface ConnectionStatus {
@@ -403,6 +408,10 @@ export function saveThemeMode(mode: ThemeMode): Promise<AppConfig> {
 
 export function saveGridLoupeLarge(large: boolean): Promise<AppConfig> {
   return invoke('save_grid_loupe_large', { large });
+}
+
+export function saveThumbnailSettings(originalAspect: boolean, showFileName: boolean): Promise<AppConfig> {
+  return invoke('save_thumbnail_settings', { originalAspect, showFileName });
 }
 
 export function saveSettingsFolder(folder: string | null): Promise<AppConfig> {
@@ -677,6 +686,18 @@ export interface TagDetail {
 
 export function listTags(): Promise<TagSummary[]> {
   return invoke('list_tags');
+}
+
+export type SearchSuggestionKind = 'camera-make' | 'camera-model' | 'camera-lens-model';
+
+// Library-wide distinct values for one EXIF field (Immich's
+// /search/suggestions), optionally narrowed to a camera make/model.
+export function getSearchSuggestions(
+  kind: SearchSuggestionKind,
+  make?: string | null,
+  model?: string | null,
+): Promise<string[]> {
+  return invoke('get_search_suggestions', { kind, make: make ?? null, model: model ?? null });
 }
 
 export function getTag(tagId: string): Promise<TagDetail> {

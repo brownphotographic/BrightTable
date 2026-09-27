@@ -19,6 +19,7 @@ import { useMemo, useState } from 'react';
 import { thumbnailSrc, type AssetSummary } from '../lib/api';
 import { decodeThumbHash } from '../lib/thumbhash';
 import { refreshAssetImage, useImageVersion, useRotatePending } from '../lib/imageVersion';
+import { useThumbnailSettings } from '../lib/thumbnailSettings';
 
 // Shared image layer (thumbhash blur placeholder -> real thumbnail, with a
 // retry-on-failure state) used by both the main grid and the viewer's
@@ -41,6 +42,11 @@ export default function AssetThumbImage({
   // instead, same reasoning as the main preview's "Refresh from Server"
   // button (see Viewer.tsx's handleRefreshFromServer doc comment).
   const rotatePending = useRotatePending(asset.id);
+  // Preferences → Configuration → Appearance: crop to fill the tile, or show
+  // the whole image at its own aspect ratio, letterboxed against the tile's
+  // background.
+  const { originalAspect } = useThumbnailSettings();
+  const objectFit = originalAspect ? 'contain' : 'cover';
   const placeholder = useMemo(
     () => (asset.thumbHash ? decodeThumbHash(asset.thumbHash) : null),
     [asset.thumbHash],
@@ -57,9 +63,11 @@ export default function AssetThumbImage({
             inset: 0,
             width: '100%',
             height: '100%',
-            objectFit: 'cover',
+            objectFit,
             filter: 'blur(8px)',
-            transform: 'scale(1.1)',
+            // Scaled up only to hide the blur's soft edges when cropping - letterboxed,
+            // it would overhang the real image's bounds instead.
+            transform: originalAspect ? undefined : 'scale(1.1)',
             opacity: loaded ? 0 : 1,
             transition: 'opacity 200ms',
           }}
@@ -67,26 +75,45 @@ export default function AssetThumbImage({
       )}
       {failed ? (
         // Server returned no thumbnail for this asset (e.g. still generating
-        // for a recently-added photo) - a quiet, clickable placeholder beats
-        // the browser's broken-image glyph.
+        // for a recently-added photo) - a quiet placeholder with a small retry
+        // badge beats the browser's broken-image glyph. Only the badge itself
+        // is clickable: the rest of the tile passes clicks through
+        // (pointer-events: none) so select, shift/ctrl multi-select, and
+        // double-click-to-open all work exactly as on a loaded thumbnail.
         <div
-          onClick={(e) => {
-            e.stopPropagation();
-            setFailed(false);
-          }}
-          title="Retry loading this thumbnail"
           style={{
             position: 'absolute',
             inset: 0,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: 'var(--text-dimmer)',
-            fontSize: 20,
-            cursor: 'default',
+            pointerEvents: 'none',
           }}
         >
-          ⟳
+          <div
+            onClick={(e) => {
+              // A modified click is a multi-select gesture - let it reach
+              // AssetTile even if it happens to land on the badge.
+              if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+              e.stopPropagation();
+              setFailed(false);
+            }}
+            title="Retry loading this thumbnail"
+            style={{
+              pointerEvents: 'auto',
+              width: 28,
+              height: 28,
+              borderRadius: 6,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--text-dimmer)',
+              fontSize: 20,
+              cursor: 'default',
+            }}
+          >
+            ⟳
+          </div>
         </div>
       ) : (
         <img
@@ -100,7 +127,7 @@ export default function AssetThumbImage({
             inset: 0,
             width: '100%',
             height: '100%',
-            objectFit: 'cover',
+            objectFit,
             opacity: loaded ? 1 : 0,
             transition: 'opacity 150ms',
           }}

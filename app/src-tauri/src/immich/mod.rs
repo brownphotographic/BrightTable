@@ -917,6 +917,32 @@ impl ImmichClient {
         Ok(tags)
     }
 
+    /// GET /search/suggestions - library-wide distinct values for one EXIF
+    /// field (`kind` is Immich's `SearchSuggestionType`, e.g. `camera-make`,
+    /// `camera-model` or `camera-lens-model`), optionally narrowed to a camera
+    /// `make` and/or `model`. Used to populate the Filters panel's Camera/Lens
+    /// dropdowns, which can't be derived from loaded assets since the Photos
+    /// grid only loads buckets as they scroll into view.
+    pub async fn get_search_suggestions(
+        &self,
+        kind: &str,
+        make: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<Vec<String>, String> {
+        let mut query = vec![("type", kind.to_string())];
+        if let Some(make) = make {
+            query.push(("make", make.to_string()));
+        }
+        if let Some(model) = model {
+            query.push(("model", model.to_string()));
+        }
+        let raw: Vec<Option<String>> = self.get_json("/search/suggestions", &query).await?;
+        let mut values: Vec<String> = raw.into_iter().flatten().filter(|v| !v.trim().is_empty()).collect();
+        values.sort_by_key(|v| v.to_lowercase());
+        values.dedup();
+        Ok(values)
+    }
+
     /// GET /tags/{id} for the name/color, plus `POST /search/metadata`
     /// (`tagIds: [id]`, `withExif: true`) for the assets - same two-call
     /// shape as `get_album`/`get_person`.

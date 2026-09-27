@@ -209,7 +209,7 @@ Then, from `app/`:
 
 ```
 
-- `npm run build:flatpak` (alias: `npm run build:full`) runs the full release pipeline: prompts for the
+- `flatpak` (alias: `npm run build:full`) runs the full release pipeline: prompts for the
   app version and the Immich server version this build was tested against (or reads
   `APP_VERSION`/`TESTED_IMMICH_VERSION` from the env non-interactively), bumps versions, regenerates
   `THIRD-PARTY-LICENSES.md`, then builds. Version convention: `First.Second.Third` — First = sweeping

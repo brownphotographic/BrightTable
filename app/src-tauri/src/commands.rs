@@ -170,6 +170,27 @@ pub async fn save_grid_loupe_large(
     Ok(snapshot)
 }
 
+#[tauri::command]
+pub async fn save_thumbnail_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    original_aspect: bool,
+    show_file_name: bool,
+) -> Result<AppConfig, String> {
+    let snapshot = {
+        let mut guard = state.config.lock().unwrap();
+        guard.thumbnail_original_aspect = original_aspect;
+        guard.thumbnail_show_file_name = show_file_name;
+        guard.clone()
+    };
+    let vault = state.secret_vault.clone();
+    let to_save = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save(&app, &to_save, vault.read().unwrap().as_ref()))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(snapshot)
+}
+
 // Async for the same reason as `save_library_config` above - reopening the
 // vault at its new location (when moving it alongside the settings folder,
 // see `config::reopen_vault_if_moved`) and the trailing `config::save` are
@@ -1484,6 +1505,18 @@ pub async fn rename_person(state: State<'_, AppState>, person_id: String, name: 
     }
     let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.rename_person(&person_id, &name).await
+}
+
+#[tauri::command]
+pub async fn get_search_suggestions(
+    state: State<'_, AppState>,
+    kind: String,
+    make: Option<String>,
+    model: Option<String>,
+) -> Result<Vec<String>, String> {
+    let cfg = state.library_config();
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
+    client.get_search_suggestions(&kind, make.as_deref(), model.as_deref()).await
 }
 
 #[tauri::command]

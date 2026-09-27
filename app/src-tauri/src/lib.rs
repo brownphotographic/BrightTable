@@ -75,6 +75,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // Remembers the main window's size, position and maximized state
+        // across launches (saved to the app config dir on close/exit,
+        // restored when the window is created). Position is a no-op under
+        // Wayland, which doesn't let clients read or set it.
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -275,6 +280,7 @@ pub fn run() {
             commands::save_window_controls_position,
             commands::save_theme_mode,
             commands::save_grid_loupe_large,
+            commands::save_thumbnail_settings,
             commands::save_settings_folder,
             commands::save_share_vault,
             commands::save_applications_config,
@@ -313,6 +319,7 @@ pub fn run() {
             commands::get_person,
             commands::rename_person,
             commands::list_tags,
+            commands::get_search_suggestions,
             commands::get_tag,
             commands::create_tag,
             commands::delete_tag,

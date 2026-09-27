@@ -21,6 +21,7 @@ import { clearThumbCache, getConfig, getThumbCacheInfo, saveSettingsFolder, save
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useWindowControls } from '../lib/windowControls';
 import { useGridLoupeSettings } from '../lib/gridLoupeSettings';
+import { useThumbnailSettings } from '../lib/thumbnailSettings';
 import { useTheme } from '../lib/theme';
 
 function formatSize(bytes: number): string {
@@ -43,6 +44,7 @@ export default function PreferencesConfiguration() {
   const { position, setPosition } = useWindowControls();
   const { large: loupeLarge, setLarge: setLoupeLarge } = useGridLoupeSettings();
   const { themeMode, setThemeMode } = useTheme();
+  const { originalAspect, setOriginalAspect, showFileName, setShowFileName } = useThumbnailSettings();
   const [settingsFolder, setSettingsFolder] = useState<string | null>(null);
   const [folderLoading, setFolderLoading] = useState(true);
   const [folderSaving, setFolderSaving] = useState(false);
@@ -126,6 +128,33 @@ export default function PreferencesConfiguration() {
             onChange={setThemeMode}
           />
         </Row>
+        <Divider />
+        <Row label="Thumbnails">
+          <Segmented
+            value={originalAspect ? 'original' : 'crop'}
+            options={[
+              { value: 'crop', label: 'Crop to Fill' },
+              { value: 'original', label: 'Original Aspect' },
+            ]}
+            onChange={(v) => setOriginalAspect(v === 'original')}
+          />
+        </Row>
+        <Divider />
+        <Row label="File Names">
+          <Segmented
+            value={showFileName ? 'show' : 'hide'}
+            options={[
+              { value: 'hide', label: 'Hide' },
+              { value: 'show', label: 'Show' },
+            ]}
+            onChange={(v) => setShowFileName(v === 'show')}
+          />
+        </Row>
+      </div>
+      <div style={helpText}>
+        Crop to Fill fills each grid thumbnail edge to edge; Original Aspect shows the whole
+        image, letterboxed inside the thumbnail. File Names adds each photo's name under its
+        thumbnail.
       </div>
 
       <div style={{ fontSize: 14, fontWeight: 700, margin: '26px 4px 12px' }}>Window</div>

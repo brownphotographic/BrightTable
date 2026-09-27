@@ -20,6 +20,7 @@ import { prettyShortcut, useShortcuts } from '../lib/shortcuts';
 import { activeFilterCount, DEFAULT_FILTERS, type FileTypeFilter, type Filters, type MediaTypeFilter } from '../lib/filters';
 import { Star } from './MetadataRows';
 import Switch from './Switch';
+import ExifFilters from './ExifFilters';
 import NavTabs, { type LeftTab } from './NavTabs';
 import { Icon } from './Icons';
 
@@ -381,37 +382,31 @@ export default function MenuBar({
         tagsCount={tagsCount}
       />
 
-      <div style={{ width: 1, height: 18, background: 'var(--overlay-medium)', margin: '0 6px' }} />
+      <div style={{ flex: 1 }} />
 
-      <div style={{ position: 'relative' }}>
+      <div style={{ position: 'relative', marginRight: 12 }}>
         {(() => {
           const hasFilters = activeFilterCount(filters) > 0;
           return (
             <button
               onClick={() => toggle('filter')}
+              // Same pill as the Loupe/Metadata buttons at the other end of
+              // the bar, so it reads as a control rather than a menu title.
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: 6,
-                height: 27,
-                padding: '0 10px',
+                gap: 7,
+                height: 30,
+                padding: '0 13px',
                 border: 'none',
-                borderRadius: 7,
-                background: open === 'filter' ? '#3584e4' : hasFilters ? 'rgba(53,132,228,0.32)' : 'transparent',
+                borderRadius: 8,
+                background: open === 'filter' ? '#3584e4' : hasFilters ? 'rgba(53,132,228,0.32)' : 'var(--overlay-medium)',
                 color: open === 'filter' ? '#fff' : 'var(--text)',
-                fontSize: 13,
+                fontSize: 12.5,
                 cursor: 'default',
               }}
             >
-              <div
-                style={{
-                  width: 0,
-                  height: 0,
-                  borderLeft: '5px solid transparent',
-                  borderRight: '5px solid transparent',
-                  borderTop: '6px solid currentColor',
-                }}
-              />
+              <Icon name="filter" size={15} />
               Filters
               {hasFilters && (
                 <span
@@ -432,6 +427,19 @@ export default function MenuBar({
                   {activeFilterCount(filters)}
                 </span>
               )}
+              {/* Dropdown caret - flips to point up while the panel is open. */}
+              <div
+                style={{
+                  width: 0,
+                  height: 0,
+                  marginLeft: -1,
+                  borderLeft: '4px solid transparent',
+                  borderRight: '4px solid transparent',
+                  borderTop: '5px solid currentColor',
+                  opacity: 0.75,
+                  transform: open === 'filter' ? 'rotate(180deg)' : undefined,
+                }}
+              />
             </button>
           );
         })()}
@@ -440,8 +448,8 @@ export default function MenuBar({
             style={{
               position: 'absolute',
               top: 'calc(100% + 5px)',
-              left: 0,
-              width: 280,
+              right: 0,
+              width: 300,
               background: 'var(--panel)',
               border: '1px solid var(--border)',
               borderRadius: 12,
@@ -529,6 +537,8 @@ export default function MenuBar({
               );
             })()}
 
+            <ExifFilters filters={filters} onFiltersChange={onFiltersChange} />
+
             <div style={{ height: 1, background: 'var(--border)', margin: '0 -4px 11px' }} />
             <div
               onClick={() => onFiltersChange(DEFAULT_FILTERS)}
@@ -548,8 +558,6 @@ export default function MenuBar({
           </div>
         )}
       </div>
-
-      <div style={{ flex: 1 }} />
 
       {showThumbSize && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-dim)', marginRight: 12 }}>

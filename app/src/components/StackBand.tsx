@@ -19,6 +19,7 @@ import { useEffect, useState } from 'react';
 import { checkSidecarMetadata, getStack, type AssetSummary } from '../lib/api';
 import { overlayRawOverrides, useRawOverrides } from '../lib/rawOverrides';
 import AssetTile from './AssetTile';
+import { useThumbnailSettings } from '../lib/thumbnailSettings';
 
 // Full-width band substituted in place of a stack's collapsed tile when
 // expanded - matches the design prototype's inline expand/collapse, minus
@@ -72,6 +73,7 @@ export default function StackBand({
   onHoverAsset?: (id: string | null) => void;
 }) {
   const [memberIds, setMemberIds] = useState<string[] | null>(null);
+  const { showFileName } = useThumbnailSettings();
   const [fallbackById, setFallbackById] = useState<Map<string, AssetSummary>>(new Map());
   const [fallbackPrimaryId, setFallbackPrimaryId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -244,7 +246,9 @@ export default function StackBand({
                 style={{
                   position: 'relative',
                   width: 152,
-                  aspectRatio: '3 / 2',
+                  // AssetTile's own image box already holds 3:2 - with a file
+                  // name caption under it the member has to grow to fit.
+                  aspectRatio: showFileName ? undefined : '3 / 2',
                   flexShrink: 0,
                   borderRadius: 10,
                   padding: 2,

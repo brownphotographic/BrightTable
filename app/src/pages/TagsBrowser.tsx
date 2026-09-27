@@ -17,6 +17,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { retryOnVaultReady } from '../lib/vaultReadyRetry';
+import { useRestoredSelection } from '../lib/persistedState';
 import {
   createTag,
   deleteAssets,
@@ -36,7 +37,7 @@ import {
 import { useStacking } from '../lib/useStacking';
 import { copyImageProcessingEntry, useAssetActions } from '../lib/useAssetActions';
 import { type MenuAction } from '../lib/actionMenu';
-import { isRawAsset, isVideoAsset } from '../lib/filters';
+import { isRawAsset, isVideoAsset, matchesFilters, type Filters } from '../lib/filters';
 import { resolveVisibleStackAssets } from '../lib/stacks';
 import AssetTile, { type ClickMods } from '../components/AssetTile';
 import GridLoupePane from '../components/GridLoupePane';
@@ -110,6 +111,10 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
   // Grid thumbnail size, in px - shared across every grid view. See
   // App.tsx's `thumbSize` state and MenuBar's slider.
   thumbSize: number;
+  // MenuBar's Filters panel - applied to the open detail grid the same way
+  // Photos/Folders apply it (after stack resolution, so a filtered-out pick
+  // hides its whole collapsed stack there too).
+  filters: Filters;
 }>(function TagsBrowser({
   metaOpen,
   onCloseMetadata,
@@ -119,6 +124,7 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
   onToggleLoupe,
   loupeLarge,
   thumbSize,
+  filters,
 }, ref) {
   const [tags, setTags] = useState<TagSummary[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -134,6 +140,9 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
   const [confirmDeleteSelectedTags, setConfirmDeleteSelectedTags] = useState(false);
 
   const [openTagId, setOpenTagId] = useState<string | null>(null);
+  // Reopens whichever one was open last session, once the list has loaded
+  // and only if it's still there - see useRestoredSelection.
+  useRestoredSelection('openTag', openTagId, setOpenTagId, tags !== null, (id) => !!tags?.some((x) => x.id === id));
   const [tag, setTag] = useState<TagDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [enqueueError, setEnqueueError] = useState<string | null>(null);
@@ -266,7 +275,10 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
       })),
     [tag, stackByAssetId, unsyncedMetadata, processingSidecarAssets],
   );
-  const visibleAssets = useMemo(() => resolveVisibleStackAssets(overlaidAssets), [overlaidAssets]);
+  const visibleAssets = useMemo(
+    () => resolveVisibleStackAssets(overlaidAssets).filter((a) => matchesFilters(a, filters)),
+    [overlaidAssets, filters],
+  );
 
   const assetById = useMemo(() => {
     const map = new Map<string, AssetSummary>();
@@ -1010,7 +1022,9 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div ref={gridContainerRef} style={{ flex: loupeOn ? '0 0 33.333%' : 1, overflow: 'auto', minHeight: 0, padding: 16, background: 'var(--canvas)' }}>
-          {visibleAssets.length === 0 ? (
+          {visibleAssets.length === 0 && overlaidAssets.length > 0 ? (
+            <div style={{ color: 'var(--text-dimmer)', fontSize: 12.5 }}>No photos match the current filters.</div>
+          ) : visibleAssets.length === 0 ? (
             <div style={{ color: 'var(--text-dimmer)', fontSize: 12.5 }}>
               No photos tagged yet — select photos anywhere and use "Add to Tag".
             </div>

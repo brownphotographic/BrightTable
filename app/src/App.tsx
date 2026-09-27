@@ -23,6 +23,7 @@ import { isTypingTarget, matchesShortcut, ShortcutsProvider, useShortcuts } from
 import { SmartStackSettingsProvider } from './lib/smartStackSettings';
 import { WindowControlsProvider } from './lib/windowControls';
 import { GridLoupeSettingsProvider, useGridLoupeSettings } from './lib/gridLoupeSettings';
+import { ThumbnailSettingsProvider } from './lib/thumbnailSettings';
 import { useSyncWindowFrameMaximized } from './lib/windowFrame';
 import { ThemeProvider } from './lib/theme';
 import { ApplicationsProvider } from './lib/applications';
@@ -52,6 +53,11 @@ import PeopleBrowser, { type PeopleBrowserHandle } from './pages/PeopleBrowser';
 import TagsBrowser, { type TagsBrowserHandle } from './pages/TagsBrowser';
 import SearchResultsBrowser, { type SearchResultsBrowserHandle } from './pages/SearchResultsBrowser';
 import { DEFAULT_FILTERS } from './lib/filters';
+import { usePersistedState } from './lib/persistedState';
+
+const LEFT_TABS: readonly unknown[] = ['photos', 'albums', 'people', 'tags', 'folders', 'trash'] satisfies LeftTab[];
+const isLeftTab = (v: unknown): v is LeftTab => LEFT_TABS.includes(v);
+const isThumbSize = (v: unknown): v is number => typeof v === 'number' && v >= 100 && v <= 320;
 
 export default function App() {
   return (
@@ -59,29 +65,31 @@ export default function App() {
       <ShortcutsProvider>
         <WindowControlsProvider>
           <GridLoupeSettingsProvider>
-            <SmartStackSettingsProvider>
-              <ApplicationsProvider>
-                <RawOverridesProvider>
-                  <ClipboardProvider>
-                    <EditQueueProvider>
-                      <ImportQueueProvider>
-                        <ProcessingQueueProvider>
-                          <ArtQueueProvider>
-                            <ExportQueueProvider>
-                              <StackQueueProvider>
-                                <LibraryStatusProvider>
-                                  <AppShell />
-                                </LibraryStatusProvider>
-                              </StackQueueProvider>
-                            </ExportQueueProvider>
-                          </ArtQueueProvider>
-                        </ProcessingQueueProvider>
-                      </ImportQueueProvider>
-                    </EditQueueProvider>
-                  </ClipboardProvider>
-                </RawOverridesProvider>
-              </ApplicationsProvider>
-            </SmartStackSettingsProvider>
+            <ThumbnailSettingsProvider>
+              <SmartStackSettingsProvider>
+                <ApplicationsProvider>
+                  <RawOverridesProvider>
+                    <ClipboardProvider>
+                      <EditQueueProvider>
+                        <ImportQueueProvider>
+                          <ProcessingQueueProvider>
+                            <ArtQueueProvider>
+                              <ExportQueueProvider>
+                                <StackQueueProvider>
+                                  <LibraryStatusProvider>
+                                    <AppShell />
+                                  </LibraryStatusProvider>
+                                </StackQueueProvider>
+                              </ExportQueueProvider>
+                            </ArtQueueProvider>
+                          </ProcessingQueueProvider>
+                        </ImportQueueProvider>
+                      </EditQueueProvider>
+                    </ClipboardProvider>
+                  </RawOverridesProvider>
+                </ApplicationsProvider>
+              </SmartStackSettingsProvider>
+            </ThumbnailSettingsProvider>
           </GridLoupeSettingsProvider>
         </WindowControlsProvider>
       </ShortcutsProvider>
@@ -90,7 +98,11 @@ export default function App() {
 }
 
 function AppShell() {
-  const [leftTab, setLeftTab] = useState<LeftTab>('photos');
+  // Last-viewed tab, remembered across launches the same way as thumbSize
+  // below (webview localStorage, not the config). The lazy-mount effects
+  // further down key off leftTab, so restoring e.g. Folders here mounts it
+  // on startup exactly as a first click would.
+  const [leftTab, setLeftTab] = usePersistedState<LeftTab>('leftTab', 'photos', isLeftTab);
   const [prefsOpen, setPrefsOpen] = useState(false);
   // Which tab Preferences opens on next - reset to 'library' once closed so
   // a later plain "Preferences…" open doesn't strand the user on whichever
@@ -155,7 +167,9 @@ function AppShell() {
   // Grid thumbnail size, shared by Photos and Folders (the only two grid
   // views with a size slider) - lives here since the slider itself now sits
   // in MenuBar rather than in either browser's own (removed) status bar.
-  const [thumbSize, setThumbSize] = useState(168);
+  // Remembered across launches via the webview's localStorage (a per-machine
+  // UI convenience, deliberately not part of the synced config).
+  const [thumbSize, setThumbSize] = usePersistedState('thumbSize', 168, isThumbSize);
   // Shared by both PhotosBrowser and FoldersBrowser - bumping it forces
   // whichever is currently mounted to fully remount (clearing its
   // assetCache/unsyncedMetadata/etc.), since neither view otherwise has any
@@ -423,6 +437,7 @@ function AppShell() {
                   onToggleLoupe={toggleGridLoupe}
                   loupeLarge={gridLoupeLarge}
                   thumbSize={thumbSize}
+                  filters={filters}
                 />
               </div>
             )}
@@ -438,6 +453,7 @@ function AppShell() {
                   onToggleLoupe={toggleGridLoupe}
                   loupeLarge={gridLoupeLarge}
                   thumbSize={thumbSize}
+                  filters={filters}
                 />
               </div>
             )}
@@ -453,6 +469,7 @@ function AppShell() {
                   onToggleLoupe={toggleGridLoupe}
                   loupeLarge={gridLoupeLarge}
                   thumbSize={thumbSize}
+                  filters={filters}
                 />
               </div>
             )}

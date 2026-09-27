@@ -102,6 +102,7 @@ Double-click or press `Enter` to open the full-screen **Viewer**. From there you
 - Press **1–5** to rate a photo, **0** to clear the rating, **9** to reject it.
 - Press **F** to toggle Favourite.
 - Click **Filters** in the menu bar to narrow the grid by minimum star rating, Favourites only, or media type (Photos/Videos/All).
+- The Filters panel can also narrow by **Camera**, **Lens** (listing only lenses used on the chosen camera, plus **No lens** for shots with no lens recorded, e.g. manual or adapted glass) and **Focal Length** as shot (drag the slider or type a value in mm; matches within ±0.5mm). The slider spans the focal lengths of the lenses in scope, or of the chosen lens.
 
 ---
 

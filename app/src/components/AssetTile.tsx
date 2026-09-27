@@ -20,6 +20,7 @@ import AssetThumbImage from './AssetThumb';
 import { RejectIcon, Star } from './MetadataRows';
 import type { AssetSummary, UnsyncedMetadata } from '../lib/api';
 import { isRawAsset } from '../lib/filters';
+import { FILE_NAME_CAPTION_HEIGHT, useThumbnailSettings } from '../lib/thumbnailSettings';
 
 export type ClickMods = { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean };
 
@@ -32,6 +33,45 @@ function unsyncedMetadataTooltip(gap: UnsyncedMetadata): string {
     parts.push('a description');
   }
   return `Local file has ${parts.join(' and ')} not yet in Immich`;
+}
+
+// How many trailing characters of a too-long file name stay pinned visible
+// after the middle ellipsis - camera names put the distinguishing frame
+// number at the end (IMG_0421, DSC01234), so that's the part worth keeping.
+const FILE_NAME_TAIL_CHARS = 6;
+
+// File name with its extension dropped (the tile's own extension badge already
+// shows it) and, when too long for the tile, truncated in the *middle* rather
+// than the end. CSS only ellipsizes at the end, so the name is split in two:
+// a head that shrinks and ellipsizes, and a fixed tail that never does - if
+// the whole thing fits, the two halves just render back to back.
+function FileNameCaption({ fileName }: { fileName: string }) {
+  const dot = fileName.lastIndexOf('.');
+  const base = dot > 0 ? fileName.slice(0, dot) : fileName;
+  const tailLen = Math.min(FILE_NAME_TAIL_CHARS, Math.floor(base.length / 2));
+  const head = base.slice(0, base.length - tailLen);
+  const tail = base.slice(base.length - tailLen);
+  return (
+    <div
+      title={fileName}
+      style={{
+        display: 'flex',
+        justifyContent: 'center',
+        height: FILE_NAME_CAPTION_HEIGHT,
+        paddingTop: 4,
+        boxSizing: 'border-box',
+        fontSize: 11,
+        lineHeight: `${FILE_NAME_CAPTION_HEIGHT - 4}px`,
+        color: 'var(--text-dim)',
+        whiteSpace: 'pre',
+        overflow: 'hidden',
+        cursor: 'default',
+      }}
+    >
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{head}</span>
+      <span style={{ flexShrink: 0 }}>{tail}</span>
+    </div>
+  );
 }
 
 // Shared grid tile used by both the main Photos timeline and the Folders
@@ -90,6 +130,7 @@ const AssetTile = memo(function AssetTile({
   // sidesteps that entirely: it's decided at dispatch time by the platform,
   // not raced against whatever this component's last render was doing.
   const [hovered, setHovered] = useState(false);
+  const { showFileName } = useThumbnailSettings();
 
   const handleClick = (e: React.MouseEvent) => {
     const plain = !e.shiftKey && !e.ctrlKey && !e.metaKey;
@@ -117,7 +158,7 @@ const AssetTile = memo(function AssetTile({
     onToggleSelect(asset.id, mods);
   };
 
-  return (
+  const tile = (
     <div
       data-asset-id={asset.id}
       onClick={handleClick}
@@ -357,6 +398,19 @@ const AssetTile = memo(function AssetTile({
           </div>
         )}
       </div>
+    </div>
+  );
+
+  if (!showFileName) return tile;
+  // minWidth: 0 - as a grid item this wrapper otherwise can't shrink below
+  // its content's min-content width, which for the caption's unwrapped
+  // (whiteSpace: pre) text is the whole file name - a long one would widen
+  // its `1fr` column, and with it the tile's 3:2 height, throwing off every
+  // row height PhotosBrowser computed for the virtualizer.
+  return (
+    <div style={{ minWidth: 0 }}>
+      {tile}
+      <FileNameCaption fileName={asset.fileName} />
     </div>
   );
 });

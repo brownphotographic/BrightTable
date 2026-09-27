@@ -64,6 +64,7 @@ import { useApplications } from '../lib/applications';
 import { copyImageProcessingEntry, useAssetActions } from '../lib/useAssetActions';
 import { type MenuAction } from '../lib/actionMenu';
 import { useSmartStackSettings } from '../lib/smartStackSettings';
+import { FILE_NAME_CAPTION_HEIGHT, useThumbnailSettings } from '../lib/thumbnailSettings';
 import { pendingStyle } from '../lib/pending';
 import { useEditQueue } from '../lib/editQueue';
 import { useEditJobReconciliation } from '../lib/useEditJobReconciliation';
@@ -1363,7 +1364,11 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     return Math.max(1, Math.floor((contentWidth + GRID_GAP) / (thumbSize + GRID_GAP)));
   }, [contentWidth, thumbSize]);
   const tileWidth = columns > 0 ? (contentWidth - GRID_GAP * (columns - 1)) / columns : thumbSize;
-  const assetRowHeight = Math.max(1, Math.round((tileWidth * 2) / 3)) + GRID_GAP;
+  // AssetTile adds a fixed-height file name caption under the 3:2 image when
+  // that preference is on - still exact, just a constant taller.
+  const { showFileName } = useThumbnailSettings();
+  const assetRowHeight =
+    Math.max(1, Math.round((tileWidth * 2) / 3)) + (showFileName ? FILE_NAME_CAPTION_HEIGHT : 0) + GRID_GAP;
 
   // Flattens every loaded bucket's day-groups into individual grid rows (see
   // the PhotoRow type above) - an expanded stack's band always starts a new

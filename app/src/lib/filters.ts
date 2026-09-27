@@ -24,14 +24,81 @@ export type FileTypeFilter = 'all' | 'raw' | 'jpeg';
 // Media type is the broader photos-vs-videos split.
 export type MediaTypeFilter = 'all' | 'photos' | 'videos';
 
+// A camera is identified by its EXIF make + model pair - model alone isn't
+// unique across makers in principle, and the dropdown shows both anyway.
+export interface CameraFilter {
+  make: string;
+  model: string;
+}
+
 export interface Filters {
   minRating: number;
   favOnly: boolean;
   mediaType: MediaTypeFilter;
   format: FileTypeFilter;
+  camera: CameraFilter | null;
+  // A lens model name, NO_LENS for assets with no lens recorded, or null for any.
+  lens: string | null;
+  // As-shot focal length (EXIF focalLength, not the lens's range), in mm.
+  focal: number | null;
 }
 
-export const DEFAULT_FILTERS: Filters = { minRating: 0, favOnly: false, mediaType: 'all', format: 'all' };
+export const DEFAULT_FILTERS: Filters = {
+  minRating: 0,
+  favOnly: false,
+  mediaType: 'all',
+  format: 'all',
+  camera: null,
+  lens: null,
+  focal: null,
+};
+
+// Display label for a camera - most makers already repeat their name at the
+// start of the model ("Canon" / "Canon EOS R5", "NIKON CORPORATION" / "NIKON
+// Z 6"), so the make is only prefixed when it isn't (Sony's "ILCE-7M4").
+export function cameraLabel(camera: CameraFilter): string {
+  const brand = camera.make.trim().split(/\s+/)[0]?.toLowerCase() ?? '';
+  if (!brand || camera.model.toLowerCase().startsWith(brand)) return camera.model;
+  return `${camera.make} ${camera.model}`;
+}
+
+// `lens` value matching assets with a blank/missing lens model - common for
+// manual/adapted glass with no electronic contacts. Can't collide with a real
+// lens name, since blank names are never offered as suggestions.
+export const NO_LENS = '';
+
+export interface FocalRange {
+  min: number;
+  max: number;
+}
+
+// Focal range a lens covers, read from its name ("FE 24-70mm F2.8 GM",
+// "EF50mm f/1.8 STM", "iPhone 13 back camera 5.1mm f/1.6") - Immich has no
+// per-lens or library-wide focal length stats, so this is what sizes the
+// Filters panel's focal length slider. Null when the name has no "...mm".
+export function parseLensFocalRange(lens: string): FocalRange | null {
+  const m = /(\d+(?:\.\d+)?)(?:\s*-\s*(\d+(?:\.\d+)?))?\s*mm/i.exec(lens);
+  if (!m) return null;
+  const a = Number(m[1]);
+  const b = m[2] ? Number(m[2]) : a;
+  if (!(a > 0) || !(b > 0)) return null;
+  return { min: Math.min(a, b), max: Math.max(a, b) };
+}
+
+// Union of every parseable lens's focal range - null if none parse.
+export function focalRangeOfLenses(lenses: string[]): FocalRange | null {
+  let range: FocalRange | null = null;
+  for (const lens of lenses) {
+    const r = parseLensFocalRange(lens);
+    if (!r) continue;
+    range = range ? { min: Math.min(range.min, r.min), max: Math.max(range.max, r.max) } : r;
+  }
+  return range;
+}
+
+// Immich stores focal lengths as floats (e.g. 23.9999 for a 24mm shot), so
+// the chosen focal length matches with this much slack either side.
+const FOCAL_TOLERANCE = 0.5;
 
 export const RAW_EXTENSIONS = new Set(['ARW', 'CR2', 'CR3', 'NEF', 'DNG', 'RAF', 'ORF', 'RW2', 'PEF', 'SRW', 'X3F']);
 
@@ -88,6 +155,13 @@ export function matchesFilters(asset: AssetSummary, filters: Filters): boolean {
   if (filters.mediaType === 'videos' && asset.type !== 'VIDEO') return false;
   if (filters.format === 'raw' && !isRawAsset(asset)) return false;
   if (filters.format === 'jpeg' && asset.fileExtension !== 'JPG') return false;
+  if (filters.camera && (asset.make !== filters.camera.make || asset.model !== filters.camera.model)) return false;
+  if (filters.lens === NO_LENS) {
+    if (asset.lensModel?.trim()) return false;
+  } else if (filters.lens != null && asset.lensModel !== filters.lens) return false;
+  if (filters.focal != null && (asset.focalLength == null || Math.abs(asset.focalLength - filters.focal) > FOCAL_TOLERANCE)) {
+    return false;
+  }
   return true;
 }
 
@@ -96,6 +170,9 @@ export function activeFilterCount(filters: Filters): number {
     (filters.minRating > 0 ? 1 : 0) +
     (filters.favOnly ? 1 : 0) +
     (filters.mediaType !== 'all' ? 1 : 0) +
-    (filters.format !== 'all' ? 1 : 0)
+    (filters.format !== 'all' ? 1 : 0) +
+    (filters.camera ? 1 : 0) +
+    (filters.lens != null ? 1 : 0) +
+    (filters.focal != null ? 1 : 0)
   );
 }
