@@ -512,6 +512,7 @@ as part of `npm run build:flatpak` - do not edit it by hand.
 | tauri-plugin-log | 2.8.0 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | tauri-plugin-opener | 2.5.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | tauri-plugin-stronghold | 2.3.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
+| tauri-plugin-window-state | 2.4.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | tauri-runtime | 2.11.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | tauri-runtime-wry | 2.11.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | tauri-utils | 2.9.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
@@ -703,13 +704,13 @@ as part of `npm run build:flatpak` - do not edit it by hand.
 | zvariant_derive | 5.13.0 | MIT | https://github.com/z-galaxy/zbus/ |
 | zvariant_utils | 3.5.0 | MIT | https://github.com/z-galaxy/zbus/ |
 
-668 crates.
+669 crates.
 
 ## License summary
 
 | License | Package count |
 |---|---|
-| Apache-2.0 OR MIT | 405 |
+| Apache-2.0 OR MIT | 406 |
 | MIT | 157 |
 | Apache-2.0 OR MIT OR Zlib | 24 |
 | Unicode-3.0 | 18 |
