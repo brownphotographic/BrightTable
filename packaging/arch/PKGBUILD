@@ -42,7 +42,7 @@ fi
 _srcdir=BrightTable-${_tag#v}
 
 source=("$pkgname-$pkgver.tar.gz::https://github.com/brownphotographic/BrightTable/archive/refs/tags/$_tag.tar.gz")
-sha256sums=('SKIP') # replace with the real hash via `updpkgsums` before publishing
+sha256sums=('cca803b5ba496f4089838ab9f8b28097002cb5d7d4fcdbf9431ffa8442596751')
 
 build() {
   cd "$srcdir/$_srcdir/app"
