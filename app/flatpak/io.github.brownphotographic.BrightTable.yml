@@ -48,6 +48,14 @@ finish-args:
   - --socket=fallback-x11
   - --share=ipc
   - --device=dri
+  # tao registers a GtkApplication under the Tauri `identifier` from
+  # tauri.conf.json (com.brighttable.desktop), not the Flatpak app ID - and
+  # the sandbox only lets an app own its own app ID's bus name by default.
+  # Without this, RequestName is filtered by the D-Bus proxy and every launch
+  # panics with `Failed to initialize gtk backend!: ... ServiceUnknown`.
+  # Kept as a grant rather than renaming the identifier, since Tauri derives
+  # the app's config/data directory names from it too.
+  - --own-name=com.brighttable.desktop
   # In-app video playback (open_default.rs bypasses this for the *default*
   # player, but WebKitGTK's own embedded <video> still needs it for anything
   # played inline)

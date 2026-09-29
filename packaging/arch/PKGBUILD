@@ -17,7 +17,7 @@
 # with a leading "v" stripped if the tag starts with "vN" (e.g. tag "v1.2"
 # -> "BrightTable-1.2"), which _srcdir mirrors.
 pkgname=brighttable
-pkgver=1.3.0
+pkgver=1.3.1
 pkgrel=1
 pkgdesc="Connect an Immich library to external RAW editors"
 arch=('x86_64')
