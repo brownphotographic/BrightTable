@@ -971,6 +971,16 @@ export function thumbnailSrc(
   return `immich-thumb://thumbnail/${assetId}?size=${size}${v}`;
 }
 
+// A RAW's own embedded full-size JPEG (see src-tauri/src/raw_preview.rs) -
+// the Viewer loupe's hi-res source for RAWs, which the webview can't decode
+// as `original`. `path` lets the backend read the RAW off the local mount
+// instead of downloading it from Immich, when the library mapping allows.
+export function embeddedPreviewSrc(asset: AssetSummary, version = 0): string {
+  const v = version ? `&v=${version}` : '';
+  const path = asset.originalPath ? `&path=${encodeURIComponent(asset.originalPath)}` : '';
+  return `immich-thumb://thumbnail/${asset.id}?size=embedded${path}${v}`;
+}
+
 export function personThumbnailSrc(personId: string): string {
   return `immich-thumb://person/${personId}`;
 }

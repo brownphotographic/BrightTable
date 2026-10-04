@@ -62,6 +62,10 @@ function prevValuesFor(asset: AssetSummary | undefined, patch: AssetMetadataPatc
 export interface SearchResultsBrowserHandle {
   openExportToFolder: () => void;
   openExportToFlickr: () => void;
+  // View → Fullscreen Image / Ctrl+F from the grid (see App.tsx): opens the
+  // last-clicked photo in the Viewer if none is open yet. Returns whether
+  // there's now a photo to show fullscreen.
+  openForFullscreen: () => boolean;
   selectAll: () => void;
   deselectAll: () => void;
   stackSelected: () => void;
@@ -519,6 +523,12 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
   useImperativeHandle(
     ref,
     () => ({
+      openForFullscreen: () => {
+        if (openId) return true;
+        if (!lastClickedId.current) return false;
+        setOpenId(lastClickedId.current);
+        return true;
+      },
       openExportToFolder: () => {
         const target = selectedAssets.length > 0 ? selectedAssets : openAsset ? [openAsset] : [];
         if (target.length > 0) setExportFolderAssets(target);
@@ -572,6 +582,7 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
       handlePasteMetadata,
       commitEditMany,
       rotateSelection,
+      openId,
     ],
   );
 

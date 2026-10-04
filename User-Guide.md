@@ -93,7 +93,7 @@ Click a thumbnail to select it, or use the checkboxes to select several. Once so
 
 Right-click any photo for a context menu with the same options, grouped the same way.
 
-Double-click or press `Enter` to open the full-screen **Viewer**. From there you can zoom, flip through the filmstrip, rate, rotate, launch editors, and reach the same Organize/Edit/Copy-Paste/Share menus — all without going back to the grid.
+Double-click or press `Enter` to open the full-screen **Viewer**. From there you can zoom, flip through the filmstrip, rate, rotate, launch editors, and reach the same Organize/Edit/Copy-Paste/Share menus — all without going back to the grid. Press `L` for a loupe, then scroll the mouse wheel over the photo to zoom it from 100% (actual pixels) up to 500%. For RAW files the loupe magnifies the full-size JPEG your camera embedded in the RAW; a label on the loupe shows while full resolution is loading, or if only preview resolution is available (some cameras only embed a small preview). Press `Ctrl+F` (or **More → View Fullscreen**) to show just the photo, fullscreen; `Esc` returns.
 
 ---
 
@@ -216,6 +216,7 @@ All of these can be changed in **Preferences → Shortcuts**.
 | Rotate Left / Right      | `Ctrl+[` / `Ctrl+]`             |
 | Add to Tag               | `Ctrl+T`                        |
 | Zoom grid in / out       | `Ctrl++` / `Ctrl+-`             |
+| Fullscreen image         | `Ctrl+F` (`Esc` exits)          |
 | Quit                     | `Ctrl+Q`                        |
 
 Shortcuts are disabled while you're typing in a text field.

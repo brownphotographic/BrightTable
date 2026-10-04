@@ -19,6 +19,8 @@ use tauri::{http, Manager, UriSchemeResponder};
 
 use crate::immich::ImmichClient;
 use crate::io_guard;
+use crate::paths;
+use crate::raw_preview;
 use crate::state::AppState;
 use crate::thumb_cache;
 
@@ -36,6 +38,14 @@ pub const SCHEME: &str = "immich-thumb";
 /// only ever requests it for the Viewer's zoom/loupe, and only for formats it
 /// has already confirmed a webview can decode (see `isOriginalZoomable` in
 /// filters.ts) - this handler doesn't re-check that itself.
+///
+/// `size=embedded` (RAW only - see `embeddedPreviewSrc` in api.ts) serves
+/// the full-size JPEG the camera embedded inside the RAW (see
+/// raw_preview.rs), standing in for `original` on formats the webview can't
+/// decode. The RAW is read from the local mount when the request's `path`
+/// (the asset's server-side `originalPath`) resolves through the library
+/// mapping - far faster than pulling tens of MB over the network - else
+/// downloaded from Immich like `original`.
 ///
 /// Also handles `immich-thumb://person/{person_id}` (see `personThumbnailSrc`
 /// in api.ts) - the URI's host (not the path) is what distinguishes the two
@@ -65,14 +75,15 @@ pub fn handle(
         .last()
         .unwrap_or("")
         .to_string();
-    let size = uri
-        .query()
-        .and_then(|q| {
+    let query_param = |name: &str| {
+        uri.query().and_then(|q| {
             url::form_urlencoded::parse(q.as_bytes())
-                .find(|(k, _)| k == "size")
+                .find(|(k, _)| k == name)
                 .map(|(_, v)| v.to_string())
         })
-        .unwrap_or_else(|| "preview".to_string());
+    };
+    let size = query_param("size").unwrap_or_else(|| "preview".to_string());
+    let local_path = query_param("path").and_then(|p| paths::resolve_local_path(&p, &cfg));
     // Only ever sent by an HTML5 <video> element (the Viewer's `<video
     // src="immich-thumb://…?size=original">` for a VIDEO asset) - seeking
     // past what's already buffered issues one of these to fetch just that
@@ -115,10 +126,13 @@ pub fn handle(
         // is it actually stuck" is a real question worth being able to
         // answer from the dev console instead of guessing.
         let fetch_started = std::time::Instant::now();
-        if size == "original" {
-            log::info!("original fetch starting for {asset_id}");
+        if size == "original" || size == "embedded" {
+            log::info!("{size} fetch starting for {asset_id}");
         }
         let result = async {
+            if size == "embedded" {
+                return fetch_embedded(&io_guard, local_path, &asset_id, &cfg, http, &auto_resolution).await;
+            }
             let client = ImmichClient::from_config(&cfg, http, &auto_resolution).await?;
             if is_person {
                 client.get_person_thumbnail_bytes(&asset_id).await
@@ -129,10 +143,10 @@ pub fn handle(
             }
         }
         .await;
-        if size == "original" {
+        if size == "original" || size == "embedded" {
             match &result {
-                Ok((bytes, _)) => log::info!("original fetch for {asset_id} done: {} bytes in {:?}", bytes.len(), fetch_started.elapsed()),
-                Err(e) => log::info!("original fetch for {asset_id} failed after {:?}: {e}", fetch_started.elapsed()),
+                Ok((bytes, _)) => log::info!("{size} fetch for {asset_id} done: {} bytes in {:?}", bytes.len(), fetch_started.elapsed()),
+                Err(e) => log::info!("{size} fetch for {asset_id} failed after {:?}: {e}", fetch_started.elapsed()),
             }
         }
 
@@ -163,6 +177,38 @@ pub fn handle(
         };
         responder.respond(response);
     });
+}
+
+/// The RAW's bytes (local mount if mapped and present, else Immich's
+/// original download), then its embedded JPEG - both steps on the blocking
+/// pool, since the extraction scans tens of MB and may decode/re-encode a
+/// full-size JPEG to bake in orientation.
+async fn fetch_embedded(
+    io_guard: &std::sync::Arc<io_guard::IoGuard>,
+    local_path: Option<std::path::PathBuf>,
+    asset_id: &str,
+    cfg: &crate::config::LibraryConfig,
+    http: reqwest::Client,
+    auto_resolution: &std::sync::Mutex<Option<crate::config::AutoResolution>>,
+) -> Result<(Vec<u8>, String), String> {
+    let local = match local_path {
+        Some(path) => match io_guard::guarded_spawn_blocking(io_guard, move || std::fs::read(path).ok()) {
+            Some(handle) => handle.await.unwrap_or(None),
+            None => None,
+        },
+        None => None,
+    };
+    let raw = match local {
+        Some(bytes) => bytes,
+        None => ImmichClient::from_config(cfg, http, auto_resolution).await?.get_original_bytes(asset_id).await?.0,
+    };
+    let handle = io_guard::guarded_spawn_blocking(io_guard, move || raw_preview::extract_embedded_jpeg(&raw))
+        .ok_or("Skipped: system is about to suspend")?;
+    let jpeg = handle
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("No full-size JPEG embedded in this RAW")?;
+    Ok((jpeg, "image/jpeg".to_string()))
 }
 
 /// Builds the success response for a fully-resolved `bytes` payload,

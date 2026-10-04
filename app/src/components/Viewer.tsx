@@ -29,6 +29,7 @@ import {
   revealInFileManager,
   rotateAsset,
   thumbnailSrc,
+  embeddedPreviewSrc,
   type AssetMetadataPatch,
   type AssetSummary,
   type MetadataEditTarget,
@@ -43,6 +44,7 @@ import ActionDropdown from './ActionDropdown';
 import { Icon } from './Icons';
 import { groupActions, type MenuAction } from '../lib/actionMenu';
 import { isTypingTarget, matchesShortcut, useShortcuts } from '../lib/shortcuts';
+import { isImageFullscreen, setImageFullscreen, useImageFullscreen, useViewerFullscreenLifecycle } from '../lib/fullscreen';
 import { overlayRawOverrides, useRawOverrides } from '../lib/rawOverrides';
 import { isOriginalZoomable, isRawAsset, isRoundTripEligible, isVideoAsset } from '../lib/filters';
 import { useApplications } from '../lib/applications';
@@ -57,7 +59,16 @@ import { copyImageProcessingEntry } from '../lib/useAssetActions';
 const MIN_ZOOM = 25;
 const MAX_ZOOM = 400;
 const LOUPE_SIZE = 220;
-const LOUPE_MAGNIFICATION = 3;
+// Loupe zoom, as a percentage of the original's actual pixels (100% = 1:1
+// device pixels, not relative to the fitted on-screen size) - scrolled
+// through with the mouse wheel while the loupe is on.
+const LOUPE_ZOOM_DEFAULT = 100;
+const LOUPE_ZOOM_MAX = 500;
+const LOUPE_ZOOM_STEP = 50;
+// Accumulated wheel deltaY per zoom step - one notch on a typical mouse
+// wheel is ~100, while a touchpad sends many small deltas that would
+// otherwise race through every level in a single swipe.
+const LOUPE_WHEEL_THRESHOLD = 60;
 
 // Where the image actually renders inside a same-aspect-agnostic box under
 // object-fit: contain - needed to map cursor position to image-content
@@ -235,6 +246,10 @@ const Viewer = forwardRef<ViewerHandle, {
   const [filmstripOpen, setFilmstripOpen] = useState(true);
   const [loupeOn, setLoupeOn] = useState(false);
   const [loupePos, setLoupePos] = useState<{ x: number; y: number } | null>(null);
+  // Kept across photos and loupe on/off within this Viewer, like loupeOn.
+  const [loupeZoom, setLoupeZoom] = useState(LOUPE_ZOOM_DEFAULT);
+  // Briefly true after each wheel step, to flash the zoom % on the loupe.
+  const [loupeZoomFlash, setLoupeZoomFlash] = useState(false);
   // Keyed by asset id (not a plain boolean) so a change to `asset` clears
   // "loaded" the instant it happens, in the very same render - a boolean
   // reset via useEffect runs a render late, so for one frame the *previous*
@@ -249,6 +264,11 @@ const Viewer = forwardRef<ViewerHandle, {
   // `preview` rendition) has loaded for the currently zoomed/loupe'd asset -
   // see `wantHiRes` below for why `preview` alone isn't enough at high zoom.
   const [hiResLoadedId, setHiResLoadedId] = useState<string | null>(null);
+  // Long edge of whatever hi-res source last loaded - an embedded RAW
+  // preview can be far short of the sensor's real resolution (older Fuji/
+  // Panasonic/Canon bodies embed ~1920px), which the loupe calls out.
+  const [hiResLong, setHiResLong] = useState(0);
+  const [hiResErrorId, setHiResErrorId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmPasteProcessing, setConfirmPasteProcessing] = useState(false);
   // Mirrors confirmDelete's shape - Remove from Album/Tag are plain single-asset async
@@ -325,6 +345,18 @@ const Viewer = forwardRef<ViewerHandle, {
   const loaded = loadedId === shown.id;
   const thumbLoaded = thumbLoadedId === shown.id;
   const { shortcuts, capturing } = useShortcuts();
+  const fullscreen = useImageFullscreen();
+  useViewerFullscreenLifecycle();
+  // Opened straight into fullscreen from the grid (App's Ctrl+F / View menu)
+  // rather than toggled from inside this Viewer - leaving fullscreen then
+  // goes all the way back to the grid it came from, not to this Viewer.
+  const openedFullscreen = useRef(isImageFullscreen());
+  const wasFullscreen = useRef(fullscreen);
+  useEffect(() => {
+    if (wasFullscreen.current && !fullscreen && openedFullscreen.current) onClose();
+    wasFullscreen.current = fullscreen;
+    if (!fullscreen) openedFullscreen.current = false;
+  }, [fullscreen, onClose]);
   const { overrideIds } = useRawOverrides();
   const placeholder = useMemo(() => (shown.thumbHash ? decodeThumbHash(shown.thumbHash) : null), [shown.thumbHash]);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -758,9 +790,30 @@ const Viewer = forwardRef<ViewerHandle, {
     const { w, h } = containRect(stageSize.w, stageSize.h, natW, natH);
     fitExceedsPreview = w * dpr > natW + 1 || h * dpr > natH + 1;
   }
-  const wantHiRes = (zoom > 100 || loupeOn || fitExceedsPreview) && isOriginalZoomable(shown);
-  const hiResSrc = thumbnailSrc(shown.id, 'original', imgVersion);
+  // RAWs can't be decoded as `original`, so their hi-res source is the
+  // camera's embedded full-size JPEG instead - used by the loupe only, never
+  // swapped into the main image: it's the camera's own rendering, which can
+  // differ visibly from Immich's preview, and the whole photo shifting
+  // colour the moment the loupe turns on would be worse than no swap.
+  const rawEmbedded = isRawAsset(shown) && !isVideo;
+  const wantHiRes = rawEmbedded ? loupeOn : (zoom > 100 || loupeOn || fitExceedsPreview) && isOriginalZoomable(shown);
+  const hiResSrc = rawEmbedded ? embeddedPreviewSrc(shown, imgVersion) : thumbnailSrc(shown.id, 'original', imgVersion);
   const hiResReady = wantHiRes && hiResLoadedId === shown.id;
+  const hiResFailed = hiResErrorId === shown.id;
+  // What the loupe is actually magnifying, shown as a hint on it so a soft
+  // view isn't mistaken for missed focus: still waiting on the hi-res
+  // source, or stuck below the original's real resolution (no hi-res source
+  // for this format, it failed, or the embedded preview is itself small).
+  const originalLong = Math.max(shown.exifImageWidth ?? 0, shown.exifImageHeight ?? 0);
+  const loupeRes: 'loading' | 'full' | 'preview' =
+    !wantHiRes || hiResFailed
+      ? 'preview'
+      : !hiResReady
+        ? 'loading'
+        : originalLong && hiResLong < originalLong * 0.9
+          ? 'preview'
+          : 'full';
+  const loupeUsesHiRes = hiResReady && hiResLong > Math.max(natW ?? 0, natH ?? 0);
 
   // The loupe magnifies the "fit" (unzoomed) rendering of the already-loaded
   // preview image - it doesn't compose with the manual zoom slider. Once
@@ -771,12 +824,44 @@ const Viewer = forwardRef<ViewerHandle, {
   // <img> has finished fetching it would race a second, independent request
   // for the same bytes over a possibly-slow remote connection instead of
   // hitting the now-warm local disk cache from the first request.
+  // Mouse wheel over the stage steps the loupe zoom (up = in). Native,
+  // non-passive listener since React's onWheel is passive and can't stop
+  // the zoomed image container from scrolling underneath.
+  const wheelAccum = useRef(0);
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el || !loupeOn || isVideo) return;
+    let flashTimer: ReturnType<typeof setTimeout> | undefined;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      wheelAccum.current += e.deltaY;
+      if (Math.abs(wheelAccum.current) < LOUPE_WHEEL_THRESHOLD) return;
+      const dir = wheelAccum.current < 0 ? 1 : -1;
+      wheelAccum.current = 0;
+      setLoupeZoom((z) => Math.min(LOUPE_ZOOM_MAX, Math.max(LOUPE_ZOOM_DEFAULT, z + dir * LOUPE_ZOOM_STEP)));
+      setLoupeZoomFlash(true);
+      clearTimeout(flashTimer);
+      flashTimer = setTimeout(() => setLoupeZoomFlash(false), 900);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      clearTimeout(flashTimer);
+    };
+  }, [loupeOn, isVideo]);
+
   let loupeStyle: React.CSSProperties | null = null;
   if (loupeOn && loaded && loupePos && stageRef.current && natW && natH) {
     const rect = stageRef.current.getBoundingClientRect();
     const { w, h, x, y } = containRect(rect.width, rect.height, natW, natH);
     const cx = loupePos.x - x;
     const cy = loupePos.y - y;
+    // The original's long edge in pixels - from EXIF, else the preview's own
+    // (so 100% is then 1:1 preview pixels). Long edge rather than width so
+    // an EXIF-rotated photo's pre-rotation width/height can't swap axes.
+    const origLong = Math.max(shown.exifImageWidth ?? 0, shown.exifImageHeight ?? 0) || Math.max(natW, natH);
+    const dpr = window.devicePixelRatio || 1;
+    const magnification = ((origLong / dpr) * (loupeZoom / 100)) / Math.max(w, h);
     if (cx >= 0 && cy >= 0 && cx <= w && cy <= h) {
       loupeStyle = {
         position: 'absolute',
@@ -788,10 +873,10 @@ const Viewer = forwardRef<ViewerHandle, {
         border: '2px solid rgba(255,255,255,0.5)',
         boxShadow: '0 8px 30px rgba(0,0,0,0.6)',
         backgroundColor: '#000',
-        backgroundImage: `url(${hiResReady ? hiResSrc : previewSrc})`,
+        backgroundImage: `url(${loupeUsesHiRes ? hiResSrc : previewSrc})`,
         backgroundRepeat: 'no-repeat',
-        backgroundSize: `${w * LOUPE_MAGNIFICATION}px ${h * LOUPE_MAGNIFICATION}px`,
-        backgroundPosition: `${-(cx * LOUPE_MAGNIFICATION - LOUPE_SIZE / 2)}px ${-(cy * LOUPE_MAGNIFICATION - LOUPE_SIZE / 2)}px`,
+        backgroundSize: `${w * magnification}px ${h * magnification}px`,
+        backgroundPosition: `${-(cx * magnification - LOUPE_SIZE / 2)}px ${-(cy * magnification - LOUPE_SIZE / 2)}px`,
         pointerEvents: 'none',
         zIndex: 5,
       };
@@ -871,6 +956,7 @@ const Viewer = forwardRef<ViewerHandle, {
     if (onSyncMetadata && unsyncedMetadata?.has(shown.id)) {
       actions.push({ id: 'syncMetadata', group: 'more', label: 'Sync Metadata from Sidecar', onClick: () => onSyncMetadata(shown.id) });
     }
+    actions.push({ id: 'fullscreen', group: 'more', label: 'View Fullscreen', onClick: () => setImageFullscreen(true) });
     return actions;
   }, [
     shown,
@@ -908,188 +994,190 @@ const Viewer = forwardRef<ViewerHandle, {
       className="window-frame window-frame-overlay"
       style={{
         zIndex: 200,
-        background: 'var(--canvas)',
+        background: fullscreen ? '#000' : 'var(--canvas)',
         display: 'flex',
         flexDirection: 'column',
         color: 'var(--text)',
       }}
     >
-      <div
-        style={{
-          height: 48,
-          flexShrink: 0,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          padding: '0 14px',
-          borderBottom: '1px solid var(--border-strong)',
-          background: 'var(--panel-3)',
-        }}
-      >
+      {!fullscreen && (
         <div
-          onClick={onClose}
           style={{
+            height: 48,
+            flexShrink: 0,
             display: 'flex',
             alignItems: 'center',
-            gap: 7,
-            height: 30,
-            padding: '0 12px 0 9px',
-            borderRadius: 8,
-            background: 'var(--overlay-weak)',
-            fontSize: 13,
-            cursor: 'default',
+            gap: 10,
+            padding: '0 14px',
+            borderBottom: '1px solid var(--border-strong)',
+            background: 'var(--panel-3)',
           }}
         >
-          <Icon name="back" size={15} />
-          Back
-        </div>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {shown.fileName}
-            {peekAsset && <span style={{ fontWeight: 400, color: 'var(--text-dimmer)' }}> · previewing stack member</span>}
+          <div
+            onClick={onClose}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 7,
+              height: 30,
+              padding: '0 12px 0 9px',
+              borderRadius: 8,
+              background: 'var(--overlay-weak)',
+              fontSize: 13,
+              cursor: 'default',
+            }}
+          >
+            <Icon name="back" size={15} />
+            Back
           </div>
-          <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)' }}>
-            {formatDims(shown)} · {formatSize(shown.fileSizeInByte)}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {shown.fileName}
+              {peekAsset && <span style={{ fontWeight: 400, color: 'var(--text-dimmer)' }}> · previewing stack member</span>}
+            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-dimmer)' }}>
+              {formatDims(shown)} · {formatSize(shown.fileSizeInByte)}
+            </div>
           </div>
-        </div>
-        <div style={{ flex: 1 }} />
-        {onUnstack && (
-          <div onClick={() => onUnstack().catch(() => {})} style={headerButtonStyle(false)}>
-            <Icon name="unstack" size={15} />
-            Unstack
+          <div style={{ flex: 1 }} />
+          {onUnstack && (
+            <div onClick={() => onUnstack().catch(() => {})} style={headerButtonStyle(false)}>
+              <Icon name="unstack" size={15} />
+              Unstack
+            </div>
+          )}
+          {onPrint && !isRawAsset(shown) && !isVideo && (
+            <div onClick={() => onPrint(shown)} style={headerButtonStyle(false)}>
+              <Icon name="print" size={15} />
+              Print
+            </div>
+          )}
+          {isVideo && shown.originalPath && (
+            <div onClick={handleOpenInVideoPlayer} style={headerButtonStyle(false)}>
+              <Icon name="video" size={15} />
+              Open in Video Player
+            </div>
+          )}
+          {hasDropdownActions && <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />}
+          {menuGroups.organize.length > 0 && (
+            <ActionDropdown variant="plain" label="Organize" icon={<Icon name="organize" size={15} />} actions={menuGroups.organize} />
+          )}
+          {menuGroups.edit.length > 0 && (
+            <ActionDropdown variant="plain" label="Edit" icon={<Icon name="edit" size={15} />} actions={menuGroups.edit} />
+          )}
+          {menuGroups.copyPaste.length > 0 && (
+            <ActionDropdown variant="plain" label="Copy/Paste" icon={<Icon name="copyPaste" size={15} />} actions={menuGroups.copyPaste} />
+          )}
+          {menuGroups.share.length > 0 && (
+            <ActionDropdown variant="plain" label="Share" icon={<Icon name="share" size={15} />} actions={menuGroups.share} />
+          )}
+          {menuGroups.more.length > 0 && (
+            <ActionDropdown variant="plain" label="More" icon={<Icon name="more" size={15} />} actions={menuGroups.more} />
+          )}
+          {rotateError && (
+            <div style={{ fontSize: 11.5, color: 'var(--danger)', maxWidth: 220, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={rotateError}>
+              {rotateError}
+            </div>
+          )}
+          {launchError && (
+            <div style={{ fontSize: 11.5, color: 'var(--danger)', maxWidth: 220, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={launchError}>
+              {launchError}
+            </div>
+          )}
+          <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />
+          <div onClick={() => setConfirmDelete(true)} style={destructiveButtonStyle()}>
+            <Icon name="trash" size={15} />
+            Move to Trash
           </div>
-        )}
-        {onPrint && !isRawAsset(shown) && !isVideo && (
-          <div onClick={() => onPrint(shown)} style={headerButtonStyle(false)}>
-            <Icon name="print" size={15} />
-            Print
-          </div>
-        )}
-        {isVideo && shown.originalPath && (
-          <div onClick={handleOpenInVideoPlayer} style={headerButtonStyle(false)}>
-            <Icon name="video" size={15} />
-            Open in Video Player
-          </div>
-        )}
-        {hasDropdownActions && <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />}
-        {menuGroups.organize.length > 0 && (
-          <ActionDropdown variant="plain" label="Organize" icon={<Icon name="organize" size={15} />} actions={menuGroups.organize} />
-        )}
-        {menuGroups.edit.length > 0 && (
-          <ActionDropdown variant="plain" label="Edit" icon={<Icon name="edit" size={15} />} actions={menuGroups.edit} />
-        )}
-        {menuGroups.copyPaste.length > 0 && (
-          <ActionDropdown variant="plain" label="Copy/Paste" icon={<Icon name="copyPaste" size={15} />} actions={menuGroups.copyPaste} />
-        )}
-        {menuGroups.share.length > 0 && (
-          <ActionDropdown variant="plain" label="Share" icon={<Icon name="share" size={15} />} actions={menuGroups.share} />
-        )}
-        {menuGroups.more.length > 0 && (
-          <ActionDropdown variant="plain" label="More" icon={<Icon name="more" size={15} />} actions={menuGroups.more} />
-        )}
-        {rotateError && (
-          <div style={{ fontSize: 11.5, color: 'var(--danger)', maxWidth: 220, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={rotateError}>
-            {rotateError}
-          </div>
-        )}
-        {launchError && (
-          <div style={{ fontSize: 11.5, color: 'var(--danger)', maxWidth: 220, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={launchError}>
-            {launchError}
-          </div>
-        )}
-        <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />
-        <div onClick={() => setConfirmDelete(true)} style={destructiveButtonStyle()}>
-          <Icon name="trash" size={15} />
-          Move to Trash
-        </div>
-        {onRemoveFromAlbum && (
-          <div onClick={() => setConfirmRemove('album')} style={destructiveButtonStyle()}>
-            <Icon name="remove" size={15} />
-            Remove from Album
-          </div>
-        )}
-        {onRemoveFromTag && (
-          <div onClick={() => setConfirmRemove('tag')} style={destructiveButtonStyle()}>
-            <Icon name="remove" size={15} />
-            Remove from Tag
-          </div>
-        )}
-        {/* Zoom and Loupe have nothing to act on for a video (there's no
-            still-image rendition to magnify or scale) - hidden rather than
-            disabled so it's clear they just don't apply here. */}
-        {!isVideo && (
-          <>
-            <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 7,
-                height: 30,
-                padding: '0 4px 0 8px',
-                borderRadius: 8,
-                background: 'var(--overlay-weak)',
-              }}
-            >
+          {onRemoveFromAlbum && (
+            <div onClick={() => setConfirmRemove('album')} style={destructiveButtonStyle()}>
+              <Icon name="remove" size={15} />
+              Remove from Album
+            </div>
+          )}
+          {onRemoveFromTag && (
+            <div onClick={() => setConfirmRemove('tag')} style={destructiveButtonStyle()}>
+              <Icon name="remove" size={15} />
+              Remove from Tag
+            </div>
+          )}
+          {/* Zoom and Loupe have nothing to act on for a video (there's no
+              still-image rendition to magnify or scale) - hidden rather than
+              disabled so it's clear they just don't apply here. */}
+          {!isVideo && (
+            <>
+              <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />
               <div
-                onClick={() => setZoom((z) => Math.max(MIN_ZOOM, z - 25))}
-                style={{ width: 22, height: 22, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default' }}
-              >
-                <div style={{ width: 10, height: 1.7, background: 'currentColor', borderRadius: 1 }} />
-              </div>
-              <input
-                type="range"
-                min={MIN_ZOOM}
-                max={MAX_ZOOM}
-                step={5}
-                value={zoom}
-                onChange={(e) => setZoom(Number(e.target.value))}
-                style={{ width: 92 }}
-              />
-              <div
-                onClick={() => setZoom((z) => Math.min(MAX_ZOOM, z + 25))}
-                style={{ width: 22, height: 22, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default', position: 'relative' }}
-              >
-                <div style={{ position: 'absolute', width: 10, height: 1.7, background: 'currentColor', borderRadius: 1 }} />
-                <div style={{ position: 'absolute', width: 1.7, height: 10, background: 'currentColor', borderRadius: 1 }} />
-              </div>
-              <div
-                onClick={() => setZoom(100)}
                 style={{
-                  minWidth: 40,
-                  height: 22,
-                  padding: '0 7px',
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: 6,
-                  font: '600 12px ui-monospace,monospace',
-                  cursor: 'default',
+                  gap: 7,
+                  height: 30,
+                  padding: '0 4px 0 8px',
+                  borderRadius: 8,
+                  background: 'var(--overlay-weak)',
                 }}
               >
-                {zoom}%
+                <div
+                  onClick={() => setZoom((z) => Math.max(MIN_ZOOM, z - 25))}
+                  style={{ width: 22, height: 22, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default' }}
+                >
+                  <div style={{ width: 10, height: 1.7, background: 'currentColor', borderRadius: 1 }} />
+                </div>
+                <input
+                  type="range"
+                  min={MIN_ZOOM}
+                  max={MAX_ZOOM}
+                  step={5}
+                  value={zoom}
+                  onChange={(e) => setZoom(Number(e.target.value))}
+                  style={{ width: 92 }}
+                />
+                <div
+                  onClick={() => setZoom((z) => Math.min(MAX_ZOOM, z + 25))}
+                  style={{ width: 22, height: 22, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default', position: 'relative' }}
+                >
+                  <div style={{ position: 'absolute', width: 10, height: 1.7, background: 'currentColor', borderRadius: 1 }} />
+                  <div style={{ position: 'absolute', width: 1.7, height: 10, background: 'currentColor', borderRadius: 1 }} />
+                </div>
+                <div
+                  onClick={() => setZoom(100)}
+                  style={{
+                    minWidth: 40,
+                    height: 22,
+                    padding: '0 7px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: 6,
+                    font: '600 12px ui-monospace,monospace',
+                    cursor: 'default',
+                  }}
+                >
+                  {zoom}%
+                </div>
               </div>
-            </div>
-            <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />
-            <div onClick={() => setLoupeOn((v) => !v)} style={headerButtonStyle(loupeOn)}>
-              <Icon name="loupe" size={15} />
-              Loupe
-            </div>
-          </>
-        )}
-        <div onClick={() => setFilmstripOpen((v) => !v)} style={headerButtonStyle(filmstripOpen)}>
-          <Icon name="filmstrip" size={15} />
-          Filmstrip
+              <div style={{ width: 1, height: 22, background: 'var(--overlay-medium)', margin: '0 2px' }} />
+              <div onClick={() => setLoupeOn((v) => !v)} style={headerButtonStyle(loupeOn)}>
+                <Icon name="loupe" size={15} />
+                Loupe
+              </div>
+            </>
+          )}
+          <div onClick={() => setFilmstripOpen((v) => !v)} style={headerButtonStyle(filmstripOpen)}>
+            <Icon name="filmstrip" size={15} />
+            Filmstrip
+          </div>
+          <div onClick={() => setInfoOpen((v) => !v)} style={headerButtonStyle(infoOpen)}>
+            <Icon name="info" size={15} />
+            Metadata
+          </div>
         </div>
-        <div onClick={() => setInfoOpen((v) => !v)} style={headerButtonStyle(infoOpen)}>
-          <Icon name="info" size={15} />
-          Metadata
-        </div>
-      </div>
+      )}
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ flex: 1, position: 'relative', minHeight: 0, background: 'var(--canvas)' }}>
-          <div style={{ position: 'absolute', inset: 0, overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 28 }}>
+        <div style={{ flex: 1, position: 'relative', minHeight: 0, background: fullscreen ? '#000' : 'var(--canvas)' }}>
+          <div style={{ position: 'absolute', inset: 0, overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: fullscreen ? 0 : 28 }}>
             {/* Fixed-size stage (not sized by the images) so both layers fill the
                 available viewing area via objectFit rather than collapsing to
                 the thumbhash placeholder's own tiny intrinsic bitmap size. */}
@@ -1231,7 +1319,11 @@ const Viewer = forwardRef<ViewerHandle, {
                     <img
                       src={hiResSrc}
                       alt=""
-                      onLoad={() => setHiResLoadedId(shown.id)}
+                      onLoad={(e) => {
+                        setHiResLong(Math.max(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight));
+                        setHiResLoadedId(shown.id);
+                      }}
+                      onError={() => setHiResErrorId(shown.id)}
                       style={{
                         position: 'absolute',
                         inset: 0,
@@ -1239,18 +1331,56 @@ const Viewer = forwardRef<ViewerHandle, {
                         height: '100%',
                         objectFit: 'contain',
                         transform: `scale(${zoom / 100}) rotate(${visualRotation}deg)`,
-                        opacity: hiResReady ? 1 : 0,
+                        opacity: hiResReady && !rawEmbedded ? 1 : 0,
                         transition: 'opacity 150ms, transform 250ms ease',
                       }}
                     />
                   )}
-                  {loupeStyle && <div style={loupeStyle} />}
+                  {loupeStyle && (
+                    <div style={loupeStyle}>
+                      {loupeRes !== 'full' && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: '50%',
+                            top: 14,
+                            transform: 'translateX(-50%)',
+                            padding: '2px 8px',
+                            borderRadius: 10,
+                            background: 'rgba(0,0,0,0.6)',
+                            color: '#fff',
+                            fontSize: 11,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {loupeRes === 'loading' ? 'Loading full resolution…' : 'Preview resolution'}
+                        </div>
+                      )}
+                      {loupeZoomFlash && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: '50%',
+                            bottom: 14,
+                            transform: 'translateX(-50%)',
+                            padding: '2px 8px',
+                            borderRadius: 10,
+                            background: 'rgba(0,0,0,0.6)',
+                            color: '#fff',
+                            font: '600 11.5px ui-monospace,monospace',
+                          }}
+                        >
+                          {loupeZoom}%
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
             </div>
           </div>
 
-          {hasPrev && (
+          {hasPrev && !fullscreen && (
             <div
               onClick={onPrev}
               style={{
@@ -1271,7 +1401,7 @@ const Viewer = forwardRef<ViewerHandle, {
               <div style={{ width: 10, height: 10, borderLeft: '2px solid var(--text)', borderBottom: '2px solid var(--text)', transform: 'rotate(45deg)' }} />
             </div>
           )}
-          {hasNext && (
+          {hasNext && !fullscreen && (
             <div
               onClick={onNext}
               style={{
@@ -1294,7 +1424,7 @@ const Viewer = forwardRef<ViewerHandle, {
           )}
         </div>
 
-        {infoOpen && (
+        {infoOpen && !fullscreen && (
           <div
             style={{
               width: 288,
@@ -1412,7 +1542,7 @@ const Viewer = forwardRef<ViewerHandle, {
         )}
       </div>
 
-      {filmstripOpen && <Filmstrip items={stripAssets} activeId={asset.id} onSelect={onSelect} />}
+      {filmstripOpen && !fullscreen && <Filmstrip items={stripAssets} activeId={asset.id} onSelect={onSelect} />}
 
       {confirmDelete && (
         <ConfirmDialog

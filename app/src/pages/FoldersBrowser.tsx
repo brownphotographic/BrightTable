@@ -83,6 +83,10 @@ function prevValuesFor(asset: AssetSummary | undefined, patch: AssetMetadataPatc
 }
 
 export interface FoldersBrowserHandle {
+  // View → Fullscreen Image / Ctrl+F from the grid (see App.tsx): opens the
+  // last-clicked photo in the Viewer if none is open yet. Returns whether
+  // there's now a photo to show fullscreen.
+  openForFullscreen: () => boolean;
   selectAll: () => void;
   deselectAll: () => void;
   stackSelected: () => void;
@@ -921,6 +925,12 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   useImperativeHandle(
     ref,
     () => ({
+      openForFullscreen: () => {
+        if (openId) return true;
+        if (!lastClickedId.current) return false;
+        setOpenId(lastClickedId.current);
+        return true;
+      },
       selectAll,
       deselectAll,
       stackSelected: () => {

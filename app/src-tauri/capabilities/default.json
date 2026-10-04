@@ -13,6 +13,8 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "core:window:allow-is-maximized",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-is-fullscreen",
     "dialog:default",
     "opener:default",
     "opener:allow-open-url"

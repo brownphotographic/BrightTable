@@ -52,6 +52,7 @@ export default function MenuBar({
   onExportToFolder,
   onShareToFlickr,
   onOpenAbout,
+  onToggleFullscreen,
   filters,
   onFiltersChange,
   searchQuery,
@@ -97,6 +98,8 @@ export default function MenuBar({
   onExportToFolder: () => void;
   onShareToFlickr: () => void;
   onOpenAbout: () => void;
+  // Shows the open (else last-clicked) photo fullscreen - see App.tsx.
+  onToggleFullscreen: () => void;
   filters: Filters;
   onFiltersChange: (next: Filters) => void;
   // Live text currently typed in the search box - controlled by the parent
@@ -342,6 +345,15 @@ export default function MenuBar({
           onClick={() => {
             close();
             onThumbSizeChange(Math.max(100, thumbSize - 24));
+          }}
+        />
+        <Divider />
+        <MenuItem
+          label="Fullscreen Image"
+          shortcut={prettyShortcut(shortcuts.toggleFullscreen)}
+          onClick={() => {
+            close();
+            onToggleFullscreen();
           }}
         />
         {/* Sort Photos By disabled - none of these are wired to anything, so

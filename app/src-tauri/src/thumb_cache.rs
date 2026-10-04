@@ -124,7 +124,7 @@ pub fn stats(app: &AppHandle) -> ThumbCacheStats {
     ThumbCacheStats { dir, size_bytes, file_count }
 }
 
-/// Removes every cached rendition (`thumbnail`/`preview`/`original`, under
+/// Removes every cached rendition (`thumbnail`/`preview`/`original`/`embedded`, under
 /// any of the extensions `write()` might have used) for one asset - used
 /// after an in-place edit that changes the asset's actual pixels/orientation
 /// (currently just `rotate_asset`), so this cache doesn't keep serving the
@@ -134,7 +134,7 @@ pub fn stats(app: &AppHandle) -> ThumbCacheStats {
 /// cache op just means a re-fetch next time" tolerance).
 pub fn evict_asset(app: &AppHandle, asset_id: &str) {
     let Some(dir) = cache_dir(app) else { return };
-    for size in ["thumbnail", "preview", "original"] {
+    for size in ["thumbnail", "preview", "original", "embedded"] {
         for ext in ["jpg", "webp", "png", "gif", "bmp", "avif"] {
             let _ = fs::remove_file(dir.join(format!("{asset_id}_{size}.{ext}")));
         }

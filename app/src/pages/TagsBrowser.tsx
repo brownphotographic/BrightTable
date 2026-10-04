@@ -72,6 +72,10 @@ function prevValuesFor(asset: AssetSummary | undefined, patch: AssetMetadataPatc
 export interface TagsBrowserHandle {
   openExportToFolder: () => void;
   openExportToFlickr: () => void;
+  // View → Fullscreen Image / Ctrl+F from the grid (see App.tsx): opens the
+  // last-clicked photo in the Viewer if none is open yet. Returns whether
+  // there's now a photo to show fullscreen.
+  openForFullscreen: () => boolean;
   selectAll: () => void;
   deselectAll: () => void;
   stackSelected: () => void;
@@ -602,6 +606,12 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
   useImperativeHandle(
     ref,
     () => ({
+      openForFullscreen: () => {
+        if (openId) return true;
+        if (!lastClickedId.current) return false;
+        setOpenId(lastClickedId.current);
+        return true;
+      },
       // Matches Photos/Folders/Albums/People's File-menu export handlers:
       // the current selection, else the asset open in the Viewer, else
       // nothing (a silent no-op - there's no selection to disable the menu
@@ -659,6 +669,7 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
       handlePasteMetadata,
       commitEditMany,
       rotateSelection,
+      openId,
     ],
   );
 

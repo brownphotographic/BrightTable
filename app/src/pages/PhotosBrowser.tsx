@@ -119,6 +119,10 @@ type PhotoRow =
   | { kind: 'stackband'; bucketIndex: number; day: string; stackId: string; assetId: string; height: number };
 
 export interface PhotosBrowserHandle {
+  // View → Fullscreen Image / Ctrl+F from the grid (see App.tsx): opens the
+  // last-clicked photo in the Viewer if none is open yet. Returns whether
+  // there's now a photo to show fullscreen.
+  openForFullscreen: () => boolean;
   selectAll: () => void;
   deselectAll: () => void;
   stackSelected: () => void;
@@ -1097,6 +1101,12 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   useImperativeHandle(
     ref,
     () => ({
+      openForFullscreen: () => {
+        if (openId) return true;
+        if (!lastClickedId.current) return false;
+        setOpenId(lastClickedId.current);
+        return true;
+      },
       selectAll,
       deselectAll,
       stackSelected: () => {

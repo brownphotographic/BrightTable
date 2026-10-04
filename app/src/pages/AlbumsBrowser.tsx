@@ -82,6 +82,10 @@ const ALBUM_GRID_CHUNK_SIZE = 60;
 export interface AlbumsBrowserHandle {
   openExportToFolder: () => void;
   openExportToFlickr: () => void;
+  // View → Fullscreen Image / Ctrl+F from the grid (see App.tsx): opens the
+  // last-clicked photo in the Viewer if none is open yet. Returns whether
+  // there's now a photo to show fullscreen.
+  openForFullscreen: () => boolean;
   selectAll: () => void;
   deselectAll: () => void;
   stackSelected: () => void;
@@ -643,6 +647,12 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
   useImperativeHandle(
     ref,
     () => ({
+      openForFullscreen: () => {
+        if (openId) return true;
+        if (!lastClickedId.current) return false;
+        setOpenId(lastClickedId.current);
+        return true;
+      },
       // Matches Photos/Folders' File-menu export handlers: the current
       // selection, else the asset open in the Viewer, else nothing (a
       // silent no-op - there's no selection to disable the menu item on).
@@ -704,6 +714,7 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
       handlePasteMetadata,
       commitEditMany,
       rotateSelection,
+      openId,
     ],
   );
 

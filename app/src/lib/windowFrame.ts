@@ -24,16 +24,18 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 // margin rules in index.css) reads off `:root[data-window-maximized]`
 // rather than each polling isMaximized() itself. Native GTK windows flatten
 // to 0 margin/radius/no shadow while maximized or tiled - this is what
-// mirrors that. Polls on every resize since Tauri has no dedicated
+// mirrors that (fullscreen counts too). Polls on every resize since Tauri has no dedicated
 // maximize-changed event.
 export function useSyncWindowFrameMaximized(): void {
   useEffect(() => {
     const win = getCurrentWindow();
     const sync = () => {
-      win
-        .isMaximized()
-        .then((maximized) => {
-          document.documentElement.dataset.windowMaximized = String(maximized);
+      // Fullscreen flattens the frame exactly like maximized - a 16px
+      // transparent margin around a fullscreen window would just show as a
+      // gap at every screen edge.
+      Promise.all([win.isMaximized(), win.isFullscreen()])
+        .then(([maximized, fullscreen]) => {
+          document.documentElement.dataset.windowMaximized = String(maximized || fullscreen);
         })
         .catch(() => {});
     };

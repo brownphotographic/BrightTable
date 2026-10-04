@@ -25,6 +25,7 @@ import { WindowControlsProvider } from './lib/windowControls';
 import { GridLoupeSettingsProvider, useGridLoupeSettings } from './lib/gridLoupeSettings';
 import { ThumbnailSettingsProvider } from './lib/thumbnailSettings';
 import { useSyncWindowFrameMaximized } from './lib/windowFrame';
+import { isImageFullscreen, setImageFullscreen, useSyncImageFullscreen } from './lib/fullscreen';
 import { ThemeProvider } from './lib/theme';
 import { ApplicationsProvider } from './lib/applications';
 import { RawOverridesProvider } from './lib/rawOverrides';
@@ -212,6 +213,7 @@ function AppShell() {
   // attempt is currently being blocked.
   const [closeBlockedCount, setCloseBlockedCount] = useState<number | null>(null);
   useSyncWindowFrameMaximized();
+  useSyncImageFullscreen();
   const photosRef = useRef<PhotosBrowserHandle>(null);
   const foldersRef = useRef<FoldersBrowserHandle>(null);
   const albumsRef = useRef<AlbumsBrowserHandle>(null);
@@ -221,6 +223,17 @@ function AppShell() {
   const { shortcuts, capturing } = useShortcuts();
 
   const refreshTimeline = () => setDataKey((k) => k + 1);
+  // Ctrl+F / View → Fullscreen Image. Entering needs a photo to show: the one
+  // already open in the active page's Viewer, else that page opens its
+  // last-clicked photo (Trash has no Viewer, so it's a no-op there).
+  const toggleImageFullscreen = () => {
+    if (isImageFullscreen()) {
+      setImageFullscreen(false);
+      return;
+    }
+    const ref = activeSearch ? searchRef : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : leftTab === 'photos' ? photosRef : null;
+    if (ref?.current?.openForFullscreen()) setImageFullscreen(true);
+  };
   // Every tab with a thumbnail grid has a size to zoom - Photos/Folders plus
   // Tags/People/Albums/Trash (i.e. every LeftTab).
   const showThumbSize = !activeSearch;
@@ -245,6 +258,9 @@ function AppShell() {
       if (matchesShortcut(e, shortcuts.refreshTimeline)) {
         e.preventDefault();
         refreshTimeline();
+      } else if (matchesShortcut(e, shortcuts.toggleFullscreen)) {
+        e.preventDefault();
+        toggleImageFullscreen();
       } else if (matchesShortcut(e, shortcuts.openPreferences)) {
         e.preventDefault();
         setPrefsOpen(true);
@@ -258,7 +274,23 @@ function AppShell() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [prefsOpen, shortcuts, capturing, showThumbSize]);
+  }, [prefsOpen, shortcuts, capturing, showThumbSize, leftTab, activeSearch]);
+
+  // Esc always leaves image fullscreen first, ahead of whatever Esc/deselect
+  // would otherwise do (close the Viewer, cancel a dialog) - registered in
+  // the capture phase and stopping propagation so those bubble-phase window
+  // listeners never see this keypress. Only plain Escape (not a rebound
+  // `deselect`), and not while typing or capturing a new binding.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || !isImageFullscreen() || isTypingTarget(e) || capturing) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      setImageFullscreen(false);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [capturing]);
 
   return (
     <div
@@ -302,6 +334,7 @@ function AppShell() {
           onOpenImport={() => setImportOpen(true)}
           onOpenActivity={() => setActivityOpen(true)}
           onQuit={() => getCurrentWindow().close()}
+          onToggleFullscreen={toggleImageFullscreen}
           metaOpen={metaOpen}
           onToggleMetadata={() => setMetaOpen((v) => !v)}
           loupeOn={gridLoupeOn}

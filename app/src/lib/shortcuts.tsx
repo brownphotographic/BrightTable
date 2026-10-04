@@ -51,7 +51,8 @@ export type ShortcutId =
   | 'pasteImageProcessing'
   | 'rotateLeft'
   | 'rotateRight'
-  | 'addToTag';
+  | 'addToTag'
+  | 'toggleFullscreen';
 
 export const SHORTCUT_DEFS: { id: ShortcutId; label: string }[] = [
   { id: 'open', label: 'Open photo' },
@@ -86,6 +87,7 @@ export const SHORTCUT_DEFS: { id: ShortcutId; label: string }[] = [
   { id: 'rotateLeft', label: 'Rotate Left' },
   { id: 'rotateRight', label: 'Rotate Right' },
   { id: 'addToTag', label: 'Add to Tag' },
+  { id: 'toggleFullscreen', label: 'Fullscreen image' },
 ];
 
 // `toggleFilmstrip` moved off "F" to "M" to make room for "favorite" - both
@@ -124,6 +126,7 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutId, string> = {
   rotateLeft: 'Ctrl+[',
   rotateRight: 'Ctrl+]',
   addToTag: 'Ctrl+T',
+  toggleFullscreen: 'Ctrl+F',
 };
 
 // Canonical stored form: modifier prefixes (Ctrl/Alt/Shift, in that order)

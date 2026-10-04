@@ -38,6 +38,7 @@ mod paths;
 mod print;
 mod processing_queue;
 mod protocol;
+mod raw_preview;
 mod rawtherapee;
 mod reveal;
 mod rotate;
