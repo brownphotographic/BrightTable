@@ -706,6 +706,12 @@ as part of `npm run build:flatpak` - do not edit it by hand.
 
 669 crates.
 
+## Bundled data
+
+| Data | License | Source |
+|---|---|---|
+| lensfun lens & camera database (`src-tauri/resources/lensfun-catalog.json`, derived by `scripts/gen-lens-catalog.mjs`) | CC-BY-SA-3.0 | https://github.com/lensfun/lensfun |
+
 ## License summary
 
 | License | Package count |

@@ -33,6 +33,8 @@ mod flickr;
 mod immich;
 mod import;
 mod io_guard;
+mod lens_catalog;
+mod lens_edit;
 mod open_default;
 mod paths;
 mod print;
@@ -285,6 +287,9 @@ pub fn run() {
             commands::save_settings_folder,
             commands::save_share_vault,
             commands::save_applications_config,
+            commands::save_lens_config,
+            commands::get_lens_catalog,
+            commands::change_asset_lens,
             commands::list_installed_apps,
             commands::launch_editor,
             commands::set_raw_overrides,

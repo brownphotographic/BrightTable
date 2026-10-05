@@ -55,6 +55,7 @@ import { useProcessingJobReconciliation } from '../lib/useProcessingJobReconcili
 import { bumpImageVersion, getImageVersion, useImageVersion } from '../lib/imageVersion';
 import { TAG_ASSIGN_DISABLED_REASON } from '../lib/featureFlags';
 import { copyImageProcessingEntry } from '../lib/useAssetActions';
+import { useLensEdit } from '../lib/lensEdit';
 
 const MIN_ZOOM = 25;
 const MAX_ZOOM = 400;
@@ -162,6 +163,10 @@ const Viewer = forwardRef<ViewerHandle, {
   stripAssets: AssetSummary[];
   onSelect: (id: string) => void;
   onEdit: (id: string, patch: AssetMetadataPatch) => Promise<void>;
+  // The page's own local asset-cache patch - Change Lens applies (and rolls
+  // back) its optimistic lens/caption update through this rather than onEdit,
+  // since it isn't a plain metadata PUT. Change Lens is hidden without it.
+  onLocalPatch?: (id: string, patch: Partial<AssetSummary>) => void;
   onDelete: (id: string) => Promise<void>;
   // Only present when the open asset is a stack's pick with other members -
   // omitted (no button shown) otherwise.
@@ -223,6 +228,7 @@ const Viewer = forwardRef<ViewerHandle, {
   stripAssets,
   onSelect,
   onEdit,
+  onLocalPatch,
   onDelete,
   onUnstack,
   onSetStackPick,
@@ -502,6 +508,17 @@ const Viewer = forwardRef<ViewerHandle, {
       setStackMembers((cur) => (cur ? cur.map((m) => (m.id === id ? { ...m, ...patch } : m)) : cur));
     },
     [onEdit],
+  );
+
+  const { openLensEditor } = useLensEdit();
+  // Same snapshot-patching reasoning as handleEdit above.
+  const applyLensPatch = useCallback(
+    (id: string, patch: Partial<AssetSummary>) => {
+      onLocalPatch?.(id, patch);
+      setPeekAsset((cur) => (cur && cur.id === id ? { ...cur, ...patch } : cur));
+      setStackMembers((cur) => (cur ? cur.map((m) => (m.id === id ? { ...m, ...patch } : m)) : cur));
+    },
+    [onLocalPatch],
   );
 
   // Passing shown.id/shown.fileName registers a round-trip watch on this
@@ -935,6 +952,9 @@ const Viewer = forwardRef<ViewerHandle, {
         onClick: () => handleRotate(true),
       });
     }
+    if (!isVideo && onLocalPatch) {
+      actions.push({ id: 'changeLens', group: 'edit', label: 'Change Lens…', onClick: () => openLensEditor({ assets: [shown], applyPatch: applyLensPatch }) });
+    }
     const copyEntry = copyImageProcessingEntry(shown, scannedForProcessingSidecar ?? new Set(), () => handleCopyImageProcessing());
     if (copyEntry) actions.push({ id: 'copyImageProcessing', group: 'copyPaste', ...copyEntry });
     if (isRawAsset(shown) && copiedProcessingSource) {
@@ -959,6 +979,9 @@ const Viewer = forwardRef<ViewerHandle, {
     actions.push({ id: 'fullscreen', group: 'more', label: 'View Fullscreen', onClick: () => setImageFullscreen(true) });
     return actions;
   }, [
+    openLensEditor,
+    applyLensPatch,
+    onLocalPatch,
     shown,
     onAddToAlbum,
     onAddToTag,

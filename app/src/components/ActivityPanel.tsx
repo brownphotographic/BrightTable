@@ -85,6 +85,7 @@ function kindLabel(job: EditJob): string {
   if (job.rating !== null) parts.push(job.rating === -1 ? 'Reject' : `${job.rating}★`);
   if (job.isFavorite !== null) parts.push(job.isFavorite ? 'Favorite' : 'Unfavorite');
   if (job.description !== null) parts.push('Caption');
+  if (job.lensModel) parts.push(`Lens: ${job.lensModel}`);
   return parts.join(' · ') || 'Edit';
 }
 

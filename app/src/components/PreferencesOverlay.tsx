@@ -21,12 +21,14 @@ import PreferencesShortcuts from '../pages/PreferencesShortcuts';
 import PreferencesApplications from '../pages/PreferencesApplications';
 import PreferencesConfiguration from '../pages/PreferencesConfiguration';
 import PreferencesSharing from '../pages/PreferencesSharing';
+import PreferencesLenses from '../pages/PreferencesLenses';
 
-type PrefsTab = 'library' | 'applications' | 'sharing' | 'configuration' | 'shortcuts';
+type PrefsTab = 'library' | 'applications' | 'lenses' | 'sharing' | 'configuration' | 'shortcuts';
 
 const tabs: { id: PrefsTab; label: string }[] = [
   { id: 'library', label: 'Library' },
   { id: 'applications', label: 'Applications' },
+  { id: 'lenses', label: 'Lenses' },
   { id: 'sharing', label: 'Sharing' },
   { id: 'configuration', label: 'Configuration' },
   { id: 'shortcuts', label: 'Shortcuts' },
@@ -145,6 +147,8 @@ export default function PreferencesOverlay({
             <PreferencesShortcuts />
           ) : tab === 'applications' ? (
             <PreferencesApplications />
+          ) : tab === 'lenses' ? (
+            <PreferencesLenses />
           ) : tab === 'sharing' ? (
             <PreferencesSharing />
           ) : tab === 'configuration' ? (

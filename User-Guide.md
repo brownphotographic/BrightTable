@@ -46,6 +46,16 @@ This is where you tell BrightTable which programs to use.
 
 Use the built-in **app picker** here — it finds apps installed as Flatpak, Snap, AppImage, or native packages automatically.
 
+### Lenses tab
+
+Settings for **Change Lens** (see [Changing the lens](#changing-the-lens) below):
+
+- **Write original files** — also rewrite the lens inside the RAW/JPEG itself (needs exiftool). Off by default. Turn it on if you use darktable, or if your camera records a lens name that's wrong.
+- **Keep a backup of originals** — exiftool leaves the untouched file next to it as `<name>_original`.
+- **Update RawTherapee / ART profiles** — points an existing `.pp3`/`.arp` at the chosen lens. It never creates one.
+- **My lenses** — add any lens by name. Most manual and adapted lenses aren't in lensfun, so type whatever name you want written to the photo.
+- **Coded lens mappings** — "the camera says *Summicron-M 1:2/50*, but it's really a *Planar T\* 2/50 ZM*". You can list several real lenses per coded lens and choose the default action: keep the coded lens and add a note, or replace it.
+
 ### Sharing tab
 
 Connect a Flickr account if you want to upload photos straight from BrightTable. See [Sharing to Flickr](#sharing-to-flickr) below.
@@ -130,6 +140,25 @@ This is BrightTable's main job: sending a RAW file out to a real editor and brin
 - **Copy/Paste Image Processing** (`Ctrl+C` / `Ctrl+V`) — copy the edit settings (sidecar) from one photo and apply them to others.
 - **Sync Metadata from Sidecar** (Edit menu, or context menu) — re-reads the on-disk sidecar file so BrightTable's view matches what's actually saved.
 - **Rotate Left/Right** (`Ctrl+[` / `Ctrl+]`).
+- **Change Lens…** — see below.
+
+### Changing the lens
+
+For a lens the camera couldn't identify (a manual lens with no contacts), or one it identified wrongly (e.g. a 6-bit coded Leica M lens that's really a Zeiss or Voigtländer). Select one or more photos, then choose **Change Lens…** from the context menu or the **Edit ▾** menu. It's also in the viewer's Edit menu.
+
+- **Replace the lens** writes the chosen lens into the lens model, lens make, lens spec, max aperture and focal length fields (including the 35mm equivalent). For a zoom you enter the as-shot focal length. You can optionally enter the aperture too.
+- **Keep lens, add note** leaves the lens alone and adds a `Lens: <actual lens>` line to the description. This is useful when the coded lens's correction profile is close enough. Re-applying replaces that line rather than adding another.
+- The picker lists, in this order: your mapped lenses, your own lenses, lenses already in your library, and the whole [lensfun](https://github.com/lensfun/lensfun) database. That's the database RawTherapee, ART and darktable use for lens corrections. Lenses with a **profile** badge are in lensfun under exactly that name, so those editors will auto-correct them. **+ Add new lens…** takes any name.
+
+Where the change shows up:
+
+| What gets written | Immich & BrightTable | RawTherapee | ART | darktable |
+|---|---|---|---|---|
+| XMP sidecar (always) | ✓ if the camera recorded no lens | — | — | — |
+| Existing `.pp3` / `.arp` (default on) | — | ✓ | ✓ | — |
+| Original file (Preferences → Lenses, or ticked per edit) | ✓ | ✓ | ✓ | ✓ after *refresh EXIF* |
+
+RawTherapee, ART and darktable only ever read lens info from the original file, never from an XMP sidecar. If the camera already recorded a lens, Immich keeps showing it too unless the original is written. The dialog warns you and offers **Write the original files for this edit**. In darktable, run *selected images → metadata → refresh EXIF* on photos it already knows about. A lens-correction module already in a photo's darktable history keeps the lens it had.
 
 ---
 

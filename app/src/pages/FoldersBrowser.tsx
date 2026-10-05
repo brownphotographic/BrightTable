@@ -59,6 +59,7 @@ import { resolveVisibleStackAssets } from '../lib/stacks';
 import { useRawOverrides } from '../lib/rawOverrides';
 import { useApplications } from '../lib/applications';
 import { copyImageProcessingEntry, useAssetActions } from '../lib/useAssetActions';
+import { useLensEdit } from '../lib/lensEdit';
 import { type MenuAction } from '../lib/actionMenu';
 import { pendingStyle } from '../lib/pending';
 import { useEditQueue } from '../lib/editQueue';
@@ -213,6 +214,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     rotateSelection,
     rotatingIds,
   } = useAssetActions({ onError: setEnqueueError });
+  const { openLensEditor } = useLensEdit();
   const { shortcuts, capturing } = useShortcuts();
   const { overrideIds, setOverride } = useRawOverrides();
   // This server version doesn't populate `stack` on /search/metadata or
@@ -774,6 +776,15 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       items.push({ label: 'Rotate Left', onClick: () => rotateSelection([asset.id], false, assetByIdAll).catch(() => {}) });
       items.push({ label: 'Rotate Right', onClick: () => rotateSelection([asset.id], true, assetByIdAll).catch(() => {}) });
     }
+    // Change Lens - same "whole selection if 2+, else this tile" targeting
+    // as Paste; videos have no lens to change.
+    const lensTargets = (selected.size >= 2 ? [...selected] : asset ? [asset.id] : []).map((id) => assetByIdAll.get(id)).filter((a): a is AssetSummary => !!a && !isVideoAsset(a));
+    if (lensTargets.length) {
+      items.push({
+        label: lensTargets.length > 1 ? `Change Lens (${lensTargets.length})…` : 'Change Lens…',
+        onClick: () => openLensEditor({ assets: lensTargets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+      });
+    }
     if (asset && selected.size <= 1 && isRoundTripEligible(asset)) {
       items.push({
         label: artLaunchBusy ? 'Working…' : 'Tweak Roundtrip',
@@ -852,6 +863,8 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     }
     return items;
   }, [
+    openLensEditor,
+    patchAssetLocal,
     contextMenu,
     assetByIdAll,
     selected,
@@ -1278,6 +1291,14 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       disabled: !selectionCanRotate || rotatingIds.size > 0,
       onClick: () => rotateSelection([...selected], true, assetByIdAll).catch(() => {}),
     },
+    {
+      id: 'changeLens',
+      group: 'edit',
+      label: 'Change Lens…',
+      disabled: !selectedAssets.some((a) => !isVideoAsset(a)),
+      disabledReason: 'Select one or more photos',
+      onClick: () => openLensEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError }),
+    },
     // Copy is inherently single-source, so these two only appear when
     // exactly one photo is selected (matching the context menu's identical
     // gating) - a multi-selection only ever gets Paste.
@@ -1453,6 +1474,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           stripAssets={stripAssets}
           onSelect={setOpenId}
           onEdit={commitEdit}
+          onLocalPatch={patchAssetLocal}
           onDelete={(id) => removeAssets([id])}
           onUnstack={openAsset.stack ? () => unstackByStackId(openAsset.stack!.id) : undefined}
           onSetStackPick={

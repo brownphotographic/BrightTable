@@ -141,6 +141,62 @@ export interface SharingConfig {
   loopsEnabled: boolean;
 }
 
+// One lens as BrightTable writes it - mirrors config.rs's LensSpec. `maker`/
+// `model` are the exact LensMake/LensModel strings; for a lensfun lens they
+// must be lensfun's own canonical names for RawTherapee/ART/darktable to
+// auto-match a correction profile. focalMin === focalMax for a prime.
+export interface LensSpec {
+  maker: string;
+  model: string;
+  mount: string | null;
+  focalMin: number;
+  focalMax: number;
+  // Widest aperture as an f-number (2 for f/2), and at the long end for a
+  // variable-aperture zoom (null = same).
+  apertureMax: number;
+  apertureMaxTele: number | null;
+}
+
+export type LensMappingMode = 'keepAndNote' | 'replace';
+
+// "The camera says codedLensModel, but it's really one of candidates" - for
+// 6-bit coded Leica M lenses.
+export interface LensMapping {
+  codedLensModel: string;
+  mode: LensMappingMode;
+  candidates: LensSpec[];
+}
+
+// Preferences → Lenses - mirrors config.rs's LensConfig.
+export interface LensConfig {
+  writeOriginals: boolean;
+  keepOriginalBackup: boolean;
+  updateRawProfiles: boolean;
+  notePrefix: string;
+  customLenses: LensSpec[];
+  mappings: LensMapping[];
+}
+
+export interface CatalogLens {
+  maker: string;
+  model: string;
+  displayName: string | null;
+  mounts: string[];
+  crop: number | null;
+  focalMin: number | null;
+  focalMax: number | null;
+  apertureMax: number | null;
+  apertureMaxTele: number | null;
+}
+
+// The bundled lensfun database snapshot (see lens_catalog.rs).
+export interface LensCatalog {
+  source: { repo: string; commit: string | null; date: string | null };
+  license: string;
+  lenses: CatalogLens[];
+  cameras: { maker: string; model: string; crop: number }[];
+}
+
 export type WindowControlsPosition = 'left' | 'right';
 export type ThemeMode = 'dark' | 'light';
 
@@ -166,6 +222,7 @@ export interface AppConfig {
   thumbnailOriginalAspect: boolean;
   // Caption under each grid thumbnail with its file name (extension dropped).
   thumbnailShowFileName: boolean;
+  lens: LensConfig;
 }
 
 export interface ConnectionStatus {
@@ -313,6 +370,11 @@ export interface AssetMetadataPatch {
   rating?: number;
   isFavorite?: boolean;
   description?: string;
+  // Change Lens only - never sent through updateAssetMetadata, just applied
+  // optimistically (and rolled back) alongside the other fields.
+  lensModel?: string;
+  focalLength?: number;
+  fNumber?: number;
 }
 
 // What updateAssetMetadata needs per asset to mirror a rating/description
@@ -337,6 +399,8 @@ export interface EditJob {
   rating: number | null;
   isFavorite: boolean | null;
   description: string | null;
+  // Set for a Change Lens job - the lens applied (or noted).
+  lensModel: string | null;
   status: EditJobStatus;
   createdAtMs: number;
   finishedAtMs: number | null;
@@ -428,6 +492,50 @@ export function setRawOverrides(assetIds: string[], isRaw: boolean): Promise<App
 
 export function saveApplicationsConfig(cfg: ApplicationsConfig): Promise<AppConfig> {
   return invoke('save_applications_config', { cfg });
+}
+
+export function saveLensConfig(cfg: LensConfig): Promise<AppConfig> {
+  return invoke('save_lens_config', { cfg });
+}
+
+let lensCatalogPromise: Promise<LensCatalog> | null = null;
+
+// Static for the whole session (it's compiled into the binary), so fetched once.
+export function getLensCatalog(): Promise<LensCatalog> {
+  lensCatalogPromise ??= invoke<LensCatalog>('get_lens_catalog').catch((e) => {
+    lensCatalogPromise = null;
+    throw e;
+  });
+  return lensCatalogPromise;
+}
+
+// Per-asset inputs for a Change Lens edit - the asset's own camera (crop
+// factor, .pp3/.arp camera fields), current lens and current caption (the
+// base the "Lens: …" note is appended to).
+export interface LensEditTarget {
+  id: string;
+  originalPath: string | null;
+  make: string | null;
+  model: string | null;
+  lensModel: string | null;
+  description: string | null;
+}
+
+export interface LensEditRequest {
+  lens: LensSpec;
+  // Write the lens tags (Replace); false = Keep the current lens + add note.
+  applyLens: boolean;
+  addNote: boolean;
+  focalLength: number | null;
+  fNumber: number | null;
+  // This edit only, on top of Preferences → Lenses' "write originals".
+  writeOriginalOnce: boolean;
+}
+
+// Enqueues onto the same background EditQueue as updateAssetMetadata - same
+// job-id contract and synchronous rejections (read-only, batch cap).
+export function changeAssetLens(targets: LensEditTarget[], request: LensEditRequest): Promise<number[]> {
+  return invoke('change_asset_lens', { targets, request });
 }
 
 // Best-effort scan of installed native/Flatpak/Snap apps for the app picker -

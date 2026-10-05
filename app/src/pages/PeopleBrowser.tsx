@@ -36,6 +36,7 @@ import {
 } from '../lib/api';
 import { useStacking } from '../lib/useStacking';
 import { copyImageProcessingEntry, useAssetActions } from '../lib/useAssetActions';
+import { useLensEdit } from '../lib/lensEdit';
 import { type MenuAction } from '../lib/actionMenu';
 import { isRawAsset, isVideoAsset, matchesFilters, type Filters } from '../lib/filters';
 import { resolveVisibleStackAssets } from '../lib/stacks';
@@ -219,6 +220,7 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
     rotateSelection,
     rotatingIds,
   } = useAssetActions({ onError: setEnqueueError });
+  const { openLensEditor } = useLensEdit();
   const { shortcuts, capturing } = useShortcuts();
 
   const refreshPeopleList = useCallback(() => {
@@ -544,6 +546,15 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
       items.push({ label: 'Rotate Left', onClick: () => rotateSelection([asset.id], false, assetByIdAll).catch(() => {}) });
       items.push({ label: 'Rotate Right', onClick: () => rotateSelection([asset.id], true, assetByIdAll).catch(() => {}) });
     }
+    // Change Lens - same "whole selection if 2+, else this tile" targeting
+    // as Paste; videos have no lens to change.
+    const lensTargets = (selected.size >= 2 ? [...selected] : asset ? [asset.id] : []).map((id) => assetByIdAll.get(id)).filter((a): a is AssetSummary => !!a && !isVideoAsset(a));
+    if (lensTargets.length) {
+      items.push({
+        label: lensTargets.length > 1 ? `Change Lens (${lensTargets.length})…` : 'Change Lens…',
+        onClick: () => openLensEditor({ assets: lensTargets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+      });
+    }
     items.push(DIVIDER);
 
     // Copy/Paste
@@ -591,6 +602,8 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
     }
     return items;
   }, [
+    openLensEditor,
+    patchAssetLocal,
     contextMenu,
     assetByIdAll,
     selected,
@@ -856,6 +869,14 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
       disabled: !selectionCanRotate || rotatingIds.size > 0,
       onClick: () => rotateSelection([...selected], true, assetByIdAll).catch(() => {}),
     },
+    {
+      id: 'changeLens',
+      group: 'edit',
+      label: 'Change Lens…',
+      disabled: !selectedAssets.some((a) => !isVideoAsset(a)),
+      disabledReason: 'Select one or more photos',
+      onClick: () => openLensEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError }),
+    },
     ...(copyImageProcessingBarEntry ? [{ id: 'copyImageProcessing', group: 'copyPaste' as const, ...copyImageProcessingBarEntry }] : []),
     {
       id: 'pasteImageProcessing',
@@ -1014,6 +1035,7 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
           stripAssets={stripAssets}
           onSelect={setOpenId}
           onEdit={commitEdit}
+          onLocalPatch={patchAssetLocal}
           onDelete={(id) => trashAssets([id])}
           onUnstack={openAsset.stack ? () => unstackByStackId(openAsset.stack!.id).catch(() => {}) : undefined}
           onAddToAlbum={(id) => setAddToAlbumTargets([id])}

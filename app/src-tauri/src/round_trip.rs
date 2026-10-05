@@ -227,7 +227,9 @@ fn is_junk_path(path: &Path) -> bool {
         }
     }
     match path.extension().and_then(|e| e.to_str()) {
-        Some(ext) => JUNK_EXTENSIONS.iter().any(|j| j.eq_ignore_ascii_case(ext)),
+        // exiftool's `<file>_original` backup (Change Lens with "keep a
+        // backup" on) - `IMG.DNG_original`, so the extension is `DNG_original`.
+        Some(ext) => JUNK_EXTENSIONS.iter().any(|j| j.eq_ignore_ascii_case(ext)) || ext.ends_with("_original"),
         None => false,
     }
 }
@@ -305,6 +307,7 @@ mod tests {
     fn junk_extensions_and_dotfiles_are_filtered() {
         assert!(is_junk_path(Path::new("/x/IMG_1.xmp")));
         assert!(is_junk_path(Path::new("/x/IMG_1.CR2.pp3")));
+        assert!(is_junk_path(Path::new("/x/IMG_1.DNG_original")));
         assert!(is_junk_path(Path::new("/x/.IMG_1_converted.jpg")));
         assert!(is_junk_path(Path::new("/x/download.crdownload")));
         assert!(!is_junk_path(Path::new("/x/IMG_1_converted.JPG")));

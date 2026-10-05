@@ -24,7 +24,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::apps::{self, AppChoice};
 use crate::art_queue::{self, ArtJob, ArtJobStatus, ArtQueue};
 use crate::cli_process;
-use crate::config::{self, AppConfig, ApplicationsConfig, ImportSettings, LibraryConfig, RawConverterKind, SharingConfig, SmartStackSettings, ThemeMode, WindowControlsPosition};
+use crate::config::{self, AppConfig, ApplicationsConfig, ImportSettings, LensConfig, LensSpec, LibraryConfig, RawConverterKind, SharingConfig, SmartStackSettings, ThemeMode, WindowControlsPosition};
 use crate::edit_queue::EditJob;
 use crate::export_naming;
 use crate::export_queue::{self, ExportDelivery, ExportFormat, ExportJob, ExportTarget, FlickrAlbumChoice, RenditionOptions};
@@ -289,6 +289,28 @@ pub async fn save_applications_config(
     Ok(snapshot)
 }
 
+#[tauri::command]
+pub async fn save_lens_config(app: AppHandle, state: State<'_, AppState>, cfg: LensConfig) -> Result<AppConfig, String> {
+    let snapshot = {
+        let mut guard = state.config.lock().unwrap();
+        guard.lens = cfg;
+        guard.clone()
+    };
+    let vault = state.secret_vault.clone();
+    let to_save = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save(&app, &to_save, vault.read().unwrap().as_ref()))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(snapshot)
+}
+
+/// The bundled lensfun lens/camera list - static, so the frontend fetches
+/// it once per session.
+#[tauri::command]
+pub fn get_lens_catalog() -> &'static crate::lens_catalog::LensCatalog {
+    crate::lens_catalog::catalog()
+}
+
 /// Best-effort scan of installed native/Flatpak/Snap apps for the app
 /// picker (see `apps.rs`) - never errors, an empty list just means nothing
 /// was found on this system.
@@ -525,6 +547,70 @@ pub fn update_asset_metadata(
         ));
     }
     Ok(state.edit_queue.enqueue(&cfg, &targets, rating, is_favorite, description.as_deref()))
+}
+
+/// One Change Lens target - the asset's own camera (crop factor, `.pp3`/
+/// `.arp` camera fields), current lens (remembered in the sidecar before
+/// the first Replace) and current caption (base for the lens note).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LensEditTarget {
+    pub id: String,
+    pub original_path: Option<String>,
+    pub make: Option<String>,
+    pub model: Option<String>,
+    pub lens_model: Option<String>,
+    pub description: Option<String>,
+}
+
+/// What the Change Lens dialog submits - see `lens_edit::LensChange`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LensEditRequest {
+    pub lens: LensSpec,
+    pub apply_lens: bool,
+    pub add_note: bool,
+    pub focal_length: Option<f32>,
+    pub f_number: Option<f32>,
+    /// This edit only - on top of Preferences → Lenses' "write originals".
+    #[serde(default)]
+    pub write_original_once: bool,
+}
+
+/// Enqueues a Change Lens edit (single or bulk) onto the same `EditQueue`
+/// as rating/description edits, under the same read-only/batch-cap gates.
+#[tauri::command]
+pub fn change_asset_lens(state: State<AppState>, targets: Vec<LensEditTarget>, request: LensEditRequest) -> Result<Vec<u64>, String> {
+    let (cfg, lens_cfg, exiftool_path) = {
+        let guard = state.config.lock().unwrap();
+        (guard.library.clone(), guard.lens.clone(), guard.applications.exiftool_path.clone())
+    };
+    if cfg.read_only {
+        return Err("Read-only mode is on — turn it off in Preferences → Library to allow edits".into());
+    }
+    if targets.len() as u32 > cfg.max_writes_per_batch {
+        return Err(format!("This would edit {} assets at once, over your cap of {} per action", targets.len(), cfg.max_writes_per_batch));
+    }
+    if request.lens.model.trim().is_empty() {
+        return Err("Pick a lens first".into());
+    }
+    if !request.apply_lens && !request.add_note {
+        return Err("Nothing to change - choose Replace, or add a note".into());
+    }
+    let write_original = request.apply_lens && (lens_cfg.write_originals || request.write_original_once);
+    if write_original && exiftool_path.trim().is_empty() {
+        return Err("Writing originals needs exiftool - set its path in Preferences → Applications".into());
+    }
+    let change = crate::lens_edit::LensChange {
+        lens: request.lens,
+        apply_lens: request.apply_lens,
+        add_note: request.add_note,
+        focal_length: request.focal_length,
+        f_number: request.f_number,
+        write_original,
+        note_prefix: lens_cfg.note_prefix.clone(),
+    };
+    Ok(state.edit_queue.enqueue_lens(&cfg, &targets, &change, &exiftool_path, lens_cfg.keep_original_backup, lens_cfg.update_raw_profiles))
 }
 
 /// Poll target for the edit queue's advisory activity panel - the frontend's

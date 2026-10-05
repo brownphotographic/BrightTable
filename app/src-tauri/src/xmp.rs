@@ -110,7 +110,7 @@ pub fn patch_or_create(path: &Path, rating: Option<i32>, description: Option<&st
     if rating.is_none() && description.is_none() {
         return Ok(());
     }
-    let mut text = fs::read_to_string(path).unwrap_or_else(|_| new_packet());
+    let mut text = read_or_new_packet(path);
     if let Some(r) = rating {
         text = patch_rating_field(&text, r);
     }
@@ -120,7 +120,112 @@ pub fn patch_or_create(path: &Path, rating: Option<i32>, description: Option<&st
     write_atomic(path, &text)
 }
 
-fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
+/// The existing sidecar's text, or a fresh packet when there isn't one. A
+/// 0-byte (or whitespace-only) `.xmp` counts as "there isn't one" - those
+/// exist in real libraries (seen next to Leica DNGs), and patching one as
+/// plain text found no `rdf:Description` to insert into, so the write
+/// silently produced another empty file.
+fn read_or_new_packet(path: &Path) -> String {
+    match fs::read_to_string(path) {
+        Ok(text) if !text.trim().is_empty() => text,
+        _ => new_packet(),
+    }
+}
+
+/// One simple-valued (non-array, non-struct) XMP property, e.g.
+/// `exifEX:LensModel`. `ns_uri` is declared alongside the property if the
+/// packet doesn't already declare `prefix`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct XmpProp {
+    pub prefix: &'static str,
+    pub ns_uri: &'static str,
+    pub name: &'static str,
+    pub value: String,
+}
+
+/// Reads a simple property in either serialization - attribute
+/// (`prefix:name="v"`, darktable/digiKam style) or element
+/// (`<prefix:name>v</prefix:name>`, exiftool/Adobe style).
+pub fn read_simple_property(text: &str, prefix: &str, name: &str) -> Option<String> {
+    let attr = format!("{prefix}:{name}=\"");
+    let open = format!("<{prefix}:{name}>");
+    let close = format!("</{prefix}:{name}>");
+    find_between(text, &attr, "\"").or_else(|| find_between(text, &open, &close)).map(unescape_xml)
+}
+
+/// Patches (or creates) the `.xmp` at `path` with `props` plus an optional
+/// description, touching nothing else - same contract and atomic write as
+/// `patch_or_create`.
+pub fn patch_properties(path: &Path, props: &[XmpProp], description: Option<&str>) -> Result<(), String> {
+    if props.is_empty() && description.is_none() {
+        return Ok(());
+    }
+    let mut text = read_or_new_packet(path);
+    for prop in props {
+        text = patch_simple_property(&text, prop);
+    }
+    if let Some(d) = description {
+        text = patch_description_field(&text, d);
+    }
+    write_atomic(path, &text)
+}
+
+/// Replaces `prop`'s value in place if present in either serialization,
+/// otherwise inserts it as an attribute on an `rdf:Description` where its
+/// prefix is in scope. exiftool writes one `rdf:Description` per namespace,
+/// each declaring its own prefix - adding `aux:Lens="..."` to a sibling
+/// Description that doesn't declare `aux` would leave the prefix unbound and
+/// the whole packet unparseable, so the insert targets the Description that
+/// declares it, or declares it itself on the first Description when nothing
+/// in scope does.
+fn patch_simple_property(text: &str, prop: &XmpProp) -> String {
+    let escaped = escape_xml(&prop.value);
+    let attr = format!("{}:{}=\"", prop.prefix, prop.name);
+    if let Some(start) = text.find(&attr) {
+        let val_start = start + attr.len();
+        if let Some(end_rel) = text[val_start..].find('"') {
+            return format!("{}{}{}", &text[..val_start], escaped, &text[val_start + end_rel..]);
+        }
+    }
+    let open = format!("<{}:{}>", prop.prefix, prop.name);
+    let close = format!("</{}:{}>", prop.prefix, prop.name);
+    if let Some(start) = text.find(&open) {
+        let val_start = start + open.len();
+        if let Some(end_rel) = text[val_start..].find(&close) {
+            return format!("{}{}{}", &text[..val_start], escaped, &text[val_start + end_rel..]);
+        }
+    }
+
+    let Some((desc_start, needs_decl)) = description_for_prefix(text, prop.prefix) else {
+        return text.to_string();
+    };
+    let (tag_close, _) = find_tag_close(text, desc_start);
+    let decl = if needs_decl { format!(" xmlns:{}=\"{}\"", prop.prefix, prop.ns_uri) } else { String::new() };
+    format!("{}{} {}{}\"{}", &text[..tag_close], decl, attr, escaped, &text[tag_close..])
+}
+
+/// Picks the `rdf:Description` a new `prefix:` property or child element
+/// should go on so the prefix is in scope: the Description whose own
+/// opening tag declares it, else the first Description - with
+/// `needs_decl = true` when nothing in scope (that tag or an ancestor
+/// `rdf:RDF`/`x:xmpmeta`) declares it yet. `None` when there's no
+/// Description at all.
+fn description_for_prefix(text: &str, prefix: &str) -> Option<(usize, bool)> {
+    let first_desc = text.find("<rdf:Description")?;
+    let xmlns = format!("xmlns:{prefix}=");
+    let mut from = 0;
+    while let Some(rel) = text[from..].find("<rdf:Description") {
+        let start = from + rel;
+        let (close_idx, _) = find_tag_close(text, start);
+        if text[start..close_idx].contains(&xmlns) {
+            return Some((start, false));
+        }
+        from = close_idx;
+    }
+    Some((first_desc, !text[..first_desc].contains(&xmlns)))
+}
+
+pub(crate) fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("sidecar.xmp");
     let tmp_path = path.with_file_name(format!("{file_name}.tmp.{}", std::process::id()));
     fs::write(&tmp_path, contents).map_err(|e| describe_io_error("write", &tmp_path, &e))?;
@@ -490,8 +595,18 @@ fn patch_description_field(text: &str, description: &str) -> String {
         return text.to_string();
     }
 
-    let Some(desc_start) = text.find("<rdf:Description") else {
+    // `dc` has to be in scope where the new element lands - darktable's own
+    // sidecars often don't declare it at all, and an unbound `dc:` prefix
+    // makes the whole packet invalid XML (exiftool shrugs that off; Exiv2,
+    // which darktable reads sidecars with, need not).
+    let Some((desc_start, needs_decl)) = description_for_prefix(text, "dc") else {
         return text.to_string();
+    };
+    let text = &if needs_decl {
+        let (tag_close, _) = find_tag_close(text, desc_start);
+        format!("{} xmlns:dc=\"http://purl.org/dc/elements/1.1/\"{}", &text[..tag_close], &text[tag_close..])
+    } else {
+        text.to_string()
     };
     let (tag_close, self_closing) = find_tag_close(text, desc_start);
     let block = format!("<dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">{escaped}</rdf:li></rdf:Alt></dc:description>");
@@ -975,5 +1090,80 @@ mod tests {
         assert!(raw.contains("Mom &amp; Dad&apos;s &quot;trip&quot; &lt;home&gt;") || raw.contains("Mom &amp; Dad's &quot;trip&quot; &lt;home&gt;"));
         assert_eq!(read_description(&raw), Some(r#"Mom & Dad's "trip" <home>"#.into()));
         let _ = fs::remove_file(&path);
+    }
+
+    fn lens_prop(prefix: &'static str, ns: &'static str, name: &'static str, value: &str) -> XmpProp {
+        XmpProp { prefix, ns_uri: ns, name, value: value.to_string() }
+    }
+
+    const EXIFTOOL_STYLE: &str = "<x:xmpmeta xmlns:x='adobe:ns:meta/'>\n<rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>\n <rdf:Description rdf:about=''\n  xmlns:xmp='http://ns.adobe.com/xap/1.0/'>\n  <xmp:Rating>3</xmp:Rating>\n </rdf:Description>\n <rdf:Description rdf:about=''\n  xmlns:aux='http://ns.adobe.com/exif/1.0/aux/'>\n  <aux:Lens>Old Lens</aux:Lens>\n </rdf:Description>\n</rdf:RDF>\n</x:xmpmeta>\n";
+
+    #[test]
+    fn simple_property_replaces_element_form_in_place() {
+        let out = patch_simple_property(EXIFTOOL_STYLE, &lens_prop("aux", "http://ns.adobe.com/exif/1.0/aux/", "Lens", "Summicron-M 1:2/50"));
+        assert!(out.contains("<aux:Lens>Summicron-M 1:2/50</aux:Lens>"));
+        assert_eq!(out.matches("aux:Lens").count(), 2, "replaced, not duplicated");
+    }
+
+    #[test]
+    fn simple_property_inserts_on_the_description_that_declares_its_prefix() {
+        let out = patch_simple_property(EXIFTOOL_STYLE, &lens_prop("aux", "http://ns.adobe.com/exif/1.0/aux/", "LensInfo", "50/1 50/1 2/1 2/1"));
+        // Must land on the second Description (which declares `aux`), not the first.
+        let second = out.find("xmlns:aux=").unwrap();
+        let inserted = out.find("aux:LensInfo=\"50/1 50/1 2/1 2/1\"").unwrap();
+        assert!(inserted > second);
+        assert_eq!(out.matches("xmlns:aux=").count(), 1);
+    }
+
+    #[test]
+    fn simple_property_declares_missing_namespace_on_first_description() {
+        let out = patch_simple_property(EXIFTOOL_STYLE, &lens_prop("exifEX", "http://cipa.jp/exif/1.0/", "LensModel", "Planar T* 2/50 ZM"));
+        assert!(out.contains(" xmlns:exifEX=\"http://cipa.jp/exif/1.0/\" exifEX:LensModel=\"Planar T* 2/50 ZM\""));
+        assert_eq!(read_simple_property(&out, "exifEX", "LensModel").as_deref(), Some("Planar T* 2/50 ZM"));
+    }
+
+    #[test]
+    fn simple_property_replaces_attribute_form_and_escapes() {
+        let text = "<rdf:Description rdf:about=\"\" xmlns:exifEX=\"http://cipa.jp/exif/1.0/\" exifEX:LensModel=\"old\"/>";
+        let out = patch_simple_property(text, &lens_prop("exifEX", "http://cipa.jp/exif/1.0/", "LensModel", "A & B \"50\""));
+        assert_eq!(out, "<rdf:Description rdf:about=\"\" xmlns:exifEX=\"http://cipa.jp/exif/1.0/\" exifEX:LensModel=\"A &amp; B &quot;50&quot;\"/>");
+        assert_eq!(read_simple_property(&out, "exifEX", "LensModel").as_deref(), Some("A & B \"50\""));
+    }
+
+    #[test]
+    fn simple_property_does_not_confuse_prefix_matches() {
+        let text = "<rdf:Description rdf:about=\"\" xmlns:exif=\"http://ns.adobe.com/exif/1.0/\" exif:FocalLengthIn35mmFilm=\"50\"/>";
+        let out = patch_simple_property(text, &lens_prop("exif", "http://ns.adobe.com/exif/1.0/", "FocalLength", "35/1"));
+        assert!(out.contains("exif:FocalLengthIn35mmFilm=\"50\""));
+        assert!(out.contains("exif:FocalLength=\"35/1\""));
+    }
+
+    #[test]
+    fn empty_sidecar_file_is_treated_as_new() {
+        let dir = std::env::temp_dir().join(format!("brighttable-xmp-empty-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("IMG.DNG.xmp");
+        fs::write(&path, "").unwrap();
+        patch_properties(&path, &[lens_prop("exifEX", "http://cipa.jp/exif/1.0/", "LensModel", "Summicron-M 1:2/50")], Some("Lens: x")).unwrap();
+        let raw = fs::read_to_string(&path).unwrap();
+        assert_eq!(read_simple_property(&raw, "exifEX", "LensModel").as_deref(), Some("Summicron-M 1:2/50"));
+        assert_eq!(read_description(&raw).as_deref(), Some("Lens: x"));
+
+        // Same fix applies to the plain rating/description path.
+        fs::write(&path, "  \n").unwrap();
+        patch_or_create(&path, Some(4), None).unwrap();
+        assert_eq!(read_rating(&fs::read_to_string(&path).unwrap()), Some(4));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn description_insert_declares_dc_when_sidecar_lacks_it() {
+        let dt = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:darktable=\"http://darktable.sf.net/\" darktable:history_end=\"1\"><darktable:history/></rdf:Description></rdf:RDF></x:xmpmeta>";
+        let out = patch_description_field(dt, "Caption");
+        assert!(out.contains("xmlns:dc=\"http://purl.org/dc/elements/1.1/\""));
+        assert_eq!(read_description(&out).as_deref(), Some("Caption"));
+        assert!(out.contains("<darktable:history/>"));
+        // Already declared: not declared twice.
+        assert_eq!(patch_description_field(&out, "Again").matches("xmlns:dc=").count(), 1);
     }
 }

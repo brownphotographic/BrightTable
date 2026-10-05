@@ -262,6 +262,111 @@ pub struct AppConfig {
     /// thumbnail - Preferences → Configuration → Appearance.
     #[serde(default)]
     pub thumbnail_show_file_name: bool,
+    /// Preferences → Lenses - see `LensConfig`.
+    #[serde(default)]
+    pub lens: LensConfig,
+}
+
+/// One lens as BrightTable writes it into EXIF/XMP - `maker`/`model` are the
+/// exact strings written to `LensMake`/`LensModel`, so for a lens lensfun
+/// knows they should be lensfun's own `<maker>`/`<model>` (not its `lang="en"`
+/// display alias) for RawTherapee/ART/darktable to auto-match it. A
+/// free-text custom lens is just this with whatever strings the user typed.
+/// `focal_min == focal_max` for a prime. Every field `#[serde(default)]`
+/// so a hand-edited or older config.json can't fail the whole config parse.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LensSpec {
+    #[serde(default)]
+    pub maker: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub mount: Option<String>,
+    #[serde(default)]
+    pub focal_min: f32,
+    #[serde(default)]
+    pub focal_max: f32,
+    /// Widest aperture as an f-number (2.0 for f/2) at `focal_min`.
+    #[serde(default)]
+    pub aperture_max: f32,
+    /// Widest aperture at `focal_max`, for variable-aperture zooms - `None`
+    /// means the same as `aperture_max`.
+    #[serde(default)]
+    pub aperture_max_tele: Option<f32>,
+}
+
+/// What applying a mapping (or the Change Lens dialog's matching mode) does
+/// to an asset whose current lens is the mapping's coded lens.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LensMappingMode {
+    /// Leave the coded lens in EXIF (so lens corrections keep using its
+    /// profile) and add a "Lens: <actual>" note to the description.
+    #[default]
+    KeepAndNote,
+    /// Overwrite the lens fields with the actual lens.
+    Replace,
+}
+
+/// "The camera says `coded_lens_model`, but it's really one of `candidates`"
+/// - for 6-bit coded Leica M lenses whose code names a different lens (or a
+/// lens coded by hand to the nearest Leica equivalent).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LensMapping {
+    /// Exactly as Immich reports it (`AssetSummary.lensModel`).
+    #[serde(default)]
+    pub coded_lens_model: String,
+    #[serde(default)]
+    pub mode: LensMappingMode,
+    #[serde(default)]
+    pub candidates: Vec<LensSpec>,
+}
+
+fn default_note_prefix() -> String {
+    "Lens: ".to_string()
+}
+
+/// Preferences → Lenses. RawTherapee, ART and darktable all read lens info
+/// from the RAW file itself and never from an XMP sidecar (confirmed live
+/// against RT 5.13, ART and Exiv2 0.28 - see `lens_edit.rs`'s module doc), so
+/// `write_originals` is the only way darktable ever sees a changed lens.
+/// It's off by default since every other edit in this app leaves originals
+/// alone.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LensConfig {
+    #[serde(default)]
+    pub write_originals: bool,
+    /// Keep exiftool's own `<file>_original` backup next to each rewritten
+    /// original (exiftool's default) rather than passing `-overwrite_original`.
+    #[serde(default = "default_true")]
+    pub keep_original_backup: bool,
+    /// Patch an existing `.pp3`/`.arp` sidecar's `[LensProfile]` to the
+    /// chosen lens (lensfun manual mode). Never creates one - see
+    /// `lens_edit::patch_lens_profile`.
+    #[serde(default = "default_true")]
+    pub update_raw_profiles: bool,
+    #[serde(default = "default_note_prefix")]
+    pub note_prefix: String,
+    #[serde(default)]
+    pub custom_lenses: Vec<LensSpec>,
+    #[serde(default)]
+    pub mappings: Vec<LensMapping>,
+}
+
+impl Default for LensConfig {
+    fn default() -> Self {
+        Self {
+            write_originals: false,
+            keep_original_backup: true,
+            update_raw_profiles: true,
+            note_prefix: default_note_prefix(),
+            custom_lenses: Vec::new(),
+            mappings: Vec::new(),
+        }
+    }
 }
 
 /// Preferences → Sharing. Only Flickr has a real, working connection today -
@@ -876,5 +981,42 @@ mod vault_dir_for_tests {
         cfg.settings_folder = Some("  /shared/BrightTable  ".to_string());
         cfg.share_vault = true;
         assert_eq!(vault_dir_for(&cfg), Some(std::path::PathBuf::from("/shared/BrightTable")));
+    }
+}
+
+#[cfg(test)]
+mod lens_config_tests {
+    use super::{AppConfig, LensConfig, LensMappingMode};
+
+    #[test]
+    fn config_without_lens_section_still_loads_with_defaults() {
+        // A config.json saved before the `lens` section existed.
+        let mut raw = serde_json::to_value(AppConfig::default()).unwrap();
+        raw.as_object_mut().unwrap().remove("lens");
+        let cfg: AppConfig = serde_json::from_value(raw).unwrap();
+        assert_eq!(cfg.lens, LensConfig::default());
+        assert!(!cfg.lens.write_originals);
+        assert!(cfg.lens.keep_original_backup);
+        assert!(cfg.lens.update_raw_profiles);
+        assert_eq!(cfg.lens.note_prefix, "Lens: ");
+    }
+
+    #[test]
+    fn partial_lens_section_fills_in_defaults() {
+        let lens: LensConfig = serde_json::from_str(
+            r#"{"writeOriginals":true,"mappings":[{"codedLensModel":"Summicron-M 1:2/50","mode":"replace","candidates":[{"maker":"Zeiss","model":"Planar T* 2/50 ZM"}]}]}"#,
+        )
+        .unwrap();
+        assert!(lens.write_originals);
+        assert!(lens.keep_original_backup);
+        assert_eq!(lens.mappings[0].mode, LensMappingMode::Replace);
+        assert_eq!(lens.mappings[0].candidates[0].model, "Planar T* 2/50 ZM");
+        assert_eq!(lens.mappings[0].candidates[0].focal_min, 0.0);
+    }
+
+    #[test]
+    fn mapping_mode_wire_format_matches_frontend() {
+        assert_eq!(serde_json::to_string(&LensMappingMode::KeepAndNote).unwrap(), "\"keepAndNote\"");
+        assert_eq!(serde_json::to_string(&LensMappingMode::Replace).unwrap(), "\"replace\"");
     }
 }

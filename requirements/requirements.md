@@ -171,8 +171,10 @@
   - ⬜ IPTC (title, caption, keywords, creator, copyright) — not implemented; Immich's
     asset model has no such fields (§7.6).
   - 🟡 EXIF core (make/model, lens, aperture, shutter, ISO, focal length, dimensions, file
-    size) is real but **read-only** — the real app doesn't let you edit capture date/time
-    or GPS. Only rating, favorite, and description are editable.
+    size) is real but mostly **read-only** — the real app doesn't let you edit capture
+    date/time or GPS. Rating, favorite and description are editable, and since §7.39 so is
+    the **lens** (lens model/make/spec, focal length incl. 35mm-equivalent, max aperture,
+    optional as-shot aperture) via **Change Lens…**, single or bulk — see §1.5a.
   - ⬜ Arbitrary EXIF tags via ExifTool — not implemented.
   - 🟡 Bulk edit — only rating/favorite have a bulk path, and only via keyboard shortcuts
     over the current grid selection (§7.8), not a Copy Settings → Paste Settings flow.
@@ -195,6 +197,30 @@
     separately live-tested against the real server the same round Copy/Paste Image
     Processing was (§7.24 flags this as a still-open manual check), so treat the live-tested
     claim above as Image-Processing-specific.
+
+### 1.5a Lens metadata (Change Lens)
+> For (1) manual third-party lenses with no electronic contacts, and (2) 6-bit coded Leica M
+> lenses whose code names a different lens (e.g. coded *Summicron-M 1:2/50*, really a
+> *Zeiss Planar T\* 2/50 ZM*). Lens corrections in RawTherapee/ART/darktable and BrightTable's
+> own lens/focal filters depend on these fields being correct **and named exactly as
+> lensfun names them**. Full implementation log, test evidence and open items: §7.39.
+- ✅ **Change Lens…** — single and bulk (context menu, SelectionBar Edit ▾, Viewer Edit menu)
+  on all six browser pages. Two modes: **Replace the lens** / **Keep lens, add note**.
+- ✅ **Pick any lens** — bundled lensfun database (RawTherapee/ART/darktable's own matching
+  database), lenses already in the library, the user's own lenses, and mapping candidates;
+  "profile" badge where lensfun has a correction profile under that exact name.
+- ✅ **Add a new lens not in the list** — free-text maker/model (written verbatim), focal
+  range, aperture, mount; inline from the dialog or in Preferences → Lenses.
+- ✅ **Coded-lens mappings** — coded lens → list of possible actual lenses, each mapping
+  with a default mode (Keep + note / Replace); preselected in the dialog.
+- ✅ **Description note** — `Lens: <actual lens>` appended on its own line, per asset (keeps
+  each asset's own caption); re-applying replaces the line rather than duplicating it.
+- ✅ **All config in `config.json`** (`lens` section) via a new Preferences → **Lenses** tab
+  (the originally proposed "Advanced" tab was folded into this, per the user).
+- 🟡 **Compatibility across Immich / RawTherapee / ART / darktable** — confirmed live for
+  Immich's merge rule (simulated), RawTherapee 5.13 and ART (pixel-diff), darktable via
+  Exiv2 0.28 (what it reads with); **not yet confirmed in darktable's own GUI, nor
+  against the real Immich server** (§7.39 open items).
 
 ### 1.6 Versioning & round-trip
 > The prototype's "Create Version" concept (version lineage, auto-stacked renditions, a
@@ -276,9 +302,11 @@
   RAW photos can't be printed at all (deliberate v1 cut, not a bug — see §7.27).
 
 ### 1.9 Preferences
-- ✅ All five tabs are real: **Library**, **Shortcuts**, **Applications** (§7.2, §7.8,
-  §7.21), and now also **Sharing** (`PreferencesSharing.tsx`, §1.7) and **Configuration**
-  (`PreferencesConfiguration.tsx`, §7.32, §7.36) — neither renders a placeholder message anymore.
+- ✅ All six tabs are real: **Library**, **Shortcuts**, **Applications** (§7.2, §7.8,
+  §7.21), **Sharing** (`PreferencesSharing.tsx`, §1.7), **Configuration**
+  (`PreferencesConfiguration.tsx`, §7.32, §7.36) and, since §7.39, **Lenses**
+  (`PreferencesLenses.tsx` — lens-write options, custom lenses, coded-lens mappings) —
+  none renders a placeholder message anymore.
   Configuration holds Appearance (theme), Window (button side, loupe size), Config File
   Location (shareable settings folder + optional shared credential vault, §2.6/§7.32), and
   Thumbnail Cache (location/size/clear).
@@ -352,8 +380,18 @@
   `xmp.rs`'s `read_rating`/`read_description`/`patch_or_create` already own, rather than a
   plain whole-sidecar-exists check the way ART/RawTherapee get. Read-only: never writes to or
   otherwise disturbs that file's rating/description fields.
-- ⬜ Sidecar storage (XMP) read/write beyond rating/description/darktable-history-detection,
-  ExifTool-backed arbitrary fields — still planned, matching the prototype's own status here.
+- 🟡 Sidecar storage (XMP) read/write beyond rating/description/darktable-history-detection:
+  §7.39 added surgical writes of the **lens** properties (`exifEX:LensModel`/`LensMake`,
+  `aux:Lens`/`LensInfo`, `exif:FocalLength`/`FocalLengthIn35mmFilm`/`MaxApertureValue`/
+  `FNumber`/`ApertureValue`, plus `brighttable:OriginalLensModel`), and exiftool-backed
+  rewrites of the **original's** ExifIFD lens tags (opt-in). Also patches an existing
+  `.pp3`/`.arp` `[LensProfile]` (lensfun manual mode). ExifTool-backed *arbitrary* fields
+  are still planned.
+- ✅ **Lens-info read paths per consumer** (confirmed live, §7.39): RawTherapee, ART and
+  darktable never read lens info from XMP sidecars — only from the original file via Exiv2
+  (or RT/ART's own `.pp3`/`.arp` manual lens). Immich merges `{...original, ...sidecar}` but
+  resolves `lensModel = LensID ?? LensType ?? LensSpec ?? LensModel`, so a sidecar can't
+  override a lens the camera already recorded.
 
 ### 2.5 External applications
 - ✅ Detect/launch native, Flatpak, Snap apps; custom executable (also covers AppImage,
@@ -2813,3 +2851,205 @@
   directly) into a new `launchEditorForAsset(asset, role)` that both the context menu and
   `launchEditorForSelection` now call — no behavior change for the existing selection-based
   entry points, just a shared implementation for the new per-tile one.
+
+### 7.39 Change Lens: lens metadata editing, lensfun catalog, Preferences → Lenses (October 2026)
+> **Status: 🟡 built and tested at the unit/integration level and against real files and
+> real editors; not yet run in the packaged app against the live Immich server, and not
+> committed.** Requirement summary in §1.5a; sidecar/compatibility notes in §2.4.
+>
+> Two use cases drove this: (1) manual third-party lenses with no electronic communication
+> (the M10-R records `LensModel=""`, `FocalLength=0`, `LensInfo=0mm f/0` — confirmed on
+> `~/Pictures/20260712_15-29-24.DNG`), and (2) 6-bit coded Leica M lenses whose code names
+> a different lens than the one mounted — either keep the coded lens (its correction
+> profile is "close enough") and note the real lens in the description, or replace it.
+> Because lens corrections in RAW editors depend on the exact lens name, naming follows
+> **lensfun**, the database RawTherapee, ART and darktable all match against.
+
+#### 7.39.1 Design decisions (made with the user, planning round)
+| Question | Decision |
+|---|---|
+| Where to write | XMP sidecar (Immich) + existing `.pp3`/`.arp` lens profile (RT/ART) by default; **opt-in** "write original files" via exiftool (needed for darktable), keeping exiftool's `_original` backup by default |
+| Lens list source | Bundle a lensfun snapshot, merged with library lenses (Immich search suggestions) and user-entered custom lenses |
+| Lens note | Append a tagged line (`Lens: …`) to the description; re-applying replaces it |
+| 6-bit mappings | Per-mapping mode: *Keep coded lens + add note* or *Replace*; a mapping can list several candidate lenses |
+| Replace on a coded file with originals off | Dialog warns and offers a one-off **"Write the original files for this edit"** checkbox (unticked by default) |
+| Lenses not in lensfun | Names only (for filtering/search); the picker badges lenses that have a lensfun profile. Exporting custom lenses to lensfun XML is out of scope |
+| Where config lives | A dedicated **Lenses** Preferences tab (instead of the "Advanced" tab first proposed), user can enter **free-text** lens names |
+
+#### 7.39.2 Compatibility findings (Phase 0, confirmed live on copies of real M10-R DNGs)
+| Write method | Immich | RawTherapee 5.13 | ART | darktable (Exiv2 0.28) |
+|---|---|---|---|---|
+| XMP sidecar, uncoded original | ✅ | ❌ | ❌ | ❌ |
+| XMP sidecar, coded original (Replace) | ❌ original's Composite `LensID` wins | ❌ | ❌ | ❌ |
+| Existing `.pp3`/`.arp` `LcMode=lfmanual` | n/a | ✅ | ✅ | n/a |
+| Original rewritten (ExifIFD lens tags) | ✅ | ✅ pixel-identical to lfmanual | ✅ | ✅ reads it exactly like a coded file |
+
+- **RT/ART/darktable never read lens info from XMP sidecars** — all go through Exiv2 on the
+  RAW. `Exiv2::lensName()` has no Leica makernote keys, so for Leica `Exif.Photo.LensModel`
+  in the file is what counts. RT checks Nikon/Olympus/Sony makernotes first; darktable checks
+  Canon/Pentax/Panasonic/Olympus makernotes first (relevant for adapted lenses on those bodies
+  — not yet tested, see open items).
+- **Immich** (`metadata.service.ts`): tags merged `{...mediaTags, ...sidecarTags}`, then
+  `lensModel = LensID ?? LensType ?? LensSpec ?? LensModel`. The M10-R has no `Leica:LensType`;
+  exiftool's Composite `LensID` is derived from `LensModel` (`LensID-2`). A sidecar yields a
+  Composite `LensID` only for some name patterns (e.g. `…50mm f/2…` and `Summicron-M 1:2/50`
+  do, `Planar T* 2/50 ZM` doesn't), so it can't be relied on. `aux:LensID` is integer-only.
+  Simulated with exiftool's own JSON output, not against the live server.
+- **RT/ART manual lens**: `.pp3`/`.arp` `[LensProfile] LcMode=lfmanual`, `LFCameraMake`,
+  `LFCameraModel`, `LFLens` (identical keys in both); ART also has `[Exif] Lens=`. RT's `-s`
+  accepts a partial (lens-only) sidecar ("Merging sidecar procparams"), **but** BrightTable's
+  round trip runs `-s` alone whenever a sidecar exists (neutral values underneath), so a
+  lens-only `.pp3` would flatten that image's next round trip → **profiles are only ever
+  patched, never created**.
+- **Aperture**: exiftool converts an f-number to APEX `MaxApertureValue` itself. The M10-R
+  also stores its own metered aperture estimate in `Leica:FNumber` (+ `ApertureValue`), which
+  exiftool/Immich prefer over `ExifIFD:FNumber` — so an as-shot aperture writes all three on
+  Leica bodies (`Leica:FNumber` only when the make contains "leica").
+- **lensfun coverage**: upstream (commit `bbd4332`, 2026-09-24) has 1,569 lenses but only
+  **8 Leica M-mount** ones (6 Leica, a Voigtländer Nokton 28/1.5, a Laowa) — no Zeiss ZM, and
+  most Voigtländer M lenses are missing. Those get correct *names* but no auto-correction.
+  The RT and darktable flatpaks ship different DB versions (`ASPH.` vs `Asph.`); lensfun
+  matches case-insensitively. RT's DB knows the M10-R camera (crop 1.0).
+- Correct exiftool XMP tag names: `XMP-aux:LensInfo` and `XMP-exif:FocalLengthIn35mmFormat`
+  (`XMP-exifEX:LensSpecification` / `FocalLengthIn35mmFilm` as write names are rejected by
+  exiftool 13.55).
+
+#### 7.39.3 What was built
+**Backend (Rust)**
+- ✅ `config.rs` — new `AppConfig.lens: LensConfig` (`#[serde(default)]` throughout, so old
+  `config.json` files still load): `write_originals` (false), `keep_original_backup` (true),
+  `update_raw_profiles` (true), `note_prefix` ("Lens: "), `custom_lenses: Vec<LensSpec>`,
+  `mappings: Vec<LensMapping>`. `LensSpec {maker, model, mount, focal_min, focal_max,
+  aperture_max, aperture_max_tele}`; `LensMapping {coded_lens_model, mode, candidates}`;
+  `LensMappingMode` = `keepAndNote` | `replace` (wire format locked by a test).
+- ✅ `lens_catalog.rs` — embeds `resources/lensfun-catalog.json` (`include_str!`, parsed once
+  via `OnceLock`); `camera_crop_factor(make, model)` matches EXIF strings case-insensitively
+  against lensfun cameras (maker only has to share its first word).
+- ✅ `lens_edit.rs` (pure, unit-tested) — `LensChange`; `sidecar_props()` (XMP lens props);
+  `original_lens_prop()` (`brighttable:OriginalLensModel`, written only on the first change);
+  `original_write_args()` (exiftool ExifIFD argv: `LensModel`, `LensMake`, `LensInfo`,
+  `MaxApertureValue`, `FocalLength`, `FocalLengthIn35mmFormat` when crop known, optional
+  `FNumber`/`ApertureValue`/`Leica:FNumber`, `-overwrite_original` only when backups off);
+  `readback_args()`/`readback_warning()` (post-write `-s3 -LensID -LensModel` check, warns
+  when exiftool — and so Immich — still identifies a different lens, e.g. an older Leica
+  makernote `LensType`); `upsert_lens_note()`; `patch_lens_profile()` (line-scanning INI
+  patch in the style of `art::patch_metadata_mode_off`, every other line byte-identical,
+  idempotent, adds the section if missing). Module doc carries the compatibility table.
+- ✅ `xmp.rs` — new `XmpProp`, `read_simple_property()`, `patch_properties()`,
+  `patch_simple_property()` (replace in attribute or element form; else insert on the
+  `rdf:Description` that declares the prefix, declaring it if nothing in scope does —
+  exiftool writes one Description per namespace, so a blind insert would leave an unbound
+  prefix). `write_atomic` is now `pub(crate)`.
+- ✅ `edit_queue.rs` — Change Lens jobs share the existing queue, per-asset locks and
+  `MAX_CONCURRENT_JOBS` semaphore. New `enqueue_lens()` + `LensWork` (per-target camera, crop
+  factor, current lens, current caption); `EditJob.lens_model` for the activity-panel label.
+  `run_lens_job()` order: **(1)** original via exiftool (only if asked; fails the job before
+  anything else is touched, incl. "exiftool not configured"), then readback; **(2)** XMP
+  sidecar lens props + per-asset note (authoritative — failure = Failed + rollback);
+  **(3)** every existing `.pp3`/`.arp` (append and replaced forms) — best effort, warning on
+  failure; **(4)** Immich description PUT if changed + **always** `refresh-metadata` (lens
+  tags only reach Immich on a refresh) — warning on failure.
+- ✅ `commands.rs` — `change_asset_lens(targets: Vec<LensEditTarget>, request:
+  LensEditRequest)` (same read-only / `max_writes_per_batch` gates as
+  `update_asset_metadata`, validates a lens is chosen and exiftool is set when writing
+  originals); `save_lens_config`; `get_lens_catalog`. Registered in `lib.rs`.
+- ✅ `round_trip.rs` — exiftool `*_original` backups (`IMG.DNG_original`) treated as junk so
+  they never trigger round-trip detection.
+
+**Frontend (React)**
+- ✅ `lib/api.ts` — `LensSpec`/`LensMapping`/`LensConfig`/`LensCatalog` types,
+  `AppConfig.lens`, `EditJob.lensModel`, `changeAssetLens`, `saveLensConfig`,
+  `getLensCatalog` (fetched once per session).
+- ✅ `lib/lenses.ts` — TS twin of the name parser (`guessLensParameters`), `buildLensOptions`
+  (dedupes mapping → custom → library → lensfun, library names lensfun knows take lensfun's
+  specs/profile flag), search matching, `upsertLensNote` twin for the optimistic caption.
+- ✅ `lib/lensConfig.tsx` (`LensConfigProvider`, save errors surfaced rather than swallowed)
+  and `lib/lensEdit.tsx` (`LensEditProvider` — owns the dialog, the optimistic patch and its
+  rollback via `useEditJobReconciliation`; a page only passes its own `patchAssetLocal`).
+  Both mounted in `App.tsx` inside `EditQueueProvider`.
+- ✅ `components/LensEditDialog.tsx` — current-lens summary; mode cards; mapping notice;
+  searchable grouped picker (`components/LensControls.tsx`, capped at 200 rendered rows);
+  "+ Add new lens…" inline form saving to custom lenses; as-shot focal length (required for
+  zooms/unknown focal, range-checked) and optional aperture; optional note checkbox in
+  Replace mode; coded-lens warning with the one-off write-originals checkbox; missing-local-
+  path warning; "no lensfun profile" hint; Apply blocked with a reason until valid.
+- ✅ `pages/PreferencesLenses.tsx` + `PreferencesOverlay.tsx` — new **Lenses** tab (after
+  Applications): write toggles + note prefix, **My lenses** (add/edit/remove free-text
+  lenses), **Coded lens mappings** (coded lens with library-lens autocomplete, default mode,
+  candidate list via the same picker), lensfun source/date/license footer.
+- ✅ Entry points: "Change Lens…" / "Change Lens (N)…" in the context menu and SelectionBar
+  Edit ▾ on Photos, Folders, Albums, Tags, People and Search Results (videos excluded);
+  Viewer Edit menu via a new optional `onLocalPatch` prop (also patches its peek/stack
+  snapshots). `ActivityPanel` labels jobs "Lens: <model>".
+
+**Tooling / docs**
+- ✅ `app/scripts/gen-lens-catalog.mjs` — converts a lensfun checkout to the committed JSON
+  (1,295 interchangeable lenses — fixed-lens compacts/action cams dropped via their lowercase
+  mount ids — and 1,057 cameras). Parses focal/aperture from names (`24-70mm`, `f/2.8`,
+  `F1.4`, `18-55mmF2.8-4`, Leica/Zeiss `1:2/50`, `2,8/35`, reversed `56/1.4`), calibration
+  focals as fallback; 4 entries remain without specs (body cap, two converters, a T-stop
+  cine lens). Regenerate: `git clone --depth 1 https://github.com/lensfun/lensfun.git
+  /tmp/lensfun && node scripts/gen-lens-catalog.mjs /tmp/lensfun`.
+- ✅ `gen-third-party-licenses.mjs` + `THIRD-PARTY-LICENSES.md` — new "Bundled data" section
+  crediting lensfun (CC-BY-SA-3.0).
+- ✅ `User-Guide.md` — Lenses tab section and "Changing the lens" section with the
+  per-editor table and the darktable *refresh EXIF* note.
+
+#### 7.39.4 Pre-existing bugs found and fixed along the way
+- ✅ **0-byte `.xmp` sidecars silently swallowed edits** — real library files exist like this
+  (e.g. `2025/2025_12/20251231_11-59-50.DNG.xmp`, 0 bytes). `patch_or_create` read `""`, found
+  no `rdf:Description`, and wrote another empty file, so rating/description edits on those
+  assets were lost while the job reported success. Now treated as "no sidecar yet".
+- ✅ **Caption insert produced invalid XML on darktable sidecars** — `patch_description_field`
+  inserted `<dc:description>` into a Description that didn't declare `dc` (common in
+  darktable `.xmp`s), leaving an unbound prefix. exiftool tolerated it; Exiv2 (darktable's
+  reader) need not. Now declares `xmlns:dc` where needed. Verified with `xmllint` and
+  `exiv2 -PX` (darktable history intact).
+
+#### 7.39.5 Verification done
+- ✅ `cargo test` — 318 passing (new: lens_edit, lens_catalog, config migration/wire format,
+  xmp property/namespace/empty-file tests, four `run_lens_job` integration tests on real temp
+  files: Replace writes sidecar + note + `.arp`, re-apply keeps the first original lens and
+  doesn't stack notes, Keep + note touches only the description, writing originals without
+  exiftool fails before touching anything, no local path fails). `cargo clippy` — no new
+  warnings. `tsc -b`, `npm run lint` (no new warnings beyond the existing
+  `only-export-components` pattern), `npm run build` all clean.
+- ✅ Real-file end to end (scratch copy of the uncoded M10-R DNG, real `/bin/exiftool`):
+  `run_lens_job` with write-originals → backup kept, `LensModel`/`LensMake`/`LensID`/
+  `FocalLength`/`FocalLengthIn35mmFormat`/`LensInfo`/`MaxApertureValue`/`FNumber` all correct;
+  `rawtherapee-cli` lfauto on the result is **pixel-identical** to `.pp3` lfmanual.
+- ✅ Sidecars written by the code (new, 0-byte, darktable-style) parsed by exiftool and Exiv2,
+  valid per `xmllint`.
+- ✅ UI driven in headless Chromium (Playwright, Vite dev server, mocked Tauri IPC): context
+  menu entry, dialog with mapping preselection and profile badge, Replace flow + coded-lens
+  warning, Apply sends the expected `change_asset_lens` payload, Lenses tab and mappings
+  render. Two UI fixes came out of it (note checkbox no longer carries over from Keep into
+  Replace; singular wording of the coded-lens warning).
+
+#### 7.39.6 Open items / not yet verified
+- ⬜ **Run in the real packaged app against the live Immich server** — single + bulk edit,
+  confirm Immich's lens/focal values after `refresh-metadata` (uncoded → sidecar only; coded
+  → needs original), and that BrightTable's lens/focal filters pick them up after refresh.
+- ⬜ **darktable GUI check** — import an edited copy / *refresh EXIF*, confirm the lens
+  module detects the lens; confirm darktable keeps the foreign `exifEX:`/`aux:`/
+  `brighttable:` properties when it rewrites its own `.xmp`.
+- ⬜ **Older Leica bodies (M9/M240, makernote `Leica:LensType`)** — exiftool's Composite
+  `LensID` comes from the 6-bit code there, so Immich may keep showing the coded name even
+  after an original rewrite. The job surfaces a readback warning; no fix attempted (whether
+  `Leica:LensType` can be meaningfully rewritten is unexplored). No such file was available.
+- ⬜ **Adapted manual lenses on non-Leica bodies** — Canon/Pentax/Olympus/Nikon/Sony
+  makernote lens fields take priority over `LensModel` in Exiv2/darktable/RT; whether an
+  "unknown lens" makernote value blocks the fallback is untested, so original rewrites on
+  those bodies may not be picked up by the editors.
+- ⬜ **Undo / restore original lens** — the first lens is remembered in
+  `brighttable:OriginalLensModel` (and exiftool's `_original` backup when enabled), but
+  there's no UI to show or restore it.
+- ⬜ **"Apply lens mappings" bulk action** (auto-apply a single-candidate mapping across a
+  mixed selection without the dialog) — planned in the design, not built; mappings currently
+  only preselect inside the dialog when every selected photo shares the coded lens.
+- ⬜ **Metadata panel** has no inline "change" affordance next to the Lens row.
+- ⬜ **Exporting custom lenses to lensfun XML** (so RT/darktable recognise them) — out of
+  scope by decision; calibration data would still be needed for actual correction.
+- ⬜ Side finding, unrelated to this feature: the configured ART CLI path
+  (`~/AppImages/squashfs-root/ART-cli`) no longer exists on the dev machine;
+  `/usr/bin/ART-cli` works.

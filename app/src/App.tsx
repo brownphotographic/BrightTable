@@ -30,6 +30,8 @@ import { ThemeProvider } from './lib/theme';
 import { ApplicationsProvider } from './lib/applications';
 import { RawOverridesProvider } from './lib/rawOverrides';
 import { EditQueueProvider } from './lib/editQueue';
+import { LensConfigProvider } from './lib/lensConfig';
+import { LensEditProvider } from './lib/lensEdit';
 import { ImportQueueProvider } from './lib/importQueue';
 import { ClipboardProvider } from './lib/clipboard';
 import { ProcessingQueueProvider } from './lib/processingQueue';
@@ -72,6 +74,8 @@ export default function App() {
                   <RawOverridesProvider>
                     <ClipboardProvider>
                       <EditQueueProvider>
+                        <LensConfigProvider>
+                        <LensEditProvider>
                         <ImportQueueProvider>
                           <ProcessingQueueProvider>
                             <ArtQueueProvider>
@@ -85,6 +89,8 @@ export default function App() {
                             </ArtQueueProvider>
                           </ProcessingQueueProvider>
                         </ImportQueueProvider>
+                        </LensEditProvider>
+                        </LensConfigProvider>
                       </EditQueueProvider>
                     </ClipboardProvider>
                   </RawOverridesProvider>
