@@ -39,11 +39,12 @@ import {
 import { decodeThumbHash } from '../lib/thumbhash';
 import { formatDims, formatSize } from '../lib/exifFormat';
 import MetadataRows, { Star } from './MetadataRows';
+import { DescriptionEditor } from './MetadataPanel';
 import ConfirmDialog from './ConfirmDialog';
 import ActionDropdown from './ActionDropdown';
 import { Icon } from './Icons';
 import { groupActions, type MenuAction } from '../lib/actionMenu';
-import { isTypingTarget, matchesShortcut, useShortcuts } from '../lib/shortcuts';
+import { isTypingTarget, matchesShortcut, prettyShortcut, useShortcuts } from '../lib/shortcuts';
 import { isImageFullscreen, setImageFullscreen, useImageFullscreen, useViewerFullscreenLifecycle } from '../lib/fullscreen';
 import { overlayRawOverrides, useRawOverrides } from '../lib/rawOverrides';
 import { isOriginalZoomable, isRawAsset, isRoundTripEligible, isVideoAsset } from '../lib/filters';
@@ -510,7 +511,7 @@ const Viewer = forwardRef<ViewerHandle, {
     [onEdit],
   );
 
-  const { openLensEditor } = useLensEdit();
+  const { openLensEditor, copiedLens, canCopyLens, copyLens, pasteLens } = useLensEdit();
   // Same snapshot-patching reasoning as handleEdit above.
   const applyLensPatch = useCallback(
     (id: string, patch: Partial<AssetSummary>) => {
@@ -725,13 +726,18 @@ const Viewer = forwardRef<ViewerHandle, {
       else if (matchesShortcut(e, shortcuts.next) && hasNext) onNext();
       else if (matchesShortcut(e, shortcuts.stackPrev)) tryStackNav(-1);
       else if (matchesShortcut(e, shortcuts.stackNext)) tryStackNav(1);
-      else if (matchesShortcut(e, shortcuts.toggleInfo)) setInfoOpen((v) => !v);
+      else if (matchesShortcut(e, shortcuts.toggleMetadata)) {
+        e.preventDefault();
+        setInfoOpen((v) => !v);
+      }
       else if (matchesShortcut(e, shortcuts.toggleFilmstrip)) setFilmstripOpen((v) => !v);
       else if (matchesShortcut(e, shortcuts.loupe)) setLoupeOn((v) => !v);
       else if (matchesShortcut(e, shortcuts.favorite)) handleEdit(shown.id, { isFavorite: !shown.isFavorite }).catch(() => {});
       else if (matchesShortcut(e, shortcuts.addToTag) && onAddToTag && !TAG_ASSIGN_DISABLED_REASON) onAddToTag(shown.id);
       else if (matchesShortcut(e, shortcuts.copyMetadata)) handleCopyMetadata();
       else if (matchesShortcut(e, shortcuts.pasteMetadata) && copiedMetadata) handlePasteMetadata();
+      else if (matchesShortcut(e, shortcuts.copyLens)) copyLens(shown);
+      else if (matchesShortcut(e, shortcuts.pasteLens) && copiedLens && !isVideo && onLocalPatch) pasteLens({ assets: [shown], applyPatch: applyLensPatch });
       else if (matchesShortcut(e, shortcuts.copyImageProcessing) && isRawAsset(shown)) handleCopyImageProcessing();
       else if (matchesShortcut(e, shortcuts.pasteImageProcessing) && copiedProcessingSource && isRawAsset(shown)) setConfirmPasteProcessing(true);
       else if (matchesShortcut(e, shortcuts.rate0)) handleEdit(shown.id, { rating: 0 }).catch(() => {});
@@ -771,6 +777,11 @@ const Viewer = forwardRef<ViewerHandle, {
     artBusy,
     handleCopyMetadata,
     handlePasteMetadata,
+    copiedLens,
+    copyLens,
+    pasteLens,
+    applyLensPatch,
+    onLocalPatch,
     handleCopyImageProcessing,
     copiedMetadata,
     copiedProcessingSource,
@@ -964,6 +975,12 @@ const Viewer = forwardRef<ViewerHandle, {
     if (copiedMetadata) {
       actions.push({ id: 'pasteMetadata', group: 'copyPaste', label: 'Paste Metadata', onClick: handlePasteMetadata });
     }
+    if (canCopyLens(shown)) {
+      actions.push({ id: 'copyLens', group: 'copyPaste', label: 'Copy Lens', onClick: () => copyLens(shown) });
+    }
+    if (copiedLens && !isVideo && onLocalPatch) {
+      actions.push({ id: 'pasteLens', group: 'copyPaste', label: 'Paste Lens…', onClick: () => pasteLens({ assets: [shown], applyPatch: applyLensPatch }) });
+    }
     if (onExportToFolder) {
       actions.push({ id: 'exportToFolder', group: 'share', label: 'Export to Folder…', onClick: () => onExportToFolder(shown) });
     }
@@ -980,6 +997,10 @@ const Viewer = forwardRef<ViewerHandle, {
     return actions;
   }, [
     openLensEditor,
+    copiedLens,
+    canCopyLens,
+    copyLens,
+    pasteLens,
     applyLensPatch,
     onLocalPatch,
     shown,
@@ -1015,6 +1036,9 @@ const Viewer = forwardRef<ViewerHandle, {
   return (
     <div
       className="window-frame window-frame-overlay"
+      // Lets App's global Ctrl+I leave the metadata toggle to the Viewer's
+      // own panel while it's open (see App.tsx).
+      data-viewer=""
       style={{
         zIndex: 200,
         background: fullscreen ? '#000' : 'var(--canvas)',
@@ -1191,7 +1215,7 @@ const Viewer = forwardRef<ViewerHandle, {
             <Icon name="filmstrip" size={15} />
             Filmstrip
           </div>
-          <div onClick={() => setInfoOpen((v) => !v)} style={headerButtonStyle(infoOpen)}>
+          <div onClick={() => setInfoOpen((v) => !v)} style={headerButtonStyle(infoOpen)} title={`Metadata panel (${prettyShortcut(shortcuts.toggleMetadata)})`}>
             <Icon name="info" size={15} />
             Metadata
           </div>
@@ -1461,7 +1485,12 @@ const Viewer = forwardRef<ViewerHandle, {
           >
             <div style={{ padding: 18, flexShrink: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 14 }}>Information</div>
-              <MetadataRows asset={shown} onEdit={(patch) => handleEdit(shown.id, patch)} />
+              <MetadataRows
+                asset={shown}
+                onEdit={(patch) => handleEdit(shown.id, patch)}
+                onChangeLens={!isVideo && onLocalPatch ? () => openLensEditor({ assets: [shown], applyPatch: applyLensPatch }) : undefined}
+              />
+              <DescriptionEditor key={shown.id} asset={shown} onEdit={(patch) => handleEdit(shown.id, patch)} />
             </div>
             {stackId && (
               // flex:1 (not a capped maxHeight) so this fills whatever space is

@@ -191,8 +191,8 @@ function MappingCard({ mapping, catalog, lensConfig, libraryLenses, onChange }: 
         <span style={{ fontSize: 12.5, color: 'var(--text-dim)', marginRight: 4 }}>Default action</span>
         {(
           [
-            { value: 'keepAndNote', label: 'Keep lens + add note' },
-            { value: 'replace', label: 'Replace with actual lens' },
+            { value: 'keepAndNote', label: 'Keep lens entry, add note' },
+            { value: 'replace', label: 'Replace entry' },
           ] as { value: LensMappingMode; label: string }[]
         ).map((o) => (
           <div key={o.value} onClick={() => onChange({ ...mapping, mode: o.value })} style={segment(mapping.mode === o.value)}>

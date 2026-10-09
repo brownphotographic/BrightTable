@@ -86,6 +86,8 @@ export interface TagsBrowserHandle {
   pasteImageProcessing: () => void;
   copyMetadata: () => void;
   pasteMetadata: () => void;
+  copyLens: () => void;
+  pasteLens: () => void;
   rotateLeft: () => void;
   rotateRight: () => void;
 }
@@ -102,7 +104,6 @@ export interface TagsBrowserHandle {
 // full /search/metadata call per tag on every list load.
 const TagsBrowser = forwardRef<TagsBrowserHandle, {
   metaOpen: boolean;
-  onCloseMetadata: () => void;
   // Number of tags, for the sidebar row - only meaningful in the list view.
   onCount?: (n: number) => void;
   active?: boolean;
@@ -122,7 +123,6 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
   filters: Filters;
 }>(function TagsBrowser({
   metaOpen,
-  onCloseMetadata,
   onCount,
   active = true,
   loupeOn,
@@ -221,7 +221,7 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
     rotateSelection,
     rotatingIds,
   } = useAssetActions({ onError: setEnqueueError });
-  const { openLensEditor } = useLensEdit();
+  const { openLensEditor, copiedLens, canCopyLens, copyLens, pasteLens } = useLensEdit();
   const { shortcuts, capturing } = useShortcuts();
 
   const refreshTagList = useCallback(() => {
@@ -553,6 +553,17 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
         onClick: () => handlePasteMetadata(targetIds, commitEditMany),
       });
     }
+    // Lens - separate from Copy/Paste Metadata: a lens goes through Change
+    // Lens (see lib/lensEdit.tsx), so Paste Lens opens that dialog prefilled.
+    if (asset && canCopyLens(asset)) {
+      items.push({ label: 'Copy Lens', onClick: () => copyLens(asset) });
+    }
+    if (copiedLens && lensTargets.length) {
+      items.push({
+        label: lensTargets.length > 1 ? `Paste Lens to ${lensTargets.length} Photos…` : 'Paste Lens…',
+        onClick: () => pasteLens({ assets: lensTargets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+      });
+    }
     items.push(DIVIDER);
 
     // Utility
@@ -600,6 +611,10 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
     requestPasteImageProcessing,
     handleCopyMetadata,
     handlePasteMetadata,
+    copiedLens,
+    canCopyLens,
+    copyLens,
+    pasteLens,
   ]);
 
   // See PhotosBrowser.tsx's identical effect - right-clicking a RAW asset,
@@ -658,6 +673,12 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
       pasteMetadata: () => {
         handlePasteMetadata([...selected], commitEditMany);
       },
+      copyLens: () => {
+        if (selectedAssets.length === 1) copyLens(selectedAssets[0]);
+      },
+      pasteLens: () => {
+        pasteLens({ assets: selectedAssets, applyPatch: patchAssetLocal, onError: setEnqueueError });
+      },
       rotateLeft: () => {
         rotateSelection([...selected], false, assetByIdAll).catch(() => {});
       },
@@ -683,6 +704,9 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
       commitEditMany,
       rotateSelection,
       openId,
+      copyLens,
+      pasteLens,
+      patchAssetLocal,
     ],
   );
 
@@ -1020,6 +1044,16 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
                 ? [{ id: 'copyMetadata', group: 'copyPaste' as const, label: 'Copy Metadata', onClick: () => handleCopyMetadata(selectedAssets[0]) }]
                 : []),
               { id: 'pasteMetadata', group: 'copyPaste', label: 'Paste Metadata', disabled: !copiedMetadata, onClick: () => handlePasteMetadata([...selected], commitEditMany) },
+              ...(selectedAssets.length === 1 && canCopyLens(selectedAssets[0])
+                ? [{ id: 'copyLens', group: 'copyPaste' as const, label: 'Copy Lens', onClick: () => copyLens(selectedAssets[0]) }]
+                : []),
+              {
+                id: 'pasteLens',
+                group: 'copyPaste',
+                label: 'Paste Lens…',
+                disabled: !copiedLens || !selectedAssets.some((a) => !isVideoAsset(a)),
+                onClick: () => pasteLens({ assets: selectedAssets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+              },
               {
                 id: 'exportToFolder',
                 group: 'share',
@@ -1103,7 +1137,11 @@ const TagsBrowser = forwardRef<TagsBrowserHandle, {
           )}
         </div>
         {loupeOn && <GridLoupePane assetId={hoveredAssetId} large={loupeLarge} />}
-        {!loupeOn && metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
+        {!loupeOn && metaOpen && <MetadataPanel
+            selected={selectedAssets}
+            onEdit={commitEdit}
+            onChangeLens={() => openLensEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError })}
+          />}
       </div>
 
       {openAsset && (

@@ -98,6 +98,8 @@ export interface PeopleBrowserHandle {
   pasteImageProcessing: () => void;
   copyMetadata: () => void;
   pasteMetadata: () => void;
+  copyLens: () => void;
+  pasteLens: () => void;
   rotateLeft: () => void;
   rotateRight: () => void;
 }
@@ -114,7 +116,6 @@ export interface PeopleBrowserHandle {
 // Folders, rather than AlbumsBrowser's special-cased "remove from album".
 const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
   metaOpen: boolean;
-  onCloseMetadata: () => void;
   // Number of people, for the sidebar row - only meaningful in the list view.
   onCount?: (n: number) => void;
   active?: boolean;
@@ -134,7 +135,6 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
   filters: Filters;
 }>(function PeopleBrowser({
   metaOpen,
-  onCloseMetadata,
   onCount,
   active = true,
   loupeOn,
@@ -220,7 +220,7 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
     rotateSelection,
     rotatingIds,
   } = useAssetActions({ onError: setEnqueueError });
-  const { openLensEditor } = useLensEdit();
+  const { openLensEditor, copiedLens, canCopyLens, copyLens, pasteLens } = useLensEdit();
   const { shortcuts, capturing } = useShortcuts();
 
   const refreshPeopleList = useCallback(() => {
@@ -577,6 +577,17 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
         onClick: () => handlePasteMetadata(targetIds, commitEditMany),
       });
     }
+    // Lens - separate from Copy/Paste Metadata: a lens goes through Change
+    // Lens (see lib/lensEdit.tsx), so Paste Lens opens that dialog prefilled.
+    if (asset && canCopyLens(asset)) {
+      items.push({ label: 'Copy Lens', onClick: () => copyLens(asset) });
+    }
+    if (copiedLens && lensTargets.length) {
+      items.push({
+        label: lensTargets.length > 1 ? `Paste Lens to ${lensTargets.length} Photos…` : 'Paste Lens…',
+        onClick: () => pasteLens({ assets: lensTargets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+      });
+    }
     items.push(DIVIDER);
 
     // Utility
@@ -622,6 +633,10 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
     requestPasteImageProcessing,
     handleCopyMetadata,
     handlePasteMetadata,
+    copiedLens,
+    canCopyLens,
+    copyLens,
+    pasteLens,
     rotateSelection,
   ]);
 
@@ -680,6 +695,12 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
       pasteMetadata: () => {
         handlePasteMetadata([...selected], commitEditMany);
       },
+      copyLens: () => {
+        if (selectedAssets.length === 1) copyLens(selectedAssets[0]);
+      },
+      pasteLens: () => {
+        pasteLens({ assets: selectedAssets, applyPatch: patchAssetLocal, onError: setEnqueueError });
+      },
       rotateLeft: () => {
         rotateSelection([...selected], false, assetByIdAll).catch(() => {});
       },
@@ -705,6 +726,9 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
       commitEditMany,
       rotateSelection,
       openId,
+      copyLens,
+      pasteLens,
+      patchAssetLocal,
     ],
   );
 
@@ -889,6 +913,16 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
       ? [{ id: 'copyMetadata', group: 'copyPaste' as const, label: 'Copy Metadata', onClick: () => handleCopyMetadata(selectedAssets[0]) }]
       : []),
     { id: 'pasteMetadata', group: 'copyPaste', label: 'Paste Metadata', disabled: !copiedMetadata, onClick: () => handlePasteMetadata([...selected], commitEditMany) },
+    ...(selectedAssets.length === 1 && canCopyLens(selectedAssets[0])
+      ? [{ id: 'copyLens', group: 'copyPaste' as const, label: 'Copy Lens', onClick: () => copyLens(selectedAssets[0]) }]
+      : []),
+    {
+      id: 'pasteLens',
+      group: 'copyPaste',
+      label: 'Paste Lens…',
+      disabled: !copiedLens || !selectedAssets.some((a) => !isVideoAsset(a)),
+      onClick: () => pasteLens({ assets: selectedAssets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+    },
     {
       id: 'exportToFolder',
       group: 'share',
@@ -1021,7 +1055,11 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
           )}
         </div>
         {loupeOn && <GridLoupePane assetId={hoveredAssetId} large={loupeLarge} />}
-        {!loupeOn && metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
+        {!loupeOn && metaOpen && <MetadataPanel
+            selected={selectedAssets}
+            onEdit={commitEdit}
+            onChangeLens={() => openLensEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError })}
+          />}
       </div>
 
       {openAsset && (

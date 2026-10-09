@@ -575,10 +575,33 @@ pub struct LensEditRequest {
     /// This edit only - on top of Preferences → Lenses' "write originals".
     #[serde(default)]
     pub write_original_once: bool,
+    /// The note's lens when it differs from `lens` (see `LensChange::note_lens_model`).
+    #[serde(default)]
+    pub note_lens: Option<String>,
 }
 
 /// Enqueues a Change Lens edit (single or bulk) onto the same `EditQueue`
 /// as rating/description edits, under the same read-only/batch-cap gates.
+/// The Lens Manufacturer row - see `lens_edit::read_lens_make`. Lazy and
+/// best-effort: Ok(None) when there's no local path mapping, the asset
+/// doesn't resolve to a local file, or no maker is recorded - the panel
+/// shows "—" for all of those. Queues on the interactive permit lane (it's
+/// for the one photo the user is looking at) and is bounded by the same
+/// timeout as `check_sidecar_metadata`, so an unreachable mount can't hang it.
+#[tauri::command]
+pub async fn read_lens_make(state: State<'_, AppState>, original_path: String, lens_model: Option<String>) -> Result<Option<String>, String> {
+    let cfg = state.library_config();
+    let Some(local) = paths::resolve_local_path(&original_path, &cfg) else { return Ok(None) };
+    let _permit = state.io_guard.acquire_interactive_metadata_scan_permit().await;
+    let Some(handle) = io_guard::guarded_spawn_blocking(&state.io_guard, move || crate::lens_edit::read_lens_make(&local, lens_model.as_deref())) else {
+        return Ok(None);
+    };
+    match tokio::time::timeout(ROUND_TRIP_EXPORT_PATH_TIMEOUT, handle).await {
+        Ok(join_result) => join_result.map_err(|e| e.to_string()),
+        Err(_) => Err("Timed out reading the lens maker".into()),
+    }
+}
+
 #[tauri::command]
 pub fn change_asset_lens(state: State<AppState>, targets: Vec<LensEditTarget>, request: LensEditRequest) -> Result<Vec<u64>, String> {
     let (cfg, lens_cfg, exiftool_path) = {
@@ -609,6 +632,7 @@ pub fn change_asset_lens(state: State<AppState>, targets: Vec<LensEditTarget>, r
         f_number: request.f_number,
         write_original,
         note_prefix: lens_cfg.note_prefix.clone(),
+        note_lens_model: request.note_lens,
     };
     Ok(state.edit_queue.enqueue_lens(&cfg, &targets, &change, &exiftool_path, lens_cfg.keep_original_backup, lens_cfg.update_raw_profiles))
 }

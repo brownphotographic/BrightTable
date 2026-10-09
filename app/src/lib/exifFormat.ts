@@ -17,13 +17,24 @@
 
 import type { AssetSummary } from './api';
 
-export function formatExposure(a: AssetSummary): string {
-  const parts: string[] = [];
-  if (a.fNumber != null) parts.push(`f/${a.fNumber.toFixed(1)}`);
-  if (a.exposureTime) parts.push(a.exposureTime.endsWith('s') ? a.exposureTime : `${a.exposureTime}s`);
-  if (a.iso != null) parts.push(`ISO ${a.iso}`);
-  if (a.focalLength != null) parts.push(`${Math.round(a.focalLength)}mm`);
-  return parts.length ? parts.join(' ') : '—';
+// One field per row (was a single combined "Exposure" string). A 0 value
+// means "not recorded" - e.g. a Leica M body can't read a manual lens's
+// aperture ring and writes FNumber 0 - so it shows as unknown, not f/0.0.
+export function formatAperture(a: AssetSummary): string {
+  return a.fNumber ? `f/${Number(a.fNumber.toFixed(1))}` : '—';
+}
+
+export function formatShutter(a: AssetSummary): string {
+  if (!a.exposureTime || a.exposureTime === '0') return '—';
+  return a.exposureTime.endsWith('s') ? a.exposureTime : `${a.exposureTime}s`;
+}
+
+export function formatIso(a: AssetSummary): string {
+  return a.iso ? String(a.iso) : '—';
+}
+
+export function formatFocalLength(a: AssetSummary): string {
+  return a.focalLength ? `${Number(a.focalLength.toFixed(1))} mm` : '—';
 }
 
 export function formatCamera(a: AssetSummary): string {

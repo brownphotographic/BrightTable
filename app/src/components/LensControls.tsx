@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { LensSpec } from '../lib/api';
 import { formatLensSpecs, guessLensParameters, matchesLensQuery, type LensOption, type LensSource } from '../lib/lenses';
 
@@ -32,22 +32,36 @@ const SOURCE_LABEL: Record<LensSource, string> = {
 // is wasted work when nobody scrolls that far; typing narrows it instead.
 const MAX_ROWS = 200;
 
+// `selectedOption` (when given) is always visible: if the search filters it
+// out, it's past MAX_ROWS, or it isn't in `options` at all (a lens picked by
+// a switch rather than a click here), it's pinned on top under "Selected".
+// A selection made from outside the list is scrolled into view.
 export function LensPicker({
   options,
   selectedKey,
+  selectedOption,
   onSelect,
   height = 260,
   autoFocus,
 }: {
   options: LensOption[];
   selectedKey: string | null;
+  selectedOption?: LensOption | null;
   onSelect: (o: LensOption) => void;
   height?: number;
   autoFocus?: boolean;
 }) {
   const [query, setQuery] = useState('');
   const filtered = useMemo(() => options.filter((o) => matchesLensQuery(o, query)), [options, query]);
-  const shown = filtered.slice(0, MAX_ROWS);
+  const capped = filtered.slice(0, MAX_ROWS);
+  const pinned = selectedOption && !capped.some((o) => o.key === selectedOption.key) ? selectedOption : null;
+  const shown = pinned ? [pinned, ...capped] : capped;
+  const rowRefs = useRef(new Map<string, HTMLDivElement>());
+  const clickedKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!selectedKey || clickedKey.current === selectedKey) return;
+    rowRefs.current.get(selectedKey)?.scrollIntoView({ block: 'nearest' });
+  }, [selectedKey]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -56,13 +70,21 @@ export function LensPicker({
         {shown.length === 0 && <div style={{ padding: '16px 12px', fontSize: 12.5, color: 'var(--text-dimmer)' }}>No lens matches — add it as a new lens below.</div>}
         {shown.map((o, i) => {
           const selected = o.key === selectedKey;
-          const groupStart = i === 0 || shown[i - 1].source !== o.source;
+          const isPinned = pinned != null && i === 0;
+          const groupStart = i === 0 || (pinned != null && i === 1) || shown[i - 1].source !== o.source;
           const specs = formatLensSpecs(o.spec);
           return (
-            <div key={o.key}>
-              {groupStart && <div style={groupHeader}>{SOURCE_LABEL[o.source]}</div>}
+            <div key={isPinned ? `pinned:${o.key}` : o.key}>
+              {groupStart && <div style={groupHeader}>{isPinned ? 'Selected' : SOURCE_LABEL[o.source]}</div>}
               <div
-                onClick={() => onSelect(o)}
+                ref={(el) => {
+                  if (el) rowRefs.current.set(o.key, el);
+                  else rowRefs.current.delete(o.key);
+                }}
+                onClick={() => {
+                  clickedKey.current = o.key;
+                  onSelect(o);
+                }}
                 style={{
                   padding: '6px 12px',
                   cursor: 'default',
@@ -85,9 +107,9 @@ export function LensPicker({
             </div>
           );
         })}
-        {filtered.length > shown.length && (
+        {filtered.length > capped.length && (
           <div style={{ padding: '8px 12px', fontSize: 11.5, color: 'var(--text-dimmer)' }}>
-            {filtered.length - shown.length} more — keep typing to narrow it down.
+            {filtered.length - capped.length} more — keep typing to narrow it down.
           </div>
         )}
       </div>

@@ -256,7 +256,7 @@ impl EditQueue {
                 rating: None,
                 is_favorite: None,
                 description: None,
-                lens_model: Some(change.lens.model.clone()),
+                lens_model: Some(if change.apply_lens { change.lens.model.clone() } else { change.note_model().to_string() }),
                 status: JobStatus::Pending,
                 created_at_ms: now_ms(),
                 finished_at_ms: None,
@@ -463,7 +463,7 @@ async fn run_lens_job(
             }
             let description = sidecar_change.add_note.then(|| {
                 let base = xmp::read_description(&existing).or(fallback_description).unwrap_or_default();
-                lens_edit::upsert_lens_note(&base, &sidecar_change.note_prefix, &sidecar_change.lens.model)
+                lens_edit::upsert_lens_note(&base, &sidecar_change.note_prefix, sidecar_change.note_model())
             });
             xmp::patch_properties(&write_path, &props, description.as_deref())?;
             Ok(description)
@@ -703,6 +703,7 @@ mod tests {
     fn lens_work(apply_lens: bool, add_note: bool, write_original: bool) -> LensWork {
         LensWork {
             change: LensChange {
+                note_lens_model: None,
                 lens: crate::config::LensSpec {
                     maker: "Zeiss".into(),
                     model: "Planar T* 2/50 ZM".into(),

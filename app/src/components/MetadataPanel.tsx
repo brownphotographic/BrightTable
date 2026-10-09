@@ -26,62 +26,39 @@ import MetadataRows from './MetadataRows';
 // existed in the mockup's imagined local-sidecar-via-ExifTool model.
 export default function MetadataPanel({
   selected,
-  onClose,
   onEdit,
+  onChangeLens,
 }: {
   selected: AssetSummary[];
-  onClose: () => void;
   onEdit: (id: string, patch: AssetMetadataPatch) => Promise<void>;
+  // Opens Change Lens on the whole (non-video) selection, unlike the rest of
+  // this panel's edits - same targeting as the context menu's Change Lens.
+  onChangeLens?: () => void;
 }) {
   const asset = selected[0] ?? null;
+  const lensCount = selected.filter((a) => a.type !== 'VIDEO').length;
 
+  // Styled to match the Viewer's Information panel (Viewer.tsx) - same
+  // width, background, border and title - so the two read as one panel.
+  // Closed from the toolbar's Metadata toggle, same as the Viewer's.
   return (
     <div
       style={{
-        width: 312,
+        width: 288,
         flexShrink: 0,
-        borderLeft: '1px solid rgba(0,0,0,0.4)',
-        background: 'var(--surface-sunken)',
+        borderLeft: '1px solid var(--border-strong)',
+        background: 'var(--panel-3)',
         display: 'flex',
         flexDirection: 'column',
         minHeight: 0,
       }}
     >
-      <div
-        style={{
-          height: 46,
-          flexShrink: 0,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '0 8px 0 16px',
-          borderBottom: '1px solid rgba(0,0,0,0.35)',
-        }}
-      >
-        <span style={{ fontSize: 14, fontWeight: 700 }}>Metadata</span>
-        <div style={{ flex: 1 }} />
-        <div
-          onClick={onClose}
-          style={{
-            width: 28,
-            height: 28,
-            borderRadius: '50%',
-            background: 'var(--overlay-medium)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'default',
-            position: 'relative',
-          }}
-        >
-          <div style={{ position: 'absolute', width: 11, height: 1.6, background: 'var(--text)', transform: 'rotate(45deg)', borderRadius: 1 }} />
-          <div style={{ position: 'absolute', width: 11, height: 1.6, background: 'var(--text)', transform: 'rotate(-45deg)', borderRadius: 1 }} />
-        </div>
-      </div>
-
       {asset ? (
-        <div style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: '14px 16px' }}>
-          <div style={{ font: '600 12.5px ui-monospace,monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <div style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: 18 }}>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>Information</div>
+          {/* The Viewer shows the file name in its own toolbar; the grid has
+              nowhere else to show it, so it's a quiet subtitle here. */}
+          <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-dimmer)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={asset.fileName}>
             {asset.fileName}
           </div>
           {selected.length > 1 && (
@@ -101,8 +78,13 @@ export default function MetadataPanel({
               this one only for now.
             </div>
           )}
-          <div style={{ marginTop: 18 }}>
-            <MetadataRows asset={asset} onEdit={(patch) => onEdit(asset.id, patch)} />
+          <div style={{ marginTop: 14 }}>
+            <MetadataRows
+              asset={asset}
+              onEdit={(patch) => onEdit(asset.id, patch)}
+              onChangeLens={onChangeLens}
+              changeLensTitle={lensCount > 1 ? `Change lens for ${lensCount} photos…` : 'Change lens…'}
+            />
           </div>
           <DescriptionEditor key={asset.id} asset={asset} onEdit={(patch) => onEdit(asset.id, patch)} />
         </div>
@@ -117,7 +99,8 @@ export default function MetadataPanel({
   );
 }
 
-function DescriptionEditor({
+// Also used by the Viewer's Information panel.
+export function DescriptionEditor({
   asset,
   onEdit,
 }: {

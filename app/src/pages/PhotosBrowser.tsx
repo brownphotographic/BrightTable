@@ -56,7 +56,7 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import NoSidecarDialog from '../components/NoSidecarDialog';
 import InlineWarningBanner from '../components/InlineWarningBanner';
 import { isTypingTarget, matchesShortcut, useShortcuts, type ShortcutId } from '../lib/shortcuts';
-import { isRawAsset, isRoundTripEligible, isVideoAsset, matchesFilters, type Filters } from '../lib/filters';
+import { activeFilterCount, isRawAsset, isRoundTripEligible, isVideoAsset, matchesFilters, type Filters } from '../lib/filters';
 import { resolveVisibleStackAssets } from '../lib/stacks';
 import { matchesVersionSuffix } from '../lib/smartStack';
 import { useRawOverrides } from '../lib/rawOverrides';
@@ -98,6 +98,8 @@ function parseCalendarDate(dateStr: string): Date {
 
 const MONTH_TOP_PADDING = 16;
 const MONTH_HEADER_HEIGHT = 22;
+// Months fetched at once by the filter prefetch (see loadBucket).
+const FILTER_PREFETCH_CONCURRENCY = 4;
 const DAY_HEADER_HEIGHT = 36;
 const GRID_GAP = 12;
 const STACK_BAND_HEIGHT_GUESS = 210;
@@ -113,8 +115,8 @@ const STACK_BAND_HEIGHT_GUESS = 210;
 // TimelineRail's bucket-index math both find their way back to which month
 // a given row belongs to.
 type PhotoRow =
-  | { kind: 'loading'; bucketIndex: number; height: number }
-  | { kind: 'month'; bucketIndex: number; height: number }
+  | { kind: 'loading'; bucketIndex: number; filtering?: boolean; height: number }
+  | { kind: 'month'; bucketIndex: number; count: number; height: number }
   | { kind: 'day'; bucketIndex: number; day: string; dayLabel: string; place: string | null; count: number; height: number }
   | { kind: 'assets'; bucketIndex: number; day: string; items: AssetSummary[]; height: number }
   | { kind: 'stackband'; bucketIndex: number; day: string; stackId: string; assetId: string; height: number };
@@ -134,6 +136,8 @@ export interface PhotosBrowserHandle {
   pasteImageProcessing: () => void;
   copyMetadata: () => void;
   pasteMetadata: () => void;
+  copyLens: () => void;
+  pasteLens: () => void;
   openPrint: () => void;
   rotateLeft: () => void;
   rotateRight: () => void;
@@ -144,7 +148,6 @@ export interface PhotosBrowserHandle {
 const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   onTotalCount?: (n: number) => void;
   metaOpen: boolean;
-  onCloseMetadata: () => void;
   filters: Filters;
   onOpenApplicationsPreferences?: () => void;
   // Whether the Photos tab is the one currently showing - stays mounted
@@ -166,7 +169,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // Loupe circle size - set in Preferences → Configuration → Window
   // ("Thumbnail Loupe Size"). Only meaningful while loupeOn.
   loupeLarge: boolean;
-}>(function PhotosBrowser({ onTotalCount, metaOpen, onCloseMetadata, filters, onOpenApplicationsPreferences, active = true, thumbSize, loupeOn, onToggleLoupe, loupeLarge }, ref) {
+}>(function PhotosBrowser({ onTotalCount, metaOpen, filters, onOpenApplicationsPreferences, active = true, thumbSize, loupeOn, onToggleLoupe, loupeLarge }, ref) {
   const [buckets, setBuckets] = useState<TimeBucketInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Set only when update_asset_metadata itself rejects synchronously (read-
@@ -273,7 +276,7 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     rotateSelection,
     rotatingIds,
   } = useAssetActions({ onError: setEnqueueError });
-  const { openLensEditor } = useLensEdit();
+  const { openLensEditor, copiedLens, canCopyLens, copyLens, pasteLens } = useLensEdit();
   const { shortcuts, capturing } = useShortcuts();
   const { overrideIds, setOverride } = useRawOverrides();
   // This server version doesn't populate `stack` on /search/metadata or
@@ -313,6 +316,13 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // caught up yet - `filters` gets a new object on every change, so this is
   // true for exactly the frames where the grid below is showing stale data.
   const isFiltering = filters !== deferredFilters;
+  // Whether any Filters-panel filter is narrowing the grid. Filtering is
+  // all client-side (Immich's /timeline/buckets can't filter by camera,
+  // lens, focal length, rating, file type...), so the server's month list
+  // and counts still describe the *unfiltered* library - while this is on,
+  // months only appear once loaded and found to hold a match, and their
+  // headers show the filtered count instead of Immich's.
+  const filterActive = activeFilterCount(deferredFilters) > 0;
   const filteredAssetCache = useBucketMemo(
     assetCache,
     [deferredFilters, stackByAssetId, overrideIds, unsyncedMetadata, processingSidecarAssets],
@@ -972,6 +982,17 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
         onClick: () => handlePasteMetadata(pasteTargetIds, commitEditMany),
       });
     }
+    // Lens - separate from Copy/Paste Metadata: a lens goes through Change
+    // Lens (see lib/lensEdit.tsx), so Paste Lens opens that dialog prefilled.
+    if (asset && canCopyLens(asset)) {
+      items.push({ label: 'Copy Lens', onClick: () => copyLens(asset) });
+    }
+    if (copiedLens && lensTargets.length) {
+      items.push({
+        label: lensTargets.length > 1 ? `Paste Lens to ${lensTargets.length} Photos…` : 'Paste Lens…',
+        onClick: () => pasteLens({ assets: lensTargets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+      });
+    }
     items.push(DIVIDER);
 
     // Utility
@@ -1028,6 +1049,10 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     requestPasteImageProcessing,
     handleCopyMetadata,
     handlePasteMetadata,
+    copiedLens,
+    canCopyLens,
+    copyLens,
+    pasteLens,
     rotateSelection,
     removeAssets,
     rawRoundTripEnabled,
@@ -1145,6 +1170,12 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       pasteMetadata: () => {
         handlePasteMetadata([...selected], commitEditMany);
       },
+      copyLens: () => {
+        if (selectedAssets.length === 1) copyLens(selectedAssets[0]);
+      },
+      pasteLens: () => {
+        pasteLens({ assets: selectedAssets, applyPatch: patchAssetLocal, onError: setEnqueueError });
+      },
       // Single-asset resolution, matching the design mockup's own
       // printTargetAsset(): the lone selected asset, else the open Viewer
       // asset, else the first currently-visible one. A RAW-resolved target
@@ -1200,6 +1231,9 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       openId,
       assetByIdAll,
       flatIds,
+      copyLens,
+      pasteLens,
+      patchAssetLocal,
     ],
   );
 
@@ -1250,6 +1284,12 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       } else if (matchesShortcut(e, shortcuts.pasteMetadata) && selected.size > 0 && copiedMetadata) {
         e.preventDefault();
         handlePasteMetadata([...selected], commitEditMany);
+      } else if (matchesShortcut(e, shortcuts.copyLens) && selectedAssets.length === 1) {
+        e.preventDefault();
+        copyLens(selectedAssets[0]);
+      } else if (matchesShortcut(e, shortcuts.pasteLens) && selected.size > 0 && copiedLens) {
+        e.preventDefault();
+        pasteLens({ assets: selectedAssets, applyPatch: patchAssetLocal, onError: setEnqueueError });
       } else if (matchesShortcut(e, shortcuts.copyImageProcessing) && selectedAssets.length === 1) {
         e.preventDefault();
         handleCopyImageProcessing(selectedAssets[0]);
@@ -1312,6 +1352,11 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     selectedAssets,
     handleCopyMetadata,
     handlePasteMetadata,
+    copiedLens,
+    canCopyLens,
+    copyLens,
+    pasteLens,
+    patchAssetLocal,
     handleCopyImageProcessing,
     requestPasteImageProcessing,
     copiedMetadata,
@@ -1407,13 +1452,22 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     buckets.forEach((bucket, bucketIndex) => {
       const assets = filteredAssetCache[bucket.timeBucket];
       if (!assets) {
+        if (filterActive) {
+          // Most months may hold no match, so the placeholder is just a
+          // compact header-height row rather than one sized off the
+          // unfiltered count - the filter prefetch below loads every month
+          // while a filter is on, and empty ones then drop out entirely.
+          out.push({ kind: 'loading', bucketIndex, filtering: true, height: MONTH_TOP_PADDING + MONTH_HEADER_HEIGHT });
+          return;
+        }
         const dayHeadersGuess = Math.min(bucket.count, 28);
         const rowsGuess = Math.ceil(bucket.count / columns);
         const height = MONTH_TOP_PADDING + MONTH_HEADER_HEIGHT + dayHeadersGuess * DAY_HEADER_HEIGHT + rowsGuess * assetRowHeight;
         out.push({ kind: 'loading', bucketIndex, height });
         return;
       }
-      out.push({ kind: 'month', bucketIndex, height: MONTH_TOP_PADDING + MONTH_HEADER_HEIGHT });
+      if (filterActive && assets.length === 0) return;
+      out.push({ kind: 'month', bucketIndex, count: filterActive ? assets.length : bucket.count, height: MONTH_TOP_PADDING + MONTH_HEADER_HEIGHT });
       for (const [day, items] of groupByDay(assets)) {
         const place = placeLabel(items[0]);
         const dateObj = parseCalendarDate(day);
@@ -1440,14 +1494,14 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       }
     });
     return out;
-  }, [buckets, filteredAssetCache, expandedStacks, columns, assetRowHeight]);
+  }, [buckets, filteredAssetCache, expandedStacks, columns, assetRowHeight, filterActive]);
 
   // First row index belonging to each bucket (length buckets.length + 1, the
   // last entry being rows.length) - lets TimelineRail translate its own
   // bucket-index math (built off exact Immich asset counts, see its own doc
   // comment) into a row index this row-level virtualizer can actually scroll
-  // to. Every bucket has at least one asset (Immich never returns a
-  // zero-count bucket) so this is always strictly non-decreasing.
+  // to. Non-decreasing - a bucket with no rows (a month a filter emptied)
+  // just shares the next bucket's start index.
   const bucketFirstRowIndex = useMemo(() => {
     const arr = new Array<number>((buckets?.length ?? 0) + 1).fill(rows.length);
     let cursor = 0;
@@ -1458,6 +1512,14 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     arr[buckets?.length ?? 0] = rows.length;
     return arr;
   }, [rows, buckets]);
+
+  // The rail sizes each month by its asset count - while filtering, that's
+  // the filtered count (0 for a month not loaded yet or with no match, so it
+  // takes no space on the rail) rather than Immich's unfiltered one.
+  const railBuckets = useMemo(
+    () => (!buckets || !filterActive ? buckets ?? [] : buckets.map((b) => ({ ...b, count: filteredAssetCache[b.timeBucket]?.length ?? 0 }))),
+    [buckets, filterActive, filteredAssetCache],
+  );
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -1531,6 +1593,33 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contentWidth, rows]);
 
+  // Fetches one month's assets into assetCache (no-op if already loaded or
+  // in flight). A `prefetch` (the filter prefetch below, not a month the
+  // user scrolled to) only sidecar-scans the assets the current filters
+  // show, so switching a filter on doesn't quietly scan the whole library -
+  // the cost is that a prefetched month's non-matching assets never get
+  // their unsynced-metadata badge this session (assetCache is permanent),
+  // acceptable for a passive, best-effort hint.
+  const loadBucket = (timeBucket: string, prefetch = false) => {
+    if (assetCache[timeBucket] || inFlight.current.has(timeBucket)) return;
+    inFlight.current.add(timeBucket);
+    getTimelineBucketAssets(timeBucket)
+      .then((assets) => {
+        // Cleared before the cache update (not in a .finally) so the filter
+        // prefetch effect, re-run by that update, sees the freed slot.
+        inFlight.current.delete(timeBucket);
+        setAssetCache((c) => ({ ...c, [timeBucket]: assets }));
+        // Passive, best-effort check - silently does nothing if no local
+        // path mapping is configured (Preferences → Library → Originals
+        // on Disk) or this bucket's assets don't resolve to one.
+        scanUnsyncedMetadata(prefetch ? assets.filter((a) => matchesFilters(a, deferredFilters)) : assets);
+      })
+      .catch(() => {
+        inFlight.current.delete(timeBucket);
+        setAssetCache((c) => ({ ...c, [timeBucket]: [] }));
+      });
+  };
+
   useEffect(() => {
     // Also skipped while inactive (kept mounted but hidden behind another
     // tab) - otherwise this keeps consuming checkSidecarMetadata's shared,
@@ -1546,21 +1635,23 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       const row = rows[item.index];
       if (!row || seenBuckets.has(row.bucketIndex)) continue;
       seenBuckets.add(row.bucketIndex);
-      const bucket = buckets[row.bucketIndex];
-      if (assetCache[bucket.timeBucket] || inFlight.current.has(bucket.timeBucket)) continue;
-      inFlight.current.add(bucket.timeBucket);
-      getTimelineBucketAssets(bucket.timeBucket)
-        .then((assets) => {
-          setAssetCache((c) => ({ ...c, [bucket.timeBucket]: assets }));
-          // Passive, best-effort check - silently does nothing if no local
-          // path mapping is configured (Preferences → Library → Originals
-          // on Disk) or this bucket's assets don't resolve to one.
-          scanUnsyncedMetadata(assets);
-        })
-        .catch(() => setAssetCache((c) => ({ ...c, [bucket.timeBucket]: [] })))
-        .finally(() => inFlight.current.delete(bucket.timeBucket));
+      loadBucket(buckets[row.bucketIndex].timeBucket);
     }
   });
+
+  // While a filter is on, every month is fetched in the background (a few at
+  // a time) rather than only as it scrolls into view - otherwise there's no
+  // way to know which months hold a match, and the grid would be a long run
+  // of placeholder headers for months that turn out empty. Each completed
+  // fetch updates assetCache, which re-runs this to start the next ones.
+  useEffect(() => {
+    if (!buckets || !active || !filterActive) return;
+    for (const bucket of buckets) {
+      if (inFlight.current.size >= FILTER_PREFETCH_CONCURRENCY) break;
+      loadBucket(bucket.timeBucket, true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buckets, active, filterActive, assetCache]);
 
   if (error) {
     return (
@@ -1661,6 +1752,16 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       ? [{ id: 'copyMetadata', group: 'copyPaste' as const, label: 'Copy Metadata', onClick: () => handleCopyMetadata(selectedAssets[0]) }]
       : []),
     { id: 'pasteMetadata', group: 'copyPaste', label: 'Paste Metadata', disabled: !copiedMetadata, onClick: () => handlePasteMetadata([...selected], commitEditMany) },
+    ...(selectedAssets.length === 1 && canCopyLens(selectedAssets[0])
+      ? [{ id: 'copyLens', group: 'copyPaste' as const, label: 'Copy Lens', onClick: () => copyLens(selectedAssets[0]) }]
+      : []),
+    {
+      id: 'pasteLens',
+      group: 'copyPaste',
+      label: 'Paste Lens…',
+      disabled: !copiedLens || !selectedAssets.some((a) => !isVideoAsset(a)),
+      onClick: () => pasteLens({ assets: selectedAssets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+    },
     {
       id: 'exportToFolder',
       group: 'share',
@@ -1732,6 +1833,9 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
               ...pendingStyle(isFiltering),
             }}
           >
+            {filterActive && rows.length === 0 && (
+              <div style={{ padding: '24px 0', color: 'var(--text-dim)' }}>No photos match the current filters.</div>
+            )}
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
               {virtualizer.getVirtualItems().map((item) => {
                 const row = rows[item.index];
@@ -1766,11 +1870,15 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
             </div>
           </div>
           {!loupeOn && selected.size === 0 && (
-            <TimelineRail buckets={buckets} virtualizer={virtualizer} bucketFirstRowIndex={bucketFirstRowIndex} />
+            <TimelineRail buckets={railBuckets} virtualizer={virtualizer} bucketFirstRowIndex={bucketFirstRowIndex} />
           )}
         </div>
         {loupeOn && <GridLoupePane assetId={hoveredAssetId} large={loupeLarge} />}
-        {!loupeOn && metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
+        {!loupeOn && metaOpen && <MetadataPanel
+            selected={selectedAssets}
+            onEdit={commitEdit}
+            onChangeLens={() => openLensEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError })}
+          />}
       </div>
       {openAsset && (
         <Viewer
@@ -1971,6 +2079,15 @@ const PhotoRowView = memo(function PhotoRowView({
   switch (row.kind) {
     case 'loading': {
       const monthLabel = parseCalendarDate(bucket.timeBucket).toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
+      // A filtered month's placeholder - the unfiltered count would be
+      // misleading, and the month may well drop out once it's loaded.
+      if (row.filtering) {
+        return (
+          <div style={{ paddingTop: MONTH_TOP_PADDING, fontSize: 13, fontWeight: 700, color: 'var(--text-dimmer)' }}>
+            {monthLabel} <span style={{ fontWeight: 400 }}>· checking…</span>
+          </div>
+        );
+      }
       return (
         <div style={{ paddingTop: MONTH_TOP_PADDING }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dim)', marginBottom: 10 }}>
@@ -1984,7 +2101,7 @@ const PhotoRowView = memo(function PhotoRowView({
       const monthLabel = parseCalendarDate(bucket.timeBucket).toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
       return (
         <div style={{ paddingTop: MONTH_TOP_PADDING, fontSize: 13, fontWeight: 700, color: 'var(--text-dim)' }}>
-          {monthLabel} <span style={{ color: 'var(--text-dimmer)', fontWeight: 400 }}>· {bucket.count}</span>
+          {monthLabel} <span style={{ color: 'var(--text-dimmer)', fontWeight: 400 }}>· {row.count}</span>
         </div>
       );
     }

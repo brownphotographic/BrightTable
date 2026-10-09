@@ -78,7 +78,7 @@ Every keyboard shortcut can be rebound here — click a shortcut, then press you
 - **Title bar** — window controls, an activity icon showing background jobs in progress (imports, exports, stacking, and more), and a connection status pill showing whether BrightTable can reach Immich and your local library mount. Click the pill for details, or a quick link into Library Settings.
 - **Menu bar** — File, Edit, View, Help, a Filters button, a search box, a thumbnail zoom slider, and a row of tabs to jump between **Photos**, **Folders**, **Albums**, **People**, **Tags**, and **Trash**, each showing a live count.
 - **Main grid** — your photos for whichever tab is selected.
-- **Metadata panel** (right, toggle with `I`) — details for the selected photo.
+- **Metadata panel** (right, toggle with `Ctrl+I`) — details for the selected photo.
 - **Viewer** — opens full-screen when you open a photo (press `Enter`), with zoom, a filmstrip, and its own editing shortcuts.
 
 ---
@@ -141,14 +141,21 @@ This is BrightTable's main job: sending a RAW file out to a real editor and brin
 - **Sync Metadata from Sidecar** (Edit menu, or context menu) — re-reads the on-disk sidecar file so BrightTable's view matches what's actually saved.
 - **Rotate Left/Right** (`Ctrl+[` / `Ctrl+]`).
 - **Change Lens…** — see below.
+- **Copy Lens / Paste Lens…** (`Ctrl+Alt+C` / `Ctrl+Alt+V`) — see below.
 
 ### Changing the lens
 
-For a lens the camera couldn't identify (a manual lens with no contacts), or one it identified wrongly (e.g. a 6-bit coded Leica M lens that's really a Zeiss or Voigtländer). Select one or more photos, then choose **Change Lens…** from the context menu or the **Edit ▾** menu. It's also in the viewer's Edit menu.
+For a lens the camera couldn't identify (a manual lens with no contacts), or one it identified wrongly (e.g. a 6-bit coded Leica M lens that's really a Zeiss or Voigtländer). Select one or more photos, then choose **Change Lens…** from the context menu or the **Edit ▾** menu. It's also in the viewer's Edit menu, and on the pencil button next to **Lens** in the metadata panel.
 
-- **Replace the lens** writes the chosen lens into the lens model, lens make, lens spec, max aperture and focal length fields (including the 35mm equivalent). For a zoom you enter the as-shot focal length. You can optionally enter the aperture too.
-- **Keep lens, add note** leaves the lens alone and adds a `Lens: <actual lens>` line to the description. This is useful when the coded lens's correction profile is close enough. Re-applying replaces that line rather than adding another.
-- The picker lists, in this order: your mapped lenses, your own lenses, lenses already in your library, and the whole [lensfun](https://github.com/lensfun/lensfun) database. That's the database RawTherapee, ART and darktable use for lens corrections. Lenses with a **profile** badge are in lensfun under exactly that name, so those editors will auto-correct them. **+ Add new lens…** takes any name.
+The dialog has two side-by-side panels, **Lens entry** on the left and **Description note** on the right, each with its own toggle:
+
+- **Lens entry: Keep / Replace.** *Replace* writes the chosen lens into the lens model, lens make, lens spec, max aperture and focal length fields (including the 35mm equivalent). For a zoom you enter the as-shot focal length. You can optionally enter the aperture too. *Keep* leaves the lens fields alone. This is useful for a coded lens whose correction profile is close enough.
+- **Description note: Add note / No note.** *Add note* adds a `Lens: <actual lens>` line to the description. Re-applying replaces that line rather than adding another.
+
+That gives four combinations. *Keep + No note* would change nothing, so Apply stays disabled for it.
+
+Each switched-on panel has its own lens list. A switched-off one just says what stays as it is. The note uses the entry's lens until you pick a different one, so you can, for example, write the lensfun lens whose correction profile is close enough into the lens fields while the note records the lens you actually used. **Match lens entry** links them again. Whenever the lens being written is part of a coded-lens mapping, a **Write** switch appears above *Writes*. It flips between the coded lens and the lens it's mapped to in one click. The coded side is labelled *Camera's lens* when the photos already carry the coded lens, and *Coded lens* otherwise, for example on a photo with no lens recorded where you picked the mapped lens from the list. The **Description note** panel has the same switch (**Note: Coded lens / Mapped lens**), which starts on *Mapped lens* unless the dialog was filled in by a mapping or a paste. A lens chosen by either switch stays highlighted in its list, pinned at the top under *Selected* if the search would otherwise hide it. You can still pick any other lens from the list. The bottom bar sums up what Apply will do.
+- The picker lists, in this order: your mapped lenses, your own lenses, lenses already in your library, and the whole [lensfun](https://github.com/lensfun/lensfun) database. That's the database RawTherapee, ART and darktable use for lens corrections. Lenses with a **profile** badge are in lensfun under exactly that name, so those editors will auto-correct them. For a lens that isn't listed, click **Open Lens Preferences…** at the bottom of the dialog and add it under **My lenses**. Preferences opens on top of the dialog, and the new lens shows up in the lists as soon as you close it.
 
 Where the change shows up:
 
@@ -157,6 +164,8 @@ Where the change shows up:
 | XMP sidecar (always) | ✓ if the camera recorded no lens | — | — | — |
 | Existing `.pp3` / `.arp` (default on) | — | ✓ | ✓ | — |
 | Original file (Preferences → Lenses, or ticked per edit) | ✓ | ✓ | ✓ | ✓ after *refresh EXIF* |
+
+**Copy Lens / Paste Lens…** copies a lens from one photo to others. Copy Metadata doesn't include the lens because a lens change is more than a simple field copy. Right-click a photo whose lens is right and choose **Copy Lens**. Then select the other photos and choose **Paste Lens…**. This opens Change Lens already filled in with the copied lens and focal length, so you can check it and click **Apply**. The paste reproduces the source photo: its lens entry (as *Replace*) and its `Lens:` note, even when the note names a different lens. That works on photos with no lens recorded too. Only a source with a note but no lens pastes as note only. If the pasted lens is part of a coded-lens mapping, the **Write** switch appears as usual. The aperture isn't copied, because it changes from shot to shot.
 
 RawTherapee, ART and darktable only ever read lens info from the original file, never from an XMP sidecar. If the camera already recorded a lens, Immich keeps showing it too unless the original is written. The dialog warns you and offers **Write the original files for this edit**. In darktable, run *selected images → metadata → refresh EXIF* on photos it already knows about. A lens-correction module already in a photo's darktable history keeps the lens it had.
 
@@ -227,7 +236,7 @@ All of these can be changed in **Preferences → Shortcuts**.
 | Move to Trash            | `Delete`                        |
 | Previous / next photo    | `←` / `→`                       |
 | Previous / next in stack | `↑` / `↓`                       |
-| Toggle info panel        | `I`                             |
+| Toggle metadata panel    | `Ctrl+I`                        |
 | Toggle filmstrip         | `M`                             |
 | Toggle favourite         | `F`                             |
 | Toggle loupe             | `L`                             |
@@ -242,6 +251,7 @@ All of these can be changed in **Preferences → Shortcuts**.
 | Print                    | `Ctrl+P`                        |
 | Copy / Paste Processing  | `Ctrl+C` / `Ctrl+V`             |
 | Copy / Paste Metadata    | `Ctrl+Shift+C` / `Ctrl+Shift+V` |
+| Copy / Paste Lens        | `Ctrl+Alt+C` / `Ctrl+Alt+V`     |
 | Rotate Left / Right      | `Ctrl+[` / `Ctrl+]`             |
 | Add to Tag               | `Ctrl+T`                        |
 | Zoom grid in / out       | `Ctrl++` / `Ctrl+-`             |

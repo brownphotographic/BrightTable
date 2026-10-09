@@ -15,12 +15,13 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import CopiedLensCard from '../components/CopiedLensCard';
 import LensEditDialog from '../components/LensEditDialog';
 import { changeAssetLens, type AssetSummary, type EditJob, type LensEditRequest } from './api';
 import { useEditQueue } from './editQueue';
 import { useLensConfig } from './lensConfig';
-import { upsertLensNote } from './lenses';
+import { readLensNote, upsertLensNote } from './lenses';
 import { useEditJobReconciliation } from './useEditJobReconciliation';
 
 // Each browser page keeps its own asset cache, so the page hands over its
@@ -33,10 +34,33 @@ interface OpenArgs {
   assets: AssetSummary[];
   applyPatch: ApplyPatch;
   onError?: (message: string) => void;
+  // Set by Paste Lens - the dialog opens filled in from this.
+  prefill?: CopiedLens;
+}
+
+// What Copy Lens remembers - kept apart from Copy Metadata's patch because a
+// lens isn't a plain field copy: it's written through Change Lens (lens
+// tags, focal length, optional note, optional original), so Paste Lens opens
+// that dialog filled in from this rather than writing straight away. The
+// as-shot aperture is deliberately not copied - it varies shot to shot.
+export interface CopiedLens {
+  fileName: string;
+  lensModel: string | null;
+  // The lens named in the source's description note, if any - for a coded
+  // lens edited with "Keep lens, add note", this is the real lens.
+  noteLens: string | null;
+  focalLength: number | null;
 }
 
 interface LensEditContextValue {
   openLensEditor: (args: OpenArgs) => void;
+  // In-memory only, like the rest of the copy/paste clipboard (lib/clipboard.tsx).
+  copiedLens: CopiedLens | null;
+  // False when the asset has no lens (and no lens note) to copy.
+  canCopyLens: (asset: AssetSummary) => boolean;
+  copyLens: (asset: AssetSummary) => void;
+  // Opens Change Lens on `assets`, prefilled from the copied lens.
+  pasteLens: (args: Omit<OpenArgs, 'prefill'>) => void;
 }
 
 const LensEditContext = createContext<LensEditContextValue | null>(null);
@@ -45,6 +69,15 @@ export function LensEditProvider({ children }: { children: ReactNode }) {
   const { jobs } = useEditQueue();
   const { lensConfig } = useLensConfig();
   const [open, setOpen] = useState<OpenArgs | null>(null);
+  const [copiedLens, setCopiedLens] = useState<CopiedLens | null>(null);
+  // "Lens copied" confirmation - copying is otherwise invisible (the app has
+  // no general toast system). Bumped on every copy so re-copying restarts it.
+  const [toastSeq, setToastSeq] = useState(0);
+  useEffect(() => {
+    if (!toastSeq) return;
+    const t = window.setTimeout(() => setToastSeq(0), 3200);
+    return () => window.clearTimeout(t);
+  }, [toastSeq]);
   const rollbackById = useRef(new Map<number, { id: string; prev: Partial<AssetSummary>; args: OpenArgs }>());
 
   const { trackJobs } = useEditJobReconciliation(jobs, (job: EditJob) => {
@@ -65,6 +98,8 @@ export function LensEditProvider({ children }: { children: ReactNode }) {
         if (request.applyLens) {
           patch.lensModel = request.lens.model;
           prev.lensModel = a.lensModel;
+          patch.lensMake = request.lens.maker.trim() || null;
+          prev.lensMake = a.lensMake;
           if (effectiveFocal != null) {
             patch.focalLength = effectiveFocal;
             prev.focalLength = a.focalLength;
@@ -75,7 +110,7 @@ export function LensEditProvider({ children }: { children: ReactNode }) {
           }
         }
         if (request.addNote) {
-          patch.description = upsertLensNote(a.description ?? '', lensConfig.notePrefix, request.lens.model);
+          patch.description = upsertLensNote(a.description ?? '', lensConfig.notePrefix, request.noteLens || request.lens.model);
           prev.description = a.description;
         }
         prevById.set(a.id, prev);
@@ -108,10 +143,52 @@ export function LensEditProvider({ children }: { children: ReactNode }) {
     if (args.assets.length) setOpen(args);
   }, []);
 
+  const canCopyLens = useCallback(
+    (asset: AssetSummary) => asset.type !== 'VIDEO' && (!!asset.lensModel?.trim() || readLensNote(asset.description ?? '', lensConfig.notePrefix) != null),
+    [lensConfig.notePrefix],
+  );
+
+  const copyLens = useCallback(
+    (asset: AssetSummary) => {
+      if (!canCopyLens(asset)) return;
+      setCopiedLens({
+        fileName: asset.fileName,
+        lensModel: asset.lensModel?.trim() || null,
+        noteLens: readLensNote(asset.description ?? '', lensConfig.notePrefix),
+        focalLength: asset.focalLength,
+      });
+      setToastSeq((n) => n + 1);
+    },
+    [canCopyLens, lensConfig.notePrefix],
+  );
+
+  const pasteLens = useCallback(
+    (args: Omit<OpenArgs, 'prefill'>) => {
+      const assets = args.assets.filter((a) => a.type !== 'VIDEO');
+      if (copiedLens && assets.length) setOpen({ ...args, assets, prefill: copiedLens });
+    },
+    [copiedLens],
+  );
+
   return (
-    <LensEditContext.Provider value={{ openLensEditor }}>
+    <LensEditContext.Provider value={{ openLensEditor, copiedLens, canCopyLens, copyLens, pasteLens }}>
       {children}
-      {open && <LensEditDialog assets={open.assets} onClose={() => setOpen(null)} onSubmit={(request) => submit(open, request)} />}
+      {toastSeq > 0 && copiedLens && !open && (
+        <div
+          key={toastSeq}
+          role="status"
+          onClick={() => setToastSeq(0)}
+          style={{
+            position: 'fixed', left: '50%', bottom: 56, transform: 'translateX(-50%)', zIndex: 400,
+            width: 'min(440px, calc(100vw - 32px))', borderRadius: 13, background: 'var(--dialog-bg)',
+            boxShadow: '0 10px 34px rgba(0,0,0,0.55)', animation: 'lens-toast-in 160ms ease-out',
+          }}
+        >
+          <style>{'@keyframes lens-toast-in { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }'}</style>
+          <CopiedLensCard lens={copiedLens} eyebrow="Lens copied" done />
+        </div>
+      )}
+      {open && <LensEditDialog assets={open.assets} prefill={open.prefill} onClose={() => setOpen(null)} onSubmit={(request) => submit(open, request)} />}
     </LensEditContext.Provider>
   );
 }

@@ -16,6 +16,7 @@
  */
 
 import type { CatalogLens, LensCatalog, LensConfig, LensSpec } from './api';
+import type { CopiedLens } from './lensEdit';
 
 // Where a picker entry came from - shown as a badge, and decides grouping.
 export type LensSource = 'mapping' | 'custom' | 'library' | 'lensfun';
@@ -137,7 +138,7 @@ export function buildLensOptions(catalog: LensCatalog | null, cfg: LensConfig, l
     if (coded.has(m.codedLensModel.trim().toLowerCase())) for (const c of m.candidates) push(c, 'mapping');
   }
   for (const c of cfg.customLenses) push(c, 'custom');
-  for (const name of libraryLensNames) {
+  for (const name of libraryLensNames.filter(isReadableLensName)) {
     const known = byModel.get(name.trim().toLowerCase());
     push(known ? specFromCatalog(known) : specFromName(name), 'library');
   }
@@ -145,11 +146,50 @@ export function buildLensOptions(catalog: LensCatalog | null, cfg: LensConfig, l
   return out;
 }
 
+// Immich's lens-name suggestions can include junk that isn't a lens name at
+// all: undecodable makernote bytes (rendered as tofu boxes) and placeholder
+// specs like "-- mm f/--". Those are left out of the picker.
+export function isReadableLensName(name: string): boolean {
+  const t = name.trim();
+  if (!t || t.includes('\uFFFD') || [...t].some((c) => c.charCodeAt(0) < 0x20 || (c.charCodeAt(0) >= 0x7f && c.charCodeAt(0) <= 0x9f)) || /^-+\s*mm\b/i.test(t) || t.includes('--')) return false;
+  // Mostly Latin script (lens names are, even Japanese makers'), with at least one real word or number.
+  const chars = [...t.replace(/\s/g, '')];
+  const latin = chars.filter((c) => /[\u0020-\u024F\u2010-\u2027]/.test(c)).length;
+  return latin / chars.length >= 0.8 && /[A-Za-z]{2,}|\d/.test(t);
+}
+
 export function matchesLensQuery(o: LensOption, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
   const hay = `${o.spec.maker} ${o.spec.model} ${o.displayName ?? ''} ${o.spec.mount ?? ''}`.toLowerCase();
   return q.split(/\s+/).every((w) => hay.includes(w));
+}
+
+// The lens named by a description's lens note ("Lens: Zeiss Planar T* 2/50
+// ZM" with the default prefix) - null when there's no note, or the prefix is
+// blank (no way to tell a note line apart then).
+export function readLensNote(description: string, prefix: string): string | null {
+  const p = prefix.trim();
+  if (!p) return null;
+  for (const line of description.split('\n')) {
+    const t = line.trim();
+    if (t.startsWith(p)) return t.slice(p.length).trim() || null;
+  }
+  return null;
+}
+
+// Paste Lens reproduces the source as it is: its lens entry (Replace) and
+// its note, each as recorded - so a target with no lens ends up like the
+// source too. Only a source with a note but no lens at all pastes as Keep +
+// note.
+export function copiedLensKeeps(c: CopiedLens): boolean {
+  return !c.lensModel && !!c.noteLens;
+}
+
+// The lens a copied lens writes into the lens entry (or, for a note-only
+// source, names in the note).
+export function copiedLensName(c: CopiedLens): string {
+  return c.lensModel ?? c.noteLens ?? '';
 }
 
 // TS twin of lens_edit.rs's upsert_lens_note - for the optimistic caption.

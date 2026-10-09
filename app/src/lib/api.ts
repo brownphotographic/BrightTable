@@ -289,6 +289,10 @@ export interface AssetSummary {
   // no concept of this, so it's absent (not just false) on any AssetSummary
   // straight off the wire (e.g. a fresh getStack() result) until re-mapped.
   isRawOverride?: boolean;
+  // Client-only - Immich has no lens make. Set optimistically by Change Lens
+  // so the Lens Manufacturer row updates at once; otherwise that row
+  // lazy-loads it via readLensMake.
+  lensMake?: string | null;
   // Client-only annotation, overlaid from a page's `unsyncedMetadata` map -
   // set only when a local sidecar/embedded file has a rating and/or
   // description Immich doesn't have yet (see checkSidecarMetadata below).
@@ -530,10 +534,18 @@ export interface LensEditRequest {
   fNumber: number | null;
   // This edit only, on top of Preferences → Lenses' "write originals".
   writeOriginalOnce: boolean;
+  // The note's lens when it differs from `lens` (Replace + note only).
+  noteLens?: string | null;
 }
 
 // Enqueues onto the same background EditQueue as updateAssetMetadata - same
 // job-id contract and synchronous rejections (read-only, batch cap).
+// The lens maker from the asset's local sidecar/original (Immich has none) -
+// null when the original isn't reachable locally or records no maker.
+export function readLensMake(originalPath: string, lensModel: string | null): Promise<string | null> {
+  return invoke('read_lens_make', { originalPath, lensModel });
+}
+
 export function changeAssetLens(targets: LensEditTarget[], request: LensEditRequest): Promise<number[]> {
   return invoke('change_asset_lens', { targets, request });
 }

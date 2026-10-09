@@ -23,7 +23,7 @@ import PreferencesConfiguration from '../pages/PreferencesConfiguration';
 import PreferencesSharing from '../pages/PreferencesSharing';
 import PreferencesLenses from '../pages/PreferencesLenses';
 
-type PrefsTab = 'library' | 'applications' | 'lenses' | 'sharing' | 'configuration' | 'shortcuts';
+import type { PreferencesTab as PrefsTab } from '../lib/preferencesRequest';
 
 const tabs: { id: PrefsTab; label: string }[] = [
   { id: 'library', label: 'Library' },
@@ -37,9 +37,13 @@ const tabs: { id: PrefsTab; label: string }[] = [
 export default function PreferencesOverlay({
   onClose,
   initialTab = 'library',
+  overDialogs = false,
 }: {
   onClose: () => void;
   initialTab?: PrefsTab;
+  // Opened from a dialog (Change Lens) - stack above it (dialogs sit at
+  // zIndex 300) rather than behind it.
+  overDialogs?: boolean;
 }) {
   const [tab, setTab] = useState<PrefsTab>(initialTab);
 
@@ -47,7 +51,7 @@ export default function PreferencesOverlay({
     <div
       className="window-frame window-frame-overlay"
       style={{
-        zIndex: 90,
+        zIndex: overDialogs ? 350 : 90,
         background: 'var(--scrim)',
         display: 'flex',
         alignItems: 'center',

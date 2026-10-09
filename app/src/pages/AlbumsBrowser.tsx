@@ -96,6 +96,8 @@ export interface AlbumsBrowserHandle {
   pasteImageProcessing: () => void;
   copyMetadata: () => void;
   pasteMetadata: () => void;
+  copyLens: () => void;
+  pasteLens: () => void;
   rotateLeft: () => void;
   rotateRight: () => void;
 }
@@ -113,7 +115,6 @@ export interface AlbumsBrowserHandle {
 // the File menu, so this view exposes just enough of a handle for that.
 const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
   metaOpen: boolean;
-  onCloseMetadata: () => void;
   // Number of albums, for the sidebar row - only meaningful in the list view.
   onCount?: (n: number) => void;
   active?: boolean;
@@ -133,7 +134,6 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
   filters: Filters;
 }>(function AlbumsBrowser({
   metaOpen,
-  onCloseMetadata,
   onCount,
   active = true,
   loupeOn,
@@ -200,7 +200,7 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
     rotateSelection,
     rotatingIds,
   } = useAssetActions({ onError: setEnqueueError });
-  const { openLensEditor } = useLensEdit();
+  const { openLensEditor, copiedLens, canCopyLens, copyLens, pasteLens } = useLensEdit();
   // See FoldersBrowser.tsx's identical state/effect/ref - which tile the
   // cursor is currently over while loupeOn, driving GridLoupePane's preview
   // (cleared on loupe off), plus a never-cleared mirror ref used only to
@@ -592,6 +592,17 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
         onClick: () => handlePasteMetadata(targetIds, commitEditMany),
       });
     }
+    // Lens - separate from Copy/Paste Metadata: a lens goes through Change
+    // Lens (see lib/lensEdit.tsx), so Paste Lens opens that dialog prefilled.
+    if (asset && canCopyLens(asset)) {
+      items.push({ label: 'Copy Lens', onClick: () => copyLens(asset) });
+    }
+    if (copiedLens && lensTargets.length) {
+      items.push({
+        label: lensTargets.length > 1 ? `Paste Lens to ${lensTargets.length} Photos…` : 'Paste Lens…',
+        onClick: () => pasteLens({ assets: lensTargets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+      });
+    }
     items.push(DIVIDER);
 
     // Utility
@@ -638,6 +649,10 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
     requestPasteImageProcessing,
     handleCopyMetadata,
     handlePasteMetadata,
+    copiedLens,
+    canCopyLens,
+    copyLens,
+    pasteLens,
     rotateSelection,
   ]);
 
@@ -698,6 +713,12 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
       pasteMetadata: () => {
         handlePasteMetadata([...selected], commitEditMany);
       },
+      copyLens: () => {
+        if (selectedAssets.length === 1) copyLens(selectedAssets[0]);
+      },
+      pasteLens: () => {
+        pasteLens({ assets: selectedAssets, applyPatch: patchAssetLocal, onError: setEnqueueError });
+      },
       // Unlike Photos/Folders (which route this to the open Viewer asset
       // only, since that's the only rotate implementation those pages ever
       // had), this page never had any rotate at all before useAssetActions -
@@ -728,6 +749,9 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
       commitEditMany,
       rotateSelection,
       openId,
+      copyLens,
+      pasteLens,
+      patchAssetLocal,
     ],
   );
 
@@ -959,6 +983,16 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
       ? [{ id: 'copyMetadata', group: 'copyPaste' as const, label: 'Copy Metadata', onClick: () => handleCopyMetadata(selectedAssets[0]) }]
       : []),
     { id: 'pasteMetadata', group: 'copyPaste', label: 'Paste Metadata', disabled: !copiedMetadata, onClick: () => handlePasteMetadata([...selected], commitEditMany) },
+    ...(selectedAssets.length === 1 && canCopyLens(selectedAssets[0])
+      ? [{ id: 'copyLens', group: 'copyPaste' as const, label: 'Copy Lens', onClick: () => copyLens(selectedAssets[0]) }]
+      : []),
+    {
+      id: 'pasteLens',
+      group: 'copyPaste',
+      label: 'Paste Lens…',
+      disabled: !copiedLens || !selectedAssets.some((a) => !isVideoAsset(a)),
+      onClick: () => pasteLens({ assets: selectedAssets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+    },
     {
       id: 'exportToFolder',
       group: 'share',
@@ -1102,7 +1136,11 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
           )}
         </div>
         {loupeOn && <GridLoupePane assetId={hoveredAssetId} large={loupeLarge} />}
-        {!loupeOn && metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
+        {!loupeOn && metaOpen && <MetadataPanel
+            selected={selectedAssets}
+            onEdit={commitEdit}
+            onChangeLens={() => openLensEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError })}
+          />}
       </div>
 
       {openAsset && (

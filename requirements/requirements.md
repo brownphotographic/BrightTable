@@ -213,6 +213,9 @@
   range, aperture, mount; inline from the dialog or in Preferences → Lenses.
 - ✅ **Coded-lens mappings** — coded lens → list of possible actual lenses, each mapping
   with a default mode (Keep + note / Replace); preselected in the dialog.
+- ✅ **Copy Lens / Paste Lens…** — separate from Copy/Paste Metadata (which copies only
+  rating/favorite/description). Paste opens Change Lens prefilled from the copied lens
+  (§7.40).
 - ✅ **Description note** — `Lens: <actual lens>` appended on its own line, per asset (keeps
   each asset's own caption); re-applying replaces the line rather than duplicating it.
 - ✅ **All config in `config.json`** (`lens` section) via a new Preferences → **Lenses** tab
@@ -3047,9 +3050,274 @@
 - ⬜ **"Apply lens mappings" bulk action** (auto-apply a single-candidate mapping across a
   mixed selection without the dialog) — planned in the design, not built; mappings currently
   only preselect inside the dialog when every selected photo shares the coded lens.
-- ⬜ **Metadata panel** has no inline "change" affordance next to the Lens row.
+- ✅ ~~**Metadata panel** has no inline "change" affordance next to the Lens row.~~ Done in §7.40.6.
 - ⬜ **Exporting custom lenses to lensfun XML** (so RT/darktable recognise them) — out of
   scope by decision; calibration data would still be needed for actual correction.
 - ⬜ Side finding, unrelated to this feature: the configured ART CLI path
   (`~/AppImages/squashfs-root/ART-cli`) no longer exists on the dev machine;
   `/usr/bin/ART-cli` works.
+
+### 7.40 Filtered timeline months, Copy/Paste Lens (October 2026)
+#### 7.40.1 Filtered months in the Photos timeline
+- ✅ **Bug:** with any Filters-panel filter on (camera, lens, focal length, rating, ...), the
+  Photos timeline still showed a header for every month, with Immich's unfiltered count.
+  Filtering is client-side only (`/timeline/buckets` can't filter by camera/lens/focal), so
+  the month list described the whole library.
+- ✅ **Fix (`PhotosBrowser.tsx`):** while a filter is active, a loaded month with no match
+  gets no rows at all, and month headers show the filtered count. Every month is fetched in
+  the background, 4 at a time (`FILTER_PREFETCH_CONCURRENCY`), so empty months drop out
+  without scrolling to them. Until then each shows a compact "Month · checking…"
+  placeholder. If nothing matches anywhere: "No photos match the current filters."
+  Prefetched months only sidecar-scan their *matching* assets (so a filter doesn't scan the
+  whole library), so the other assets in those months don't get an unsynced-metadata badge
+  for the rest of the session.
+- ✅ **TimelineRail** is fed filtered counts while filtering (0 for unloaded or empty months).
+  Zero-count months take no space and don't place a year tick, and hover is clamped so it
+  can't land on a trailing empty month.
+- No change with no filter active.
+
+#### 7.40.2 Copy Lens / Paste Lens
+- ✅ **Why:** Copy/Paste Metadata only carries rating, favorite and description, so it never
+  copied a lens. A lens has to go through Change Lens (lens tags, focal length, optional
+  note, optional original write), so it got its own copy/paste.
+- ✅ **Copy Lens** (`lib/lensEdit.tsx`, in-memory like the other clipboards) remembers the
+  source's lens model, the lens named in its description note (`readLensNote` in
+  `lib/lenses.ts`, using the configured note prefix), its focal length and file name.
+  Offered only for non-video assets with a lens or a lens note. The as-shot aperture is
+  deliberately **not** copied (per the user: it varies shot to shot).
+- ✅ **Paste Lens…** (per the user: a prefilled dialog, not an immediate write) opens Change
+  Lens on the targets with a "Copied from ..." banner. If the note's lens differs from the
+  lens tags (a Keep + note source), the mode is **Keep lens, add note** with the note's lens.
+  Otherwise it's **Replace** with the source's lens, the note ticked if the source had one,
+  and the copied focal length. The lens is matched by name against the picker list (lensfun
+  specs and profile badge when known), falling back to specs guessed from the name. Prefill
+  takes precedence over a coded-lens mapping's defaults.
+- ✅ **Entry points:** context menu, SelectionBar Copy/Paste, imperative handles (so the
+  menu-bar **Edit → Copy Lens / Paste Lens…** works) on all six browser pages, plus the Viewer
+  menu. New shortcuts `copyLens` `Ctrl+Alt+C` / `pasteLens` `Ctrl+Alt+V` (rebindable) work in
+  the Photos/Folders grids and the Viewer. User guide updated.
+- ✅ **Feedback round:** copying gave no sign it had happened, and the paste banner was a
+  wordy sentence. Both now use `CopiedLensCard`: an accent aperture badge, the lens name at
+  17px, and chips for focal length and "Keep lens + note" / "+ note", with the source file
+  dimmed. Copy shows it as a bottom-centre **"Lens copied" toast** with a green tick
+  (about 3 s, click to dismiss). Paste Lens shows it at the top of the dialog, headed
+  "Pasting lens". New `lens` (aperture) and `check` icons in `Icons.tsx`.
+- ✅ `tsc -b` and `oxlint` clean. ⬜ Not yet exercised in the running app.
+
+
+#### 7.40.3 Caption / description in the Viewer's Information panel
+- ✅ The Viewer's Information panel now has the same **Caption / Description** editor as the
+  grid's Metadata panel (`DescriptionEditor`, now exported from `MetadataPanel.tsx`). It sits
+  below Tags and above the stack strip, saves on blur through the Viewer's own `handleEdit`,
+  and resets when you step to another photo. Viewer shortcuts already ignore keys typed into
+  a text field (`isTypingTarget`), so typing a caption doesn't trigger F, arrows and so on.
+
+#### 7.40.4 Grid Metadata panel restyled to match the Viewer's Information panel
+- ✅ Per the user (who prefers the Viewer's styling), the grid's Metadata panel
+  (`MetadataPanel.tsx`, all six pages) now matches the Viewer's: 288px wide, `--panel-3`
+  background, `--border-strong` left border, 18px padding, and an **Information** title.
+  The separate header bar and its ✕ are gone; the toolbar's Metadata toggle closes it, same
+  as in the Viewer. The unused `onCloseMetadata` prop is removed from the six pages and
+  `App.tsx`. The file name stays, as a quiet subtitle in normal type (was bold monospace),
+  since the grid has nowhere else to show it. Rows, tags and the caption editor were
+  already shared components.
+
+#### 7.40.5 Ctrl+I toggles the metadata panel (grid and Viewer)
+- ✅ New default **Ctrl+I** toggles the grid's Metadata panel (handled in `App.tsx`'s global
+  shortcuts) and, while a photo is open, the Viewer's Information panel instead. The Viewer
+  root carries `data-viewer` so the global handler stands aside. This replaces the old
+  Viewer-only bare **I**. The shortcut id is renamed `toggleInfo` → `toggleMetadata` so a
+  saved shortcuts map still holding `'I'` can't override the new default. Rebindable in
+  Preferences → Shortcuts; both Metadata toolbar buttons show it in their tooltip. User
+  guide updated.
+
+#### 7.40.6 Change Lens from the metadata panels
+- ✅ A pencil button now sits after the **Lens** value in both the grid's Metadata panel and
+  the Viewer's Information panel (`MetadataRows`' new `onChangeLens`). It's not shown for
+  videos, and it opens the Change Lens dialog. In the grid it targets the whole non-video
+  selection, like the context menu's Change Lens (tooltip "Change lens for N photos…"),
+  even though the panel's other edits apply only to the photo it shows. In the Viewer it
+  targets the open photo.
+
+#### 7.40.7 Change Lens mode buttons reordered and renamed
+- ✅ Per the user: in the Change Lens / Paste Lens dialog, **Keep lens entry, add note** now
+  comes first and **Replace entry** second (were "Replace the lens" / "Keep lens, add
+  note"). The same labels are used in Preferences → Lenses' mapping "Default action"
+  segments (already Keep-first), the copied-lens card's chip ("Keep entry + note"), and
+  the user guide. The default mode is unchanged: Replace unless a coded-lens mapping or a
+  pasted lens says otherwise.
+
+#### 7.40.8 Lens Manufacturer row in the metadata panels
+- ✅ New **Lens Manufacturer** row above Lens in both panels (shared `MetadataRows`).
+  Immich has no lens make (its EXIF DTO carries `lensModel` only), so it's **lazy-loaded
+  from local files** by a new `read_lens_make` command (`lens_edit::read_lens_make`):
+  - first the XMP sidecar's `exifEX:LensMake` (both `.ext.xmp` and replaced-extension forms),
+    but only if that sidecar's `exifEX:LensModel` is the lens Immich shows. Otherwise it's a
+    coded lens Immich still reports from the original, and the sidecar's maker belongs to a
+    different lens;
+  - then the original's EXIF `LensMake` via `kamadak-exif`, reading the first 1 MB and only
+    falling back to the whole file (≤ 200 MB) if the EXIF isn't in that prefix.
+- Shows "…" while reading and "—" when unknown: no local path mapping, unreachable
+  original, nothing recorded, or video. It uses the interactive I/O permit lane with the
+  usual 120 s timeout, and results are cached per asset + lens for the session.
+- Change Lens sets a client-only `lensMake` optimistically (rolled back on failure), so the
+  row updates immediately after a Replace.
+- ✅ Unit tests for the sidecar-match rule. Checked against real files with an `#[ignore]`d
+  test (`BT_LENS_MAKE_FILES`): Leica M DNG → "Leica Camera AG", Fuji JPG → "FUJIFILM",
+  Zeiss JPG → "Carl Zeiss", all matching exiftool. ⬜ Not yet seen in the running app.
+
+#### 7.40.9 Exposure row split into separate rows
+- ✅ Per the user, the combined **Exposure** row (`f/0.0 1/125s ISO 100 28mm`, built by
+  `formatExposure` from four Immich EXIF fields) is replaced by separate **Focal Length**,
+  **Aperture**, **Shutter Speed** and **ISO** rows in both panels, after Lens (Focal Length
+  sits next to Lens because Change Lens edits it). The formatters are `formatFocalLength` /
+  `formatAperture` / `formatShutter` / `formatIso` in `exifFormat.ts`; `formatExposure` is
+  removed.
+- A **0** value shows as "—" rather than e.g. `f/0.0`: Leica M bodies write `FNumber` 0 for
+  a lens whose aperture they can't read, and Immich passes that through. Trailing ".0" is
+  dropped (`f/2`, `28 mm`; `f/5.6`, `23.5 mm` keep their decimal).
+
+#### 7.40.10 Change Lens: separate Lens entry and Description note toggles
+- ✅ Per the user, the two combined mode cards ("Keep lens entry, add note" / "Replace
+  entry") are replaced by **two independent toggles** at the top of the dialog, giving all
+  four combinations:
+  - **Lens entry:** Keep / Replace
+  - **Description note:** Add note / No note
+
+  The note toggle moved up from the old "Also add … to the description" checkbox under the
+  chosen lens. Each toggle has a one-line hint (the note's hint shows the exact
+  `Lens: <model>` text).
+- **Keep + No note** writes nothing, so Apply is disabled with "Nothing to change — replace
+  the entry or add a note". Keep still ignores focal length and aperture, as before.
+- Defaults are unchanged in effect: a mapping's or pasted lens's Keep turns the note on;
+  Replace leaves it off, unless a pasted source had a note. `LensMappingMode` /
+  `LensEditRequest` are unchanged (`applyLens` = the entry toggle, `addNote` = the note
+  toggle), so there are no backend changes. User guide updated.
+
+#### 7.40.11 Change Lens: separate lens lists for the entry and the note
+- ✅ Per the user, each switched-on part has its **own lens list**: **Lens entry** when Replace
+  is on, **Description note** when Add note is on. With both on they sit **side by side** in
+  a wider dialog (1040px, normally 560px). Keep + note shows only the note list; Keep + no
+  note shows an explanation instead of any list (Apply stays disabled).
+- The note **follows the entry's lens** until a different lens is picked in its list. "Use
+  the entry's lens" re-links them, and the note column previews the exact
+  `Lens: <model>` line. This allows e.g. Replace with the lensfun lens whose correction
+  profile is close enough while noting the lens actually used.
+- Each column has its own "+ Add new lens…". Focal length and aperture fields and the
+  profile hint sit under the entry list.
+- Mapping preselect: a single-candidate mapping goes to the **note** for a Keep mapping and
+  to the **entry** for a Replace mapping. Paste Lens: a Keep source preselects the note
+  lens; a Replace source preselects the entry, plus a separate note lens if its note named
+  a different lens.
+- Backend: `LensEditRequest.note_lens` (optional, `serde(default)`) →
+  `LensChange.note_lens_model`; `LensChange::note_model()` is what the note writes, falling
+  back to `lens.model`. A Keep job's `EditJob.lens_model` reports the noted lens. The
+  optimistic caption uses the same rule. A new unit test covers it; all 321 Rust tests pass.
+- ✅ Driven headless (Playwright against the running Vite dev server, mocked Tauri IPC):
+  Replace-only, Replace + note side by side with a different note lens (Apply sends
+  `lens` = Ultron 28, `noteLens` = "Planar T* 2/50 ZM"), Keep + note (single list), and
+  Keep + no note (disabled). Screenshots checked.
+
+#### 7.40.12 Change Lens: add new lenses via Preferences instead of inline
+- ✅ Per the user, both inline **"+ Add new lens…"** buttons (and the `LensSpecForm` they
+  opened) are removed from the dialog. A single line under the lists reads "Lens not
+  listed? Add it in Preferences → Lenses — it appears here straight away", with an **Open
+  Lens Preferences…** button.
+- The button opens Preferences on the **Lenses** tab **on top of** the dialog: a new
+  `lib/preferencesRequest.ts` event lets UI outside `AppShell` (the dialog lives in
+  `LensEditProvider`) ask it to open Preferences, and `PreferencesOverlay`'s new
+  `overDialogs` raises it from zIndex 90 to 350. Closing it returns to the dialog with its
+  state intact. A lens added there appears immediately, because both read the shared
+  `useLensConfig`. `openPreferencesTab` now accepts any tab.
+- With the add rows gone, the side-by-side layout fits a 900px-tall window without
+  scrolling.
+- ✅ Checked headless: no add buttons left, Preferences opens over the dialog on Lenses,
+  and its ✕ returns to the dialog. Escape doesn't close Preferences; it never did, so
+  that's not changed here.
+
+#### 7.40.13 Change Lens dialog redesign (wide two-panel layout)
+- ✅ Per the user ("this window looks like shit"), the dialog is redesigned as a fixed
+  **1080 × 740** window with two permanent panels: **Lens entry** on the left, **Description
+  note** on the right. Each panel has its own segmented toggle in its header (Keep / Replace;
+  No note / Add note), replacing the separate toggle box. A switched-off panel keeps its size
+  (dashed outline) and says what stays as it is ("Lens fields unchanged — Stays as …" /
+  "Description unchanged"), so toggling never reshuffles the layout. The fixed height also
+  stops the window jumping between states.
+- The current lens moved into a chip in the title bar. The left panel holds picker →
+  "Writes" card (model, maker · specs · mount, focal length / aperture fields, profile hint)
+  → a compact amber "camera already recorded a lens" warning with the write-originals
+  checkbox (was a full-width box below that got cut off). The right panel holds picker →
+  "Adds" card with the exact note line and **Match lens entry** when they differ.
+- The footer holds "Lens not listed? **Add it in Lens Preferences…**" on the left. On the
+  right is the blocker, or a plain-English summary ("Lens → … · Note → Lens: …"), then
+  Cancel / Apply.
+- ✅ **Junk library lens names filtered** (`isReadableLensName` in `lib/lenses.ts`): Immich's
+  suggestions included undecodable makernote bytes (shown as tofu boxes) and placeholders like
+  `-- mm f/--`. Names must be mostly Latin script, have a word or digit, and carry no
+  U+FFFD/control characters or `--`. Checked against real names (Summicron, Ultron, EF24-70mm,
+  XF23mmF1.4 R, "105.0mm f/2.8" kept; junk dropped).
+- ✅ Screenshotted headless in all states (mapped Keep + note, Replace + different note lens
+  with the coded-lens warning, Replace only, Keep + no note); no console errors.
+
+#### 7.40.14 Lens entry: Camera's lens / Mapped lens switch
+- ✅ Per the user: when a coded-lens mapping applies (every selected photo carries the coded
+  lens), the Lens entry panel shows **Write: [Camera's lens | Mapped lens]** above the
+  Writes card. It's a one-click choice of the whole lens (name, maker and specs), not a
+  name-only swap; the user chose this over "keep the picked lens's specs but write the coded
+  name".
+  - **Camera's lens** is the coded lens's own picker entry, so it gets lensfun's maker and
+    specs and profile badge when lensfun knows the name.
+  - **Mapped lens** is the mapping's first candidate. Other candidates of a multi-candidate
+    mapping are still listed first in the picker.
+  - Picking anything else from the list leaves neither segment lit, with "Another lens picked
+    from the list".
+- The entry list shortens (226 → 176px) while the switch is shown, so the coded-lens warning
+  stays visible.
+- ✅ Checked headless with the Summicron → Planar mapping: Mapped lens writes "Planar T* 2/50
+  ZM" (Zeiss). Camera's lens writes "Summicron-M 1:2/50" (Leica Camera AG, from lensfun),
+  and Apply sent that with the separate "Planar T* 2/50 ZM" note.
+
+#### 7.40.15 Coded/Mapped switch for photos without a lens, and in Paste Lens
+- ✅ Per the user, the **Write** switch is no longer limited to photos that already carry the
+  coded lens. It appears whenever the **entry lens is part of a coded-lens mapping**, either
+  as its coded lens or as one of its candidates. Typical case: a photo with no lens recorded
+  where the user picks the mapped lens (or the coded lens) from the list.
+  - The coded side is labelled **Camera's lens** when the selection carries the coded lens
+    (photo-level mapping, as before), and **Coded lens** otherwise.
+  - The pair is pinned once used (`pairMemo`), so flipping back and forth stays on the same
+    mapping and returns to the candidate last used, even if that candidate appears in
+    several mappings.
+- ✅ **Paste Lens now reproduces the source as it is** (`copiedLensKeeps` /
+  `copiedLensName` in `lib/lenses.ts`). That means Replace with the source's lens entry,
+  plus its note as its own lens when it differs, so a target with no lens ends up like the
+  source. Only a note-only source pastes as Keep + note.
+  - Before, any source whose note differed from its lens pasted as Keep + note, which left a
+    lens-less target with no lens at all. With Replace + separate note now a normal
+    workflow, that guess was wrong.
+  - A pasted lens that's part of a mapping gets the switch automatically.
+  - The copied-lens card's chip now reads "+ note: <lens>" when the note names a different
+    lens, or "Note only".
+- ✅ Checked headless: a no-lens photo shows the switch after picking "Planar T* 2/50 ZM",
+  and "Coded lens" writes Summicron-M 1:2/50 (Leica Camera AG). Copy from a Summicron photo
+  noted as Planar, then Paste onto the no-lens photo, gives Replace Summicron (switch on
+  Coded lens) + note Planar.
+
+#### 7.40.16 Selected lens stays visible; Coded/Mapped switch for the note
+- ✅ **Bug:** after picking a lens and flipping the entry switch to Coded lens, the list showed
+  nothing selected. The coded lens was off-list: it was filtered out by the search text, or
+  it's a lensfun row past the 200-row render cap. `LensPicker` now takes the selected option
+  and **pins it on top under "Selected"** when it isn't otherwise shown. A selection made from
+  outside the list (a switch, a preselect) is scrolled into view, but not one the user just
+  clicked.
+- ✅ The **Description note** panel gets the same switch (**Note: Coded lens / Mapped lens**),
+  sharing one `pairFor` helper and a `PairSwitch` component with the entry. Each side
+  remembers its own pair.
+- Per the user, **Mapped is the note's default** (first Coded, then changed to Mapped):
+  with no explicit note pick, the note uses the mapped side of the entry's mapping pair, else the entry's own lens. Explicit picks win:
+  the list, the switch, a Keep mapping's candidate preselect, or a pasted note (now always set
+  explicitly, even when it equals the entry). "Match lens entry" now sets the note to the
+  entry's lens, rather than meaning "follow".
+- ✅ Checked headless: a no-lens photo with the search set to "planar", pick Planar, flip to
+  Coded lens — Summicron-M 1:2/50 is highlighted under "Selected". The note shows Coded
+  (Summicron) by default; flipping it to Mapped gives Apply → entry Summicron + note
+  "Planar T* 2/50 ZM". Paste keeps the copied Planar note.

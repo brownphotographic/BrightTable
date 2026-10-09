@@ -98,6 +98,8 @@ export interface FoldersBrowserHandle {
   pasteImageProcessing: () => void;
   copyMetadata: () => void;
   pasteMetadata: () => void;
+  copyLens: () => void;
+  pasteLens: () => void;
   openPrint: () => void;
   rotateLeft: () => void;
   rotateRight: () => void;
@@ -113,7 +115,6 @@ export interface FoldersBrowserHandle {
 // scrolling day-grouped timeline.
 const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   metaOpen: boolean;
-  onCloseMetadata: () => void;
   filters: Filters;
   onOpenApplicationsPreferences?: () => void;
   // See PhotosBrowser.tsx's identical prop - whether the Folders tab is the
@@ -131,7 +132,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // Loupe circle size - set in Preferences → Configuration → Window
   // ("Thumbnail Loupe Size"). Only meaningful while loupeOn.
   loupeLarge: boolean;
-}>(function FoldersBrowser({ metaOpen, onCloseMetadata, filters, onOpenApplicationsPreferences, active = true, thumbSize, loupeOn, onToggleLoupe, loupeLarge }, ref) {
+}>(function FoldersBrowser({ metaOpen, filters, onOpenApplicationsPreferences, active = true, thumbSize, loupeOn, onToggleLoupe, loupeLarge }, ref) {
   const [folderPaths, setFolderPaths] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // See PhotosBrowser.tsx's identical state - set only when
@@ -214,7 +215,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     rotateSelection,
     rotatingIds,
   } = useAssetActions({ onError: setEnqueueError });
-  const { openLensEditor } = useLensEdit();
+  const { openLensEditor, copiedLens, canCopyLens, copyLens, pasteLens } = useLensEdit();
   const { shortcuts, capturing } = useShortcuts();
   const { overrideIds, setOverride } = useRawOverrides();
   // This server version doesn't populate `stack` on /search/metadata or
@@ -826,6 +827,17 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         onClick: () => handlePasteMetadata(pasteTargetIds, commitEditMany),
       });
     }
+    // Lens - separate from Copy/Paste Metadata: a lens goes through Change
+    // Lens (see lib/lensEdit.tsx), so Paste Lens opens that dialog prefilled.
+    if (asset && canCopyLens(asset)) {
+      items.push({ label: 'Copy Lens', onClick: () => copyLens(asset) });
+    }
+    if (copiedLens && lensTargets.length) {
+      items.push({
+        label: lensTargets.length > 1 ? `Paste Lens to ${lensTargets.length} Photos…` : 'Paste Lens…',
+        onClick: () => pasteLens({ assets: lensTargets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+      });
+    }
     items.push(DIVIDER);
 
     // Utility
@@ -882,6 +894,10 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     requestPasteImageProcessing,
     handleCopyMetadata,
     handlePasteMetadata,
+    copiedLens,
+    canCopyLens,
+    copyLens,
+    pasteLens,
     rotateSelection,
     removeAssets,
     rawRoundTripEnabled,
@@ -966,6 +982,12 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       pasteMetadata: () => {
         handlePasteMetadata([...selected], commitEditMany);
       },
+      copyLens: () => {
+        if (selectedAssets.length === 1) copyLens(selectedAssets[0]);
+      },
+      pasteLens: () => {
+        pasteLens({ assets: selectedAssets, applyPatch: patchAssetLocal, onError: setEnqueueError });
+      },
       // Single-asset resolution, matching PhotosBrowser's identical
       // openPrint - the lone selected asset, else the open Viewer asset,
       // else the first currently-visible one. A RAW-resolved target is a
@@ -1017,6 +1039,9 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       flatIds,
       handleCopyMetadata,
       handlePasteMetadata,
+      copyLens,
+      pasteLens,
+      patchAssetLocal,
     ],
   );
 
@@ -1065,6 +1090,12 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       } else if (matchesShortcut(e, shortcuts.pasteMetadata) && selected.size > 0 && copiedMetadata) {
         e.preventDefault();
         handlePasteMetadata([...selected], commitEditMany);
+      } else if (matchesShortcut(e, shortcuts.copyLens) && selectedAssets.length === 1) {
+        e.preventDefault();
+        copyLens(selectedAssets[0]);
+      } else if (matchesShortcut(e, shortcuts.pasteLens) && selected.size > 0 && copiedLens) {
+        e.preventDefault();
+        pasteLens({ assets: selectedAssets, applyPatch: patchAssetLocal, onError: setEnqueueError });
       } else if (matchesShortcut(e, shortcuts.copyImageProcessing) && selectedAssets.length === 1) {
         e.preventDefault();
         handleCopyImageProcessing(selectedAssets[0]);
@@ -1127,6 +1158,11 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     selectedAssets,
     handleCopyMetadata,
     handlePasteMetadata,
+    copiedLens,
+    canCopyLens,
+    copyLens,
+    pasteLens,
+    patchAssetLocal,
     handleCopyImageProcessing,
     requestPasteImageProcessing,
     copiedMetadata,
@@ -1314,6 +1350,16 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       ? [{ id: 'copyMetadata', group: 'copyPaste' as const, label: 'Copy Metadata', onClick: () => handleCopyMetadata(selectedAssets[0]) }]
       : []),
     { id: 'pasteMetadata', group: 'copyPaste', label: 'Paste Metadata', disabled: !copiedMetadata, onClick: () => handlePasteMetadata([...selected], commitEditMany) },
+    ...(selectedAssets.length === 1 && canCopyLens(selectedAssets[0])
+      ? [{ id: 'copyLens', group: 'copyPaste' as const, label: 'Copy Lens', onClick: () => copyLens(selectedAssets[0]) }]
+      : []),
+    {
+      id: 'pasteLens',
+      group: 'copyPaste',
+      label: 'Paste Lens…',
+      disabled: !copiedLens || !selectedAssets.some((a) => !isVideoAsset(a)),
+      onClick: () => pasteLens({ assets: selectedAssets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+    },
     {
       id: 'exportToFolder',
       group: 'share',
@@ -1459,7 +1505,11 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
           )}
         </div>
         {loupeOn && <GridLoupePane assetId={hoveredAssetId} large={loupeLarge} />}
-        {!loupeOn && metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
+        {!loupeOn && metaOpen && <MetadataPanel
+            selected={selectedAssets}
+            onEdit={commitEdit}
+            onChangeLens={() => openLensEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError })}
+          />}
       </div>
 
       {openAsset && (

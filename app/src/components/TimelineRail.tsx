@@ -30,8 +30,10 @@ function formatMonthYear(timeBucket: string): string {
 }
 
 // Largest index i such that cumulative[i] <= target (cumulative is sorted,
-// strictly increasing once bucket counts are all >0 - buckets with count 0
-// never come back from Immich, so no dedup needed here).
+// non-decreasing). Immich never returns a zero-count bucket, but
+// PhotosBrowser passes filtered counts while a filter is on, so a month can
+// be 0 - "largest" skips past those runs to the month that actually holds
+// `target`.
 function bucketIndexForCount(cumulative: number[], target: number): number {
   let lo = 0;
   let hi = cumulative.length - 2; // cumulative has buckets.length + 1 entries
@@ -113,7 +115,8 @@ export default function TimelineRail({
   const seenYears = new Set<string>();
   for (let i = 0; i < buckets.length; i++) {
     const year = buckets[i].timeBucket.slice(0, 4);
-    if (seenYears.has(year)) continue;
+    // A filtered-out month takes no space, so it can't place its year.
+    if (buckets[i].count === 0 || seenYears.has(year)) continue;
     seenYears.add(year);
     yearTicks.push({ year, top: (cumulative[i] / totalCount) * 100 });
   }
@@ -157,7 +160,9 @@ export default function TimelineRail({
     const rect = track.getBoundingClientRect();
     const y = e.clientY - rect.top;
     const fraction = Math.min(1, Math.max(0, y / Math.max(1, rect.height)));
-    const index = bucketIndexForCount(cumulative, fraction * totalCount);
+    // Same clamp as jumpToFraction - at the very bottom, an unclamped
+    // target could land on a trailing filtered-out (0-count) month.
+    const index = bucketIndexForCount(cumulative, Math.min(totalCount - 1, fraction * totalCount));
     setHover({ y, text: formatMonthYear(buckets[index].timeBucket) });
   };
 

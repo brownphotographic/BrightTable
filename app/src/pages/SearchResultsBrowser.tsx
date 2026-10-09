@@ -76,6 +76,8 @@ export interface SearchResultsBrowserHandle {
   pasteImageProcessing: () => void;
   copyMetadata: () => void;
   pasteMetadata: () => void;
+  copyLens: () => void;
+  pasteLens: () => void;
   rotateLeft: () => void;
   rotateRight: () => void;
 }
@@ -99,10 +101,9 @@ const SEARCH_GRID_CHUNK_SIZE = 60;
 const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
   query: string;
   metaOpen: boolean;
-  onCloseMetadata: () => void;
   onClose: () => void;
   active?: boolean;
-}>(function SearchResultsBrowser({ query, metaOpen, onCloseMetadata, onClose, active = true }, ref) {
+}>(function SearchResultsBrowser({ query, metaOpen, onClose, active = true }, ref) {
   const [assets, setAssets] = useState<AssetSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [enqueueError, setEnqueueError] = useState<string | null>(null);
@@ -156,7 +157,7 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
     rotateSelection,
     rotatingIds,
   } = useAssetActions({ onError: setEnqueueError });
-  const { openLensEditor } = useLensEdit();
+  const { openLensEditor, copiedLens, canCopyLens, copyLens, pasteLens } = useLensEdit();
 
   useEffect(() => {
     setAssets(null);
@@ -468,6 +469,17 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
         onClick: () => handlePasteMetadata(targetIds, commitEditMany),
       });
     }
+    // Lens - separate from Copy/Paste Metadata: a lens goes through Change
+    // Lens (see lib/lensEdit.tsx), so Paste Lens opens that dialog prefilled.
+    if (asset && canCopyLens(asset)) {
+      items.push({ label: 'Copy Lens', onClick: () => copyLens(asset) });
+    }
+    if (copiedLens && lensTargets.length) {
+      items.push({
+        label: lensTargets.length > 1 ? `Paste Lens to ${lensTargets.length} Photos…` : 'Paste Lens…',
+        onClick: () => pasteLens({ assets: lensTargets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+      });
+    }
     items.push(DIVIDER);
 
     // Utility
@@ -515,6 +527,10 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
     handleCopyImageProcessing,
     handleCopyMetadata,
     handlePasteMetadata,
+    copiedLens,
+    canCopyLens,
+    copyLens,
+    pasteLens,
     requestPasteImageProcessing,
     rotateSelection,
   ]);
@@ -571,6 +587,12 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
       pasteMetadata: () => {
         handlePasteMetadata([...selected], commitEditMany);
       },
+      copyLens: () => {
+        if (selectedAssets.length === 1) copyLens(selectedAssets[0]);
+      },
+      pasteLens: () => {
+        pasteLens({ assets: selectedAssets, applyPatch: patchAssetLocal, onError: setEnqueueError });
+      },
       rotateLeft: () => {
         rotateSelection([...selected], false, assetByIdAll).catch(() => {});
       },
@@ -596,6 +618,9 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
       commitEditMany,
       rotateSelection,
       openId,
+      copyLens,
+      pasteLens,
+      patchAssetLocal,
     ],
   );
 
@@ -700,6 +725,16 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
       ? [{ id: 'copyMetadata', group: 'copyPaste' as const, label: 'Copy Metadata', onClick: () => handleCopyMetadata(selectedAssets[0]) }]
       : []),
     { id: 'pasteMetadata', group: 'copyPaste', label: 'Paste Metadata', disabled: !copiedMetadata, onClick: () => handlePasteMetadata([...selected], commitEditMany) },
+    ...(selectedAssets.length === 1 && canCopyLens(selectedAssets[0])
+      ? [{ id: 'copyLens', group: 'copyPaste' as const, label: 'Copy Lens', onClick: () => copyLens(selectedAssets[0]) }]
+      : []),
+    {
+      id: 'pasteLens',
+      group: 'copyPaste',
+      label: 'Paste Lens…',
+      disabled: !copiedLens || !selectedAssets.some((a) => !isVideoAsset(a)),
+      onClick: () => pasteLens({ assets: selectedAssets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+    },
     {
       id: 'exportToFolder',
       group: 'share',
@@ -826,7 +861,11 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
             </div>
           )}
         </div>
-        {metaOpen && <MetadataPanel selected={selectedAssets} onClose={onCloseMetadata} onEdit={commitEdit} />}
+        {metaOpen && <MetadataPanel
+            selected={selectedAssets}
+            onEdit={commitEdit}
+            onChangeLens={() => openLensEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError })}
+          />}
       </div>
 
       {openAsset && (

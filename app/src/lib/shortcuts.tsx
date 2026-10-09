@@ -28,7 +28,7 @@ export type ShortcutId =
   | 'next'
   | 'stackPrev'
   | 'stackNext'
-  | 'toggleInfo'
+  | 'toggleMetadata'
   | 'toggleFilmstrip'
   | 'favorite'
   | 'loupe'
@@ -47,6 +47,8 @@ export type ShortcutId =
   | 'print'
   | 'copyMetadata'
   | 'pasteMetadata'
+  | 'copyLens'
+  | 'pasteLens'
   | 'copyImageProcessing'
   | 'pasteImageProcessing'
   | 'rotateLeft'
@@ -63,7 +65,7 @@ export const SHORTCUT_DEFS: { id: ShortcutId; label: string }[] = [
   { id: 'next', label: 'Next photo' },
   { id: 'stackPrev', label: 'Previous photo in stack' },
   { id: 'stackNext', label: 'Next photo in stack' },
-  { id: 'toggleInfo', label: 'Toggle info panel' },
+  { id: 'toggleMetadata', label: 'Toggle metadata panel' },
   { id: 'toggleFilmstrip', label: 'Toggle filmstrip' },
   { id: 'favorite', label: 'Toggle favorite' },
   { id: 'loupe', label: 'Toggle loupe' },
@@ -82,6 +84,8 @@ export const SHORTCUT_DEFS: { id: ShortcutId; label: string }[] = [
   { id: 'print', label: 'Print' },
   { id: 'copyMetadata', label: 'Copy Metadata' },
   { id: 'pasteMetadata', label: 'Paste Metadata' },
+  { id: 'copyLens', label: 'Copy Lens' },
+  { id: 'pasteLens', label: 'Paste Lens' },
   { id: 'copyImageProcessing', label: 'Copy Image Processing' },
   { id: 'pasteImageProcessing', label: 'Paste Image Processing' },
   { id: 'rotateLeft', label: 'Rotate Left' },
@@ -102,7 +106,10 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutId, string> = {
   next: 'ArrowRight',
   stackPrev: 'ArrowUp',
   stackNext: 'ArrowDown',
-  toggleInfo: 'I',
+  // Was `toggleInfo: 'I'` (Viewer only). Renamed rather than just re-
+  // defaulted so a saved shortcuts map still holding the old 'I' doesn't
+  // override the new Ctrl+I - the stale key is simply ignored.
+  toggleMetadata: 'Ctrl+I',
   toggleFilmstrip: 'M',
   favorite: 'F',
   loupe: 'L',
@@ -123,6 +130,8 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutId, string> = {
   pasteImageProcessing: 'Ctrl+V',
   copyMetadata: 'Ctrl+Shift+C',
   pasteMetadata: 'Ctrl+Shift+V',
+  copyLens: 'Ctrl+Alt+C',
+  pasteLens: 'Ctrl+Alt+V',
   rotateLeft: 'Ctrl+[',
   rotateRight: 'Ctrl+]',
   addToTag: 'Ctrl+T',

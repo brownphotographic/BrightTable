@@ -33,6 +33,7 @@ import { EditQueueProvider } from './lib/editQueue';
 import { LensConfigProvider } from './lib/lensConfig';
 import { LensEditProvider } from './lib/lensEdit';
 import { ImportQueueProvider } from './lib/importQueue';
+import { onPreferencesRequest, type PreferencesTab } from './lib/preferencesRequest';
 import { ClipboardProvider } from './lib/clipboard';
 import { ProcessingQueueProvider } from './lib/processingQueue';
 import { ArtQueueProvider } from './lib/artQueue';
@@ -114,11 +115,22 @@ function AppShell() {
   // Which tab Preferences opens on next - reset to 'library' once closed so
   // a later plain "Preferences…" open doesn't strand the user on whichever
   // tab a redirect (e.g. an editor button with no app chosen yet) last used.
-  const [prefsInitialTab, setPrefsInitialTab] = useState<'library' | 'applications' | 'sharing'>('library');
-  const openPreferencesTab = (tab: 'library' | 'applications' | 'sharing') => {
+  const [prefsInitialTab, setPrefsInitialTab] = useState<PreferencesTab>('library');
+  const [prefsOverDialogs, setPrefsOverDialogs] = useState(false);
+  const openPreferencesTab = (tab: PreferencesTab) => {
     setPrefsInitialTab(tab);
     setPrefsOpen(true);
   };
+  // From outside this tree - e.g. Change Lens's "Open Lens Preferences…".
+  useEffect(
+    () =>
+      onPreferencesRequest((req) => {
+        setPrefsInitialTab(req.tab);
+        setPrefsOverDialogs(!!req.overDialogs);
+        setPrefsOpen(true);
+      }),
+    [],
+  );
   const [importOpen, setImportOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   // Folders is mounted lazily on its first visit (unlike Photos, the default
@@ -267,6 +279,11 @@ function AppShell() {
       } else if (matchesShortcut(e, shortcuts.toggleFullscreen)) {
         e.preventDefault();
         toggleImageFullscreen();
+      } else if (matchesShortcut(e, shortcuts.toggleMetadata) && !document.querySelector('[data-viewer]')) {
+        // The grid's Metadata panel - while a Viewer is open it toggles its
+        // own Information panel instead (Viewer.tsx), so this stands aside.
+        e.preventDefault();
+        setMetaOpen((v) => !v);
       } else if (matchesShortcut(e, shortcuts.openPreferences)) {
         e.preventDefault();
         setPrefsOpen(true);
@@ -390,6 +407,14 @@ function AppShell() {
             (activeSearch ? searchRef : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
             ).current?.pasteMetadata()
           }
+          onCopyLens={() =>
+            (activeSearch ? searchRef : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
+            ).current?.copyLens()
+          }
+          onPasteLens={() =>
+            (activeSearch ? searchRef : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
+            ).current?.pasteLens()
+          }
           onPrint={() => (leftTab === 'folders' ? foldersRef : photosRef).current?.openPrint()}
           onRotateLeft={() =>
             (activeSearch ? searchRef : leftTab === 'folders' ? foldersRef : leftTab === 'albums' ? albumsRef : leftTab === 'people' ? peopleRef : leftTab === 'tags' ? tagsRef : photosRef
@@ -442,7 +467,6 @@ function AppShell() {
                   ref={searchRef}
                   query={activeSearch}
                   metaOpen={metaOpen}
-                  onCloseMetadata={() => setMetaOpen(false)}
                   onClose={clearSearch}
                   active
                 />
@@ -455,7 +479,6 @@ function AppShell() {
                 active={!activeSearch && leftTab === 'photos'}
                 onTotalCount={setPhotosCount}
                 metaOpen={metaOpen}
-                onCloseMetadata={() => setMetaOpen(false)}
                 filters={filters}
                 onOpenApplicationsPreferences={() => openPreferencesTab('applications')}
                 thumbSize={thumbSize}
@@ -469,7 +492,6 @@ function AppShell() {
                 <AlbumsBrowser
                   ref={albumsRef}
                   metaOpen={metaOpen}
-                  onCloseMetadata={() => setMetaOpen(false)}
                   onCount={setAlbumsCount}
                   active={!activeSearch && leftTab === 'albums'}
                   loupeOn={gridLoupeOn}
@@ -485,7 +507,6 @@ function AppShell() {
                 <PeopleBrowser
                   ref={peopleRef}
                   metaOpen={metaOpen}
-                  onCloseMetadata={() => setMetaOpen(false)}
                   onCount={setPeopleCount}
                   active={!activeSearch && leftTab === 'people'}
                   loupeOn={gridLoupeOn}
@@ -501,7 +522,6 @@ function AppShell() {
                 <TagsBrowser
                   ref={tagsRef}
                   metaOpen={metaOpen}
-                  onCloseMetadata={() => setMetaOpen(false)}
                   onCount={setTagsCount}
                   active={!activeSearch && leftTab === 'tags'}
                   loupeOn={gridLoupeOn}
@@ -519,7 +539,6 @@ function AppShell() {
                   ref={foldersRef}
                   active={!activeSearch && leftTab === 'folders'}
                   metaOpen={metaOpen}
-                  onCloseMetadata={() => setMetaOpen(false)}
                   filters={filters}
                   onOpenApplicationsPreferences={() => openPreferencesTab('applications')}
                   thumbSize={thumbSize}
@@ -536,9 +555,11 @@ function AppShell() {
         {prefsOpen && (
           <PreferencesOverlay
             initialTab={prefsInitialTab}
+            overDialogs={prefsOverDialogs}
             onClose={() => {
               setPrefsOpen(false);
               setPrefsInitialTab('library');
+              setPrefsOverDialogs(false);
             }}
           />
         )}

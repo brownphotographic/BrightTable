@@ -46,6 +46,8 @@ export default function MenuBar({
   onPasteImageProcessing,
   onCopyMetadata,
   onPasteMetadata,
+  onCopyLens,
+  onPasteLens,
   onPrint,
   onRotateLeft,
   onRotateRight,
@@ -92,6 +94,8 @@ export default function MenuBar({
   onPasteImageProcessing: () => void;
   onCopyMetadata: () => void;
   onPasteMetadata: () => void;
+  onCopyLens: () => void;
+  onPasteLens: () => void;
   onPrint: () => void;
   onRotateLeft: () => void;
   onRotateRight: () => void;
@@ -295,6 +299,22 @@ export default function MenuBar({
           onClick={() => {
             close();
             onPasteMetadata();
+          }}
+        />
+        <MenuItem
+          label="Copy Lens"
+          shortcut={prettyShortcut(shortcuts.copyLens)}
+          onClick={() => {
+            close();
+            onCopyLens();
+          }}
+        />
+        <MenuItem
+          label="Paste Lens…"
+          shortcut={prettyShortcut(shortcuts.pasteLens)}
+          onClick={() => {
+            close();
+            onPasteLens();
           }}
         />
         <Divider />
@@ -690,6 +710,7 @@ export default function MenuBar({
 
       <div
         onClick={onToggleMetadata}
+        title={`Metadata panel (${prettyShortcut(shortcuts.toggleMetadata)})`}
         style={{
           display: 'flex',
           alignItems: 'center',

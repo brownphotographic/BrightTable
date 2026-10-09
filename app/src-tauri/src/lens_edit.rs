@@ -72,9 +72,19 @@ pub struct LensChange {
     pub f_number: Option<f32>,
     pub write_original: bool,
     pub note_prefix: String,
+    /// The lens the description note names, when it differs from `lens` -
+    /// e.g. Replace with the lensfun lens whose profile is close enough, but
+    /// note the lens actually used. None = note `lens` itself.
+    pub note_lens_model: Option<String>,
 }
 
 impl LensChange {
+    /// What the `Lens: …` note says.
+    pub fn note_model(&self) -> &str {
+        self.note_lens_model.as_deref().map(str::trim).filter(|m| !m.is_empty()).unwrap_or(&self.lens.model)
+    }
+
+
     pub fn effective_focal_length(&self) -> Option<f32> {
         self.focal_length
             .filter(|f| *f > 0.0)
@@ -331,8 +341,103 @@ fn set_section_keys(profile: &str, section: &str, keys: &[(&str, String)]) -> St
     joined
 }
 
+/// How much of an original to read before trying its EXIF. A JPEG's APP1
+/// and a TIFF-based RAW's IFDs almost always sit in the first few hundred
+/// KB; only when they don't is the whole file read.
+const LENS_MAKE_PREFIX_BYTES: u64 = 1024 * 1024;
+/// Past this, a whole-file fallback read isn't worth it for one panel row.
+const LENS_MAKE_MAX_FULL_READ_BYTES: u64 = 200 * 1024 * 1024;
+
+/// The lens maker for the Metadata panel's Lens Manufacturer row - Immich
+/// doesn't carry a lens make at all, so it's read from local files: the XMP
+/// sidecar's `exifEX:LensMake` (what Change Lens writes) when that sidecar
+/// names the same lens Immich shows (`lens_model`, or any if it shows
+/// none), else the original's own EXIF `LensMake`. None when neither has one.
+pub fn read_lens_make(original: &std::path::Path, lens_model: Option<&str>) -> Option<String> {
+    let shown = lens_model.map(str::trim).filter(|m| !m.is_empty());
+    for sidecar in [crate::paths::xmp_sidecar_path(original), crate::paths::xmp_sidecar_path_replaced(original)] {
+        let Ok(text) = std::fs::read_to_string(&sidecar) else { continue };
+        if let Some(make) = sidecar_lens_make(&text, shown) {
+            return Some(make);
+        }
+    }
+    original_lens_make(original)
+}
+
+fn sidecar_lens_make(text: &str, shown_lens: Option<&str>) -> Option<String> {
+    let make = crate::xmp::read_simple_property(text, "exifEX", "LensMake").filter(|m| !m.trim().is_empty())?;
+    let model = crate::xmp::read_simple_property(text, "exifEX", "LensModel");
+    match (shown_lens, model) {
+        (Some(shown), Some(model)) if !model.trim().eq_ignore_ascii_case(shown) => None,
+        _ => Some(make.trim().to_string()),
+    }
+}
+
+fn original_lens_make(original: &std::path::Path) -> Option<String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(original).ok()?;
+    let mut prefix = Vec::new();
+    (&mut file).take(LENS_MAKE_PREFIX_BYTES).read_to_end(&mut prefix).ok()?;
+    if let Some(make) = lens_make_from_bytes(&prefix) {
+        return Some(make);
+    }
+    let len = file.metadata().ok()?.len();
+    if len <= prefix.len() as u64 || len > LENS_MAKE_MAX_FULL_READ_BYTES {
+        return None;
+    }
+    let mut all = prefix;
+    file.read_to_end(&mut all).ok()?;
+    lens_make_from_bytes(&all)
+}
+
+fn lens_make_from_bytes(bytes: &[u8]) -> Option<String> {
+    let exif = exif::Reader::new().read_from_container(&mut std::io::Cursor::new(bytes)).ok()?;
+    let field = exif.get_field(exif::Tag::LensMake, exif::In::PRIMARY)?;
+    let exif::Value::Ascii(parts) = &field.value else { return None };
+    let make = String::from_utf8_lossy(parts.first()?).trim_matches(|c: char| c == '\0' || c.is_whitespace()).to_string();
+    (!make.is_empty()).then_some(make)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn note_names_its_own_lens_when_given_one() {
+        let mut c = change(summicron());
+        assert_eq!(c.note_model(), c.lens.model);
+        c.note_lens_model = Some("Planar T* 2/50 ZM".into());
+        assert_eq!(c.note_model(), "Planar T* 2/50 ZM");
+        c.note_lens_model = Some("  ".into());
+        assert_eq!(c.note_model(), c.lens.model);
+    }
+
+    #[test]
+    fn sidecar_lens_make_only_when_it_names_the_shown_lens() {
+        let xmp = r#"<rdf:Description exifEX:LensMake="Carl Zeiss" exifEX:LensModel="Planar T* 2/50 ZM"/>"#;
+        assert_eq!(sidecar_lens_make(xmp, Some("Planar T* 2/50 ZM")).as_deref(), Some("Carl Zeiss"));
+        assert_eq!(sidecar_lens_make(xmp, Some("planar t* 2/50 zm")).as_deref(), Some("Carl Zeiss"));
+        assert_eq!(sidecar_lens_make(xmp, None).as_deref(), Some("Carl Zeiss"));
+        // Immich still shows the camera's coded lens - the sidecar's maker
+        // belongs to a different lens.
+        assert_eq!(sidecar_lens_make(xmp, Some("Summicron-M 1:2/50")), None);
+        assert_eq!(sidecar_lens_make(r#"<x exifEX:LensModel="A"/>"#, Some("A")), None);
+    }
+
+    // Manual check against real files: BT_LENS_MAKE_FILES="a.jpg:b.DNG"
+    // cargo test --lib real_files_lens_make -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn real_files_lens_make() {
+        for f in std::env::var("BT_LENS_MAKE_FILES").unwrap_or_default().split(':').filter(|f| !f.is_empty()) {
+            println!("{f} => {:?}", read_lens_make(std::path::Path::new(f), None));
+        }
+    }
+
+    #[test]
+    fn lens_make_from_bytes_ignores_non_exif_input() {
+        assert_eq!(lens_make_from_bytes(b"not an image"), None);
+        assert_eq!(original_lens_make(std::path::Path::new("/nonexistent/brighttable-test.jpg")), None);
+    }
+
     use super::*;
     use std::path::Path;
 
@@ -350,6 +455,7 @@ mod tests {
 
     fn change(lens: LensSpec) -> LensChange {
         LensChange {
+            note_lens_model: None,
             lens,
             apply_lens: true,
             add_note: false,

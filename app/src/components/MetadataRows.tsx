@@ -16,21 +16,28 @@
  */
 
 import { useEffect, useState } from 'react';
-import { getAsset, untagAssets, type AssetMetadataPatch, type AssetSummary, type TagSummary } from '../lib/api';
-import { formatCamera, formatDims, formatExposure, formatSize, formatTaken } from '../lib/exifFormat';
+import { getAsset, readLensMake, untagAssets, type AssetMetadataPatch, type AssetSummary, type TagSummary } from '../lib/api';
+import { formatAperture, formatCamera, formatDims, formatFocalLength, formatIso, formatShutter, formatSize, formatTaken } from '../lib/exifFormat';
 import { bumpTagsVersion, useTagsVersion } from '../lib/tagsVersion';
+import { Icon } from './Icons';
 
 // Shared EXIF row list used by both the viewer's Info panel and the grid's
 // Metadata panel, so the two stay visually and factually consistent.
 // `onEdit` is optional - pass it to make Rating/Favorite/Tags clickable; omit
-// it for a purely read-only render.
+// it for a purely read-only render. `onChangeLens` adds a pencil button to
+// the Lens row that opens Change Lens (never shown for a video).
 export default function MetadataRows({
   asset,
   onEdit,
+  onChangeLens,
+  changeLensTitle = 'Change lens…',
 }: {
   asset: AssetSummary;
   onEdit?: (patch: AssetMetadataPatch) => Promise<void>;
+  onChangeLens?: () => void;
+  changeLensTitle?: string;
 }) {
+  const [lensHover, setLensHover] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // `asset.tags` itself is always empty here - Immich doesn't join the tags
@@ -40,6 +47,7 @@ export default function MetadataRows({
   // whenever the shown asset changes, since this is a single-asset panel,
   // not a grid tile.
   const { tags, error: tagsError, removeTag } = useAssetTags(asset.id);
+  const lensMake = useLensMake(asset);
 
   async function apply(patch: AssetMetadataPatch) {
     if (!onEdit || busy) return;
@@ -58,8 +66,47 @@ export default function MetadataRows({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
       <InfoRow label="Taken" value={formatTaken(asset)} />
       <InfoRow label="Camera" value={formatCamera(asset)} />
-      <InfoRow label="Lens" value={asset.lensModel || '—'} />
-      <InfoRow label="Exposure" value={formatExposure(asset)} />
+      <InfoRow label="Lens Manufacturer" value={lensMake === undefined ? '…' : lensMake || '—'} />
+      {onChangeLens && asset.type !== 'VIDEO' ? (
+        // Same 9px padding as InfoRow, with the button's negative margin
+        // keeping it from making this row taller than its neighbours - and
+        // the pencil sits *before* the model so the model's right edge lines
+        // up with every other row's value.
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+          <span style={{ fontSize: 12.5, color: 'var(--text-dimmer)' }}>Lens</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+            <div
+              role="button"
+              onClick={onChangeLens}
+              onMouseEnter={() => setLensHover(true)}
+              onMouseLeave={() => setLensHover(false)}
+              title={changeLensTitle}
+              style={{
+                width: 24,
+                height: 24,
+                margin: '-4px 0',
+                flexShrink: 0,
+                borderRadius: 6,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'default',
+                color: lensHover ? 'var(--text)' : 'var(--text-dimmer)',
+                background: lensHover ? 'var(--overlay-medium)' : 'transparent',
+              }}
+            >
+              <Icon name="edit" size={13} />
+            </div>
+            <span style={{ fontSize: 12.5, textAlign: 'right' }}>{asset.lensModel || '—'}</span>
+          </div>
+        </div>
+      ) : (
+        <InfoRow label="Lens" value={asset.lensModel || '—'} />
+      )}
+      <InfoRow label="Focal Length" value={formatFocalLength(asset)} />
+      <InfoRow label="Aperture" value={formatAperture(asset)} />
+      <InfoRow label="Shutter Speed" value={formatShutter(asset)} />
+      <InfoRow label="ISO" value={formatIso(asset)} />
       <InfoRow label="Dimensions" value={formatDims(asset)} />
       <InfoRow label="Size" value={formatSize(asset.fileSizeInByte)} />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
@@ -137,6 +184,40 @@ export default function MetadataRows({
       {error && <div style={{ marginTop: 8, fontSize: 11.5, color: '#ff6b6b', lineHeight: 1.4 }}>{error}</div>}
     </div>
   );
+}
+
+// Session cache, keyed by asset + the lens Immich shows (a different lens
+// means a different maker) - so stepping back to a photo doesn't re-read
+// its file.
+const lensMakeCache = new Map<string, string | null>();
+
+// Lazy-loads the lens maker for the shown asset: `undefined` while reading,
+// `null` when unknown (no local path mapping, unreachable original, nothing
+// recorded) - Immich itself has no lens make. A Change Lens edit's
+// optimistic `asset.lensMake` wins outright.
+function useLensMake(asset: AssetSummary): string | null | undefined {
+  const key = `${asset.id}|${asset.lensModel ?? ''}`;
+  const [loaded, setLoaded] = useState<{ key: string; make: string | null } | null>(null);
+  const skip = asset.lensMake !== undefined || asset.type === 'VIDEO' || !asset.originalPath;
+
+  useEffect(() => {
+    if (skip || lensMakeCache.has(key)) return;
+    let cancelled = false;
+    readLensMake(asset.originalPath!, asset.lensModel)
+      .catch(() => null)
+      .then((make) => {
+        lensMakeCache.set(key, make);
+        if (!cancelled) setLoaded({ key, make });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [key, skip, asset.originalPath, asset.lensModel]);
+
+  if (asset.lensMake !== undefined) return asset.lensMake;
+  if (skip) return null;
+  if (lensMakeCache.has(key)) return lensMakeCache.get(key)!;
+  return loaded?.key === key ? loaded.make : undefined;
 }
 
 export function InfoRow({ label, value, last }: { label: string; value: string; last?: boolean }) {
