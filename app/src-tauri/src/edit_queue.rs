@@ -463,7 +463,7 @@ async fn run_lens_job(
             }
             let description = sidecar_change.add_note.then(|| {
                 let base = xmp::read_description(&existing).or(fallback_description).unwrap_or_default();
-                lens_edit::upsert_lens_note(&base, &sidecar_change.note_prefix, sidecar_change.note_model())
+                lens_edit::upsert_lens_note(&base, &sidecar_change.note_prefix, &sidecar_change.note_name())
             });
             xmp::patch_properties(&write_path, &props, description.as_deref())?;
             Ok(description)
@@ -758,7 +758,7 @@ mod tests {
         assert_eq!(xmp::read_simple_property(&sidecar, "exif", "FocalLength").as_deref(), Some("50/1"));
         assert_eq!(xmp::read_simple_property(&sidecar, "brighttable", "OriginalLensModel").as_deref(), Some("Summicron-M 1:2/50"));
         // Note appended to the caption Immich already had, not replacing it.
-        assert_eq!(xmp::read_description(&sidecar).as_deref(), Some("Canal at dusk\nLens: Planar T* 2/50 ZM"));
+        assert_eq!(xmp::read_description(&sidecar).as_deref(), Some("Canal at dusk\nLens: Zeiss Planar T* 2/50 ZM"));
 
         let arp = std::fs::read_to_string(dir.join("L1000103.DNG.arp")).unwrap();
         assert!(arp.contains("LcMode=lfmanual\n"));
@@ -775,7 +775,7 @@ mod tests {
         assert_eq!(status, JobStatus::Done);
         let sidecar = std::fs::read_to_string(dir.join("L1000103.DNG.xmp")).unwrap();
         assert_eq!(xmp::read_simple_property(&sidecar, "brighttable", "OriginalLensModel").as_deref(), Some("Summicron-M 1:2/50"));
-        assert_eq!(xmp::read_description(&sidecar).as_deref(), Some("Canal at dusk\nLens: Planar T* 2/50 ZM"));
+        assert_eq!(xmp::read_description(&sidecar).as_deref(), Some("Canal at dusk\nLens: Zeiss Planar T* 2/50 ZM"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -791,7 +791,7 @@ mod tests {
         assert_eq!(status, JobStatus::Done);
         let sidecar = std::fs::read_to_string(dir.join("L1.DNG.xmp")).unwrap();
         assert_eq!(xmp::read_simple_property(&sidecar, "exifEX", "LensModel"), None);
-        assert_eq!(xmp::read_description(&sidecar).as_deref(), Some("Canal at dusk\nLens: Planar T* 2/50 ZM"));
+        assert_eq!(xmp::read_description(&sidecar).as_deref(), Some("Canal at dusk\nLens: Zeiss Planar T* 2/50 ZM"));
         assert_eq!(std::fs::read_to_string(dir.join("L1.DNG.arp")).unwrap(), arp_text);
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -94,6 +94,15 @@ export function specFromName(model: string): LensSpec {
   };
 }
 
+// "Zeiss" + "Planar T* 2/50 ZM" -> "Zeiss Planar T* 2/50 ZM" - the name a
+// description note writes. The model alone when the maker is blank or the
+// model already starts with it. TS twin of lens_edit.rs's lens_full_name.
+export function lensFullName(spec: Pick<LensSpec, 'maker' | 'model'>): string {
+  const maker = spec.maker.trim();
+  const model = spec.model.trim();
+  return !maker || model.toLowerCase().startsWith(maker.toLowerCase()) ? model : `${maker} ${model}`;
+}
+
 export const lensKey = (spec: Pick<LensSpec, 'maker' | 'model'>) => `${spec.maker.trim().toLowerCase()}|${spec.model.trim().toLowerCase()}`;
 
 export function isZoom(spec: LensSpec): boolean {

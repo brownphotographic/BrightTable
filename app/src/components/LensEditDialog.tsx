@@ -22,7 +22,7 @@ import { useLensConfig } from '../lib/lensConfig';
 import type { CopiedLens } from '../lib/lensEdit';
 import CopiedLensCard from './CopiedLensCard';
 import { Icon } from './Icons';
-import { buildLensOptions, copiedLensKeeps, copiedLensName, formatLensSpecs, isZoom, lensKey, specFromName, type LensOption } from '../lib/lenses';
+import { buildLensOptions, copiedLensKeeps, copiedLensName, formatLensSpecs, isZoom, lensFullName, lensKey, specFromName, type LensOption } from '../lib/lenses';
 import { requestPreferences } from '../lib/preferencesRequest';
 import { LensPicker, lensBtnPrimary, lensBtnSecondary, lensInput } from './LensControls';
 
@@ -127,7 +127,9 @@ export default function LensEditDialog({
     if (!prefill || prefillResolved.current || (!catalog && !loadError)) return;
     prefillResolved.current = true;
     const resolve = (name: string): LensOption => {
-      const found = options.find((o) => o.spec.model.trim().toLowerCase() === name.trim().toLowerCase());
+      const n = name.trim().toLowerCase();
+      // A note names the lens with its maker; a lens entry without.
+      const found = options.find((o) => o.spec.model.trim().toLowerCase() === n) ?? options.find((o) => lensFullName(o.spec).toLowerCase() === n);
       const fallback = specFromName(name);
       return found ?? { key: lensKey(fallback), spec: fallback, source: 'library', hasProfile: false, displayName: null };
     };
@@ -238,7 +240,7 @@ export default function LensEditDialog({
         focalLength: replace ? focalValue : null,
         fNumber: replace ? toNum(fNumber) : null,
         writeOriginalOnce: replace && writeOnce,
-        noteLens: replace && noteOn && noteSpec && noteSpec.model !== lens.model ? noteSpec.model : null,
+        noteLens: replace && noteOn && noteSpec && noteSpec.model !== lens.model ? lensFullName(noteSpec) : null,
       });
       onClose();
     } catch (e) {
@@ -250,7 +252,7 @@ export default function LensEditDialog({
   const count = assets.length;
   const currentLabel = currentLenses.length === 0 ? null : currentLenses.length === 1 ? currentLenses[0] : `${currentLenses.length} different lenses`;
   // Plain-English "what Apply does", shown next to it once nothing blocks.
-  const summary = [replace && spec ? `Lens → ${spec.model}` : null, noteOn && noteSpec ? `Note → ${lensConfig.notePrefix}${noteSpec.model}` : null].filter(Boolean).join('   ·   ');
+  const summary = [replace && spec ? `Lens → ${spec.model}` : null, noteOn && noteSpec ? `Note → ${lensConfig.notePrefix}${lensFullName(noteSpec)}` : null].filter(Boolean).join('   ·   ');
 
   return (
     <div className="window-frame window-frame-overlay" style={{ zIndex: 300, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={submitting ? undefined : onClose}>
@@ -371,7 +373,7 @@ export default function LensEditDialog({
                         <div style={resultLabel}>Adds</div>
                         <div style={{ font: '600 13.5px ui-monospace,monospace' }}>
                           {lensConfig.notePrefix}
-                          {noteSpec.model}
+                          {lensFullName(noteSpec)}
                         </div>
                         {replace && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>

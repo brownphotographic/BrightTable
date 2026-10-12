@@ -47,7 +47,7 @@ export default function CopiedLensCard({ lens, eyebrow, done }: { lens: CopiedLe
           {lens.focalLength != null && <Chip>{fmtFocal(lens.focalLength)}</Chip>}
           {keep ? (
             <Chip title="The photos keep their own lens; the lens is added as a description note">Note only</Chip>
-          ) : lens.noteLens && lens.noteLens.toLowerCase() !== name.toLowerCase() ? (
+          ) : lens.noteLens && !lens.noteLens.toLowerCase().endsWith(name.toLowerCase()) ? (
             <Chip title="Description note">+ note: {lens.noteLens}</Chip>
           ) : lens.noteLens ? (
             <Chip>+ note</Chip>

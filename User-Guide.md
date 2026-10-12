@@ -150,7 +150,7 @@ For a lens the camera couldn't identify (a manual lens with no contacts), or one
 The dialog has two side-by-side panels, **Lens entry** on the left and **Description note** on the right, each with its own toggle:
 
 - **Lens entry: Keep / Replace.** *Replace* writes the chosen lens into the lens model, lens make, lens spec, max aperture and focal length fields (including the 35mm equivalent). For a zoom you enter the as-shot focal length. You can optionally enter the aperture too. *Keep* leaves the lens fields alone. This is useful for a coded lens whose correction profile is close enough.
-- **Description note: Add note / No note.** *Add note* adds a `Lens: <actual lens>` line to the description. Re-applying replaces that line rather than adding another.
+- **Description note: Add note / No note.** *Add note* adds a `Lens: <maker> <actual lens>` line to the description. Re-applying replaces that line rather than adding another.
 
 That gives four combinations. *Keep + No note* would change nothing, so Apply stays disabled for it.
 

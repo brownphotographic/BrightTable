@@ -85,7 +85,7 @@ export default function PreferencesLenses() {
           <Switch checked={lensConfig.updateRawProfiles} onChange={(v) => save({ ...lensConfig, updateRawProfiles: v })} />
         </Row>
         <Divider />
-        <Row label="Description note prefix" sub={`Added as "${lensConfig.notePrefix}Planar T* 2/50 ZM" on its own line; re-applying replaces it.`}>
+        <Row label="Description note prefix" sub={`Added as "${lensConfig.notePrefix}Zeiss Planar T* 2/50 ZM" on its own line; re-applying replaces it.`}>
           <input
             value={notePrefix}
             onChange={(e) => setNotePrefix(e.target.value)}

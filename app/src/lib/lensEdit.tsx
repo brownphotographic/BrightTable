@@ -21,7 +21,7 @@ import LensEditDialog from '../components/LensEditDialog';
 import { changeAssetLens, type AssetSummary, type EditJob, type LensEditRequest } from './api';
 import { useEditQueue } from './editQueue';
 import { useLensConfig } from './lensConfig';
-import { readLensNote, upsertLensNote } from './lenses';
+import { lensFullName, readLensNote, upsertLensNote } from './lenses';
 import { useEditJobReconciliation } from './useEditJobReconciliation';
 
 // Each browser page keeps its own asset cache, so the page hands over its
@@ -110,7 +110,7 @@ export function LensEditProvider({ children }: { children: ReactNode }) {
           }
         }
         if (request.addNote) {
-          patch.description = upsertLensNote(a.description ?? '', lensConfig.notePrefix, request.noteLens || request.lens.model);
+          patch.description = upsertLensNote(a.description ?? '', lensConfig.notePrefix, request.noteLens || lensFullName(request.lens));
           prev.description = a.description;
         }
         prevById.set(a.id, prev);

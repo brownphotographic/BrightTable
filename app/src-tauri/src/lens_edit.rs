@@ -72,9 +72,10 @@ pub struct LensChange {
     pub f_number: Option<f32>,
     pub write_original: bool,
     pub note_prefix: String,
-    /// The lens the description note names, when it differs from `lens` -
-    /// e.g. Replace with the lensfun lens whose profile is close enough, but
-    /// note the lens actually used. None = note `lens` itself.
+    /// The lens the description note names (maker included), when it
+    /// differs from `lens` - e.g. Replace with the lensfun lens whose profile
+    /// is close enough, but note the lens actually used. None = note `lens`
+    /// itself.
     pub note_lens_model: Option<String>,
 }
 
@@ -84,11 +85,31 @@ impl LensChange {
         self.note_lens_model.as_deref().map(str::trim).filter(|m| !m.is_empty()).unwrap_or(&self.lens.model)
     }
 
+    /// The lens name the `Lens: …` note writes - `note_model`, led by the
+    /// lens maker when the note names `lens` itself.
+    pub fn note_name(&self) -> String {
+        match self.note_lens_model.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+            Some(m) => m.to_string(),
+            None => lens_full_name(&self.lens.maker, &self.lens.model),
+        }
+    }
 
     pub fn effective_focal_length(&self) -> Option<f32> {
         self.focal_length
             .filter(|f| *f > 0.0)
             .or_else(|| (self.lens.focal_min > 0.0 && self.lens.focal_min == self.lens.focal_max).then_some(self.lens.focal_min))
+    }
+}
+
+/// `"Zeiss"` + `"Planar T* 2/50 ZM"` -> `"Zeiss Planar T* 2/50 ZM"`; the
+/// model alone when the maker is blank or the model already starts with it.
+/// TS twin: `lensFullName` in lenses.ts.
+pub fn lens_full_name(maker: &str, model: &str) -> String {
+    let (maker, model) = (maker.trim(), model.trim());
+    if maker.is_empty() || model.to_lowercase().starts_with(&maker.to_lowercase()) {
+        model.to_string()
+    } else {
+        format!("{maker} {model}")
     }
 }
 
@@ -406,8 +427,17 @@ mod tests {
         assert_eq!(c.note_model(), c.lens.model);
         c.note_lens_model = Some("Planar T* 2/50 ZM".into());
         assert_eq!(c.note_model(), "Planar T* 2/50 ZM");
+        assert_eq!(c.note_name(), "Planar T* 2/50 ZM");
         c.note_lens_model = Some("  ".into());
         assert_eq!(c.note_model(), c.lens.model);
+        assert_eq!(c.note_name(), "Leica Camera AG Summicron-M 1:2/50");
+    }
+
+    #[test]
+    fn full_name_leads_with_the_maker_once() {
+        assert_eq!(lens_full_name("Zeiss", "Planar T* 2/50 ZM"), "Zeiss Planar T* 2/50 ZM");
+        assert_eq!(lens_full_name("  ", "Planar T* 2/50 ZM"), "Planar T* 2/50 ZM");
+        assert_eq!(lens_full_name("Voigtländer", "voigtländer Nokton 40mm"), "voigtländer Nokton 40mm");
     }
 
     #[test]
