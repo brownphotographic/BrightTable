@@ -265,6 +265,11 @@ pub struct AppConfig {
     /// Preferences → Lenses - see `LensConfig`.
     #[serde(default)]
     pub lens: LensConfig,
+    /// Preferences → Configuration → Date & Time: the IANA zone Change Time
+    /// assumes the camera clock was set to when a photo has no zone recorded.
+    /// Empty = follow the system's own zone (resolved by the frontend).
+    #[serde(default)]
+    pub home_time_zone: String,
 }
 
 /// One lens as BrightTable writes it into EXIF/XMP - `maker`/`model` are the
@@ -999,6 +1004,14 @@ mod lens_config_tests {
         assert!(cfg.lens.keep_original_backup);
         assert!(cfg.lens.update_raw_profiles);
         assert_eq!(cfg.lens.note_prefix, "Lens: ");
+    }
+
+    #[test]
+    fn config_without_home_time_zone_follows_the_system() {
+        let mut raw = serde_json::to_value(AppConfig::default()).unwrap();
+        raw.as_object_mut().unwrap().remove("homeTimeZone");
+        let cfg: AppConfig = serde_json::from_value(raw).unwrap();
+        assert_eq!(cfg.home_time_zone, "");
     }
 
     #[test]

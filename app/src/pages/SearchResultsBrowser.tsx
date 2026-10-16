@@ -30,6 +30,7 @@ import {
 import { useStacking } from '../lib/useStacking';
 import { copyImageProcessingEntry, useAssetActions } from '../lib/useAssetActions';
 import { useLensEdit } from '../lib/lensEdit';
+import { useTimeEdit } from '../lib/timeEdit';
 import { type MenuAction } from '../lib/actionMenu';
 import { resolveVisibleStackAssets } from '../lib/stacks';
 import { isRawAsset, isVideoAsset } from '../lib/filters';
@@ -158,6 +159,7 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
     rotatingIds,
   } = useAssetActions({ onError: setEnqueueError });
   const { openLensEditor, copiedLens, canCopyLens, copyLens, pasteLens } = useLensEdit();
+  const { openTimeEditor } = useTimeEdit();
 
   useEffect(() => {
     setAssets(null);
@@ -447,6 +449,12 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
         onClick: () => openLensEditor({ assets: lensTargets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
       });
     }
+    if (lensTargets.length) {
+      items.push({
+        label: lensTargets.length > 1 ? `Change Time (${lensTargets.length})…` : 'Change Time…',
+        onClick: () => openTimeEditor({ assets: lensTargets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+      });
+    }
     items.push(DIVIDER);
 
     // Copy/Paste
@@ -509,6 +517,7 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
     return items;
   }, [
     openLensEditor,
+    openTimeEditor,
     patchAssetLocal,
     contextMenu,
     assetByIdAll,
@@ -713,6 +722,14 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
       disabledReason: 'Select one or more photos',
       onClick: () => openLensEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError }),
     },
+    {
+      id: 'changeTime',
+      group: 'edit',
+      label: 'Change Time…',
+      disabled: !selectedAssets.some((a) => !isVideoAsset(a)),
+      disabledReason: 'Select one or more photos',
+      onClick: () => openTimeEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError }),
+    },
     ...(copyImageProcessingBarEntry ? [{ id: 'copyImageProcessing', group: 'copyPaste' as const, ...copyImageProcessingBarEntry }] : []),
     {
       id: 'pasteImageProcessing',
@@ -865,6 +882,7 @@ const SearchResultsBrowser = forwardRef<SearchResultsBrowserHandle, {
             selected={selectedAssets}
             onEdit={commitEdit}
             onChangeLens={() => openLensEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError })}
+            onChangeTime={() => openTimeEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError })}
           />}
       </div>
 

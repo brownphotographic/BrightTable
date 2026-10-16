@@ -57,6 +57,7 @@ import { bumpImageVersion, getImageVersion, useImageVersion } from '../lib/image
 import { TAG_ASSIGN_DISABLED_REASON } from '../lib/featureFlags';
 import { copyImageProcessingEntry } from '../lib/useAssetActions';
 import { useLensEdit } from '../lib/lensEdit';
+import { useTimeEdit } from '../lib/timeEdit';
 
 const MIN_ZOOM = 25;
 const MAX_ZOOM = 400;
@@ -512,6 +513,8 @@ const Viewer = forwardRef<ViewerHandle, {
   );
 
   const { openLensEditor, copiedLens, canCopyLens, copyLens, pasteLens } = useLensEdit();
+
+  const { openTimeEditor } = useTimeEdit();
   // Same snapshot-patching reasoning as handleEdit above.
   const applyLensPatch = useCallback(
     (id: string, patch: Partial<AssetSummary>) => {
@@ -965,6 +968,7 @@ const Viewer = forwardRef<ViewerHandle, {
     }
     if (!isVideo && onLocalPatch) {
       actions.push({ id: 'changeLens', group: 'edit', label: 'Change Lens…', onClick: () => openLensEditor({ assets: [shown], applyPatch: applyLensPatch }) });
+      actions.push({ id: 'changeTime', group: 'edit', label: 'Change Time…', onClick: () => openTimeEditor({ assets: [shown], applyPatch: applyLensPatch }) });
     }
     const copyEntry = copyImageProcessingEntry(shown, scannedForProcessingSidecar ?? new Set(), () => handleCopyImageProcessing());
     if (copyEntry) actions.push({ id: 'copyImageProcessing', group: 'copyPaste', ...copyEntry });
@@ -997,6 +1001,7 @@ const Viewer = forwardRef<ViewerHandle, {
     return actions;
   }, [
     openLensEditor,
+    openTimeEditor,
     copiedLens,
     canCopyLens,
     copyLens,
@@ -1489,6 +1494,7 @@ const Viewer = forwardRef<ViewerHandle, {
                 asset={shown}
                 onEdit={(patch) => handleEdit(shown.id, patch)}
                 onChangeLens={!isVideo && onLocalPatch ? () => openLensEditor({ assets: [shown], applyPatch: applyLensPatch }) : undefined}
+                onChangeTime={!isVideo && onLocalPatch ? () => openTimeEditor({ assets: [shown], applyPatch: applyLensPatch }) : undefined}
               />
               <DescriptionEditor key={shown.id} asset={shown} onEdit={(patch) => handleEdit(shown.id, patch)} />
             </div>

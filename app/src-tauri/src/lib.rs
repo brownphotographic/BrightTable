@@ -51,6 +51,7 @@ mod state;
 #[cfg(target_os = "linux")]
 mod suspend_guard;
 mod thumb_cache;
+mod time_edit;
 mod xmp;
 
 use state::AppState;
@@ -290,6 +291,8 @@ pub fn run() {
             commands::save_lens_config,
             commands::get_lens_catalog,
             commands::change_asset_lens,
+            commands::change_asset_time,
+            commands::save_home_time_zone,
             commands::read_lens_make,
             commands::list_installed_apps,
             commands::launch_editor,

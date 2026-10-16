@@ -28,12 +28,15 @@ export default function MetadataPanel({
   selected,
   onEdit,
   onChangeLens,
+  onChangeTime,
 }: {
   selected: AssetSummary[];
   onEdit: (id: string, patch: AssetMetadataPatch) => Promise<void>;
   // Opens Change Lens on the whole (non-video) selection, unlike the rest of
   // this panel's edits - same targeting as the context menu's Change Lens.
   onChangeLens?: () => void;
+  // Opens Change Time on the whole (non-video) selection, likewise.
+  onChangeTime?: () => void;
 }) {
   const asset = selected[0] ?? null;
   const lensCount = selected.filter((a) => a.type !== 'VIDEO').length;
@@ -84,6 +87,8 @@ export default function MetadataPanel({
               onEdit={(patch) => onEdit(asset.id, patch)}
               onChangeLens={onChangeLens}
               changeLensTitle={lensCount > 1 ? `Change lens for ${lensCount} photos…` : 'Change lens…'}
+              onChangeTime={onChangeTime}
+              changeTimeTitle={lensCount > 1 ? `Change time for ${lensCount} photos…` : 'Change time…'}
             />
           </div>
           <DescriptionEditor key={asset.id} asset={asset} onEdit={(patch) => onEdit(asset.id, patch)} />

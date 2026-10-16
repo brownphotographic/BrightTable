@@ -86,6 +86,7 @@ function kindLabel(job: EditJob): string {
   if (job.isFavorite !== null) parts.push(job.isFavorite ? 'Favorite' : 'Unfavorite');
   if (job.description !== null) parts.push('Caption');
   if (job.lensModel) parts.push(`Lens: ${job.lensModel}`);
+  if (job.taken) parts.push(`Time: ${job.taken.replace('T', ' ')}`);
   return parts.join(' · ') || 'Edit';
 }
 

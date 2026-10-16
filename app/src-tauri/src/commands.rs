@@ -304,6 +304,21 @@ pub async fn save_lens_config(app: AppHandle, state: State<'_, AppState>, cfg: L
     Ok(snapshot)
 }
 
+#[tauri::command]
+pub async fn save_home_time_zone(app: AppHandle, state: State<'_, AppState>, zone: String) -> Result<AppConfig, String> {
+    let snapshot = {
+        let mut guard = state.config.lock().unwrap();
+        guard.home_time_zone = zone.trim().to_string();
+        guard.clone()
+    };
+    let vault = state.secret_vault.clone();
+    let to_save = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save(&app, &to_save, vault.read().unwrap().as_ref()))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(snapshot)
+}
+
 /// The bundled lensfun lens/camera list - static, so the frontend fetches
 /// it once per session.
 #[tauri::command]
@@ -635,6 +650,57 @@ pub fn change_asset_lens(state: State<AppState>, targets: Vec<LensEditTarget>, r
         note_lens_model: request.note_lens,
     };
     Ok(state.edit_queue.enqueue_lens(&cfg, &targets, &change, &exiftool_path, lens_cfg.keep_original_backup, lens_cfg.update_raw_profiles))
+}
+
+/// One Change Time target - its new time already worked out by the dialog
+/// (`lib/timeZones.ts`), so every photo keeps its own spacing.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeEditTarget {
+    pub id: String,
+    pub original_path: Option<String>,
+    /// New wall-clock time where it was taken, `YYYY-MM-DDTHH:MM:SS`.
+    pub local: String,
+    /// New UTC offset, `+02:00`.
+    pub offset: String,
+    #[serde(default)]
+    pub zone_name: Option<String>,
+    /// The capture time Immich has now - remembered before the first change.
+    #[serde(default)]
+    pub current: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeEditRequest {
+    /// This edit only - on top of Preferences → Lenses' "write originals",
+    /// which covers Change Time too.
+    #[serde(default)]
+    pub write_original_once: bool,
+}
+
+/// Enqueues a Change Time edit onto the same `EditQueue`, under the same
+/// read-only/batch-cap gates as Change Lens.
+#[tauri::command]
+pub fn change_asset_time(state: State<AppState>, targets: Vec<TimeEditTarget>, request: TimeEditRequest) -> Result<Vec<u64>, String> {
+    let (cfg, lens_cfg, exiftool_path) = {
+        let guard = state.config.lock().unwrap();
+        (guard.library.clone(), guard.lens.clone(), guard.applications.exiftool_path.clone())
+    };
+    if cfg.read_only {
+        return Err("Read-only mode is on — turn it off in Preferences → Library to allow edits".into());
+    }
+    if targets.len() as u32 > cfg.max_writes_per_batch {
+        return Err(format!("This would edit {} assets at once, over your cap of {} per action", targets.len(), cfg.max_writes_per_batch));
+    }
+    for t in &targets {
+        crate::time_edit::TimeChange { local: t.local.clone(), offset: t.offset.clone(), zone_name: None, write_original: false }.validate()?;
+    }
+    let write_original = lens_cfg.write_originals || request.write_original_once;
+    if write_original && exiftool_path.trim().is_empty() {
+        return Err("Writing originals needs exiftool - set its path in Preferences → Applications".into());
+    }
+    Ok(state.edit_queue.enqueue_time(&cfg, &targets, write_original, &exiftool_path, lens_cfg.keep_original_backup))
 }
 
 /// Poll target for the edit queue's advisory activity panel - the frontend's

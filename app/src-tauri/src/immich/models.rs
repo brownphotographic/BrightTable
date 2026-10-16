@@ -145,6 +145,9 @@ impl RawTimeBucketAssets {
                 stack: None,
                 original_path: None,
                 tags: Vec::new(),
+                local_date_time: None,
+                date_time_original: None,
+                time_zone: None,
             })
             .collect()
     }
@@ -184,6 +187,14 @@ pub struct RawExifInfo {
     pub file_size_in_byte: Option<i64>,
     #[serde(default)]
     pub description: Option<String>,
+    /// Instant the photo was taken (ISO, UTC) - Immich's own parse of
+    /// `DateTimeOriginal` with whatever offset it found or assumed.
+    #[serde(rename = "dateTimeOriginal", default)]
+    pub date_time_original: Option<String>,
+    /// The zone Immich resolved for this photo - an IANA name or a fixed
+    /// `UTC+2` / `UTC+05:30` style offset, `None` when nothing was recorded.
+    #[serde(rename = "timeZone", default)]
+    pub time_zone: Option<String>,
 }
 
 /// Stack membership as returned inline on an asset by `/search/metadata`
@@ -225,6 +236,10 @@ pub struct RawSearchAsset {
     /// omits it.
     #[serde(default)]
     pub tags: Vec<RawTagResponse>,
+    /// The photo's own wall-clock time, encoded by Immich as if it were UTC
+    /// (`2026-06-01T09:12:00.000Z` = 09:12 where it was taken).
+    #[serde(rename = "localDateTime", default)]
+    pub local_date_time: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -273,6 +288,11 @@ pub struct AssetSummary {
     /// sync/copy-paste don't apply there.
     pub original_path: Option<String>,
     pub tags: Vec<TagSummary>,
+    /// See `RawSearchAsset::local_date_time` / `RawExifInfo` - what the
+    /// Taken row and Change Time read the photo's own time and zone from.
+    pub local_date_time: Option<String>,
+    pub date_time_original: Option<String>,
+    pub time_zone: Option<String>,
 }
 
 impl From<RawSearchAsset> for AssetSummary {
@@ -309,6 +329,9 @@ impl From<RawSearchAsset> for AssetSummary {
             stack: r.stack,
             original_path: r.original_path,
             tags,
+            local_date_time: r.local_date_time,
+            date_time_original: e.as_ref().and_then(|e| e.date_time_original.clone()),
+            time_zone: e.as_ref().and_then(|e| e.time_zone.clone()),
         }
     }
 }

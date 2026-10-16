@@ -16,6 +16,7 @@
  */
 
 import type { AssetSummary } from './api';
+import { formatWall, recordedTime, recordedZoneText } from './timeZones';
 
 // One field per row (was a single combined "Exposure" string). A 0 value
 // means "not recorded" - e.g. a Leica M body can't read a manual lens's
@@ -58,7 +59,14 @@ export function formatSize(bytes: number | null): string {
   return `${n.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+// The photo's own local time where it was taken, plus its zone - not the
+// moment converted to this computer's zone (a 14:30 in Tokyo reads 14:30
+// here, wherever it's viewed from).
 export function formatTaken(a: AssetSummary): string {
+  if (a.localDateTime) {
+    const r = recordedTime(a);
+    if (r) return `${formatWall(r.wall, true)} · ${recordedZoneText(r) ?? 'no zone recorded'}`;
+  }
   const d = new Date(a.fileCreatedAt);
   if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short' });

@@ -41,6 +41,7 @@ import {
 import { useStacking } from '../lib/useStacking';
 import { copyImageProcessingEntry, useAssetActions } from '../lib/useAssetActions';
 import { useLensEdit } from '../lib/lensEdit';
+import { useTimeEdit } from '../lib/timeEdit';
 import { type MenuAction } from '../lib/actionMenu';
 import { resolveVisibleStackAssets } from '../lib/stacks';
 import { isRawAsset, isVideoAsset, matchesFilters, type Filters } from '../lib/filters';
@@ -201,6 +202,7 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
     rotatingIds,
   } = useAssetActions({ onError: setEnqueueError });
   const { openLensEditor, copiedLens, canCopyLens, copyLens, pasteLens } = useLensEdit();
+  const { openTimeEditor } = useTimeEdit();
   // See FoldersBrowser.tsx's identical state/effect/ref - which tile the
   // cursor is currently over while loupeOn, driving GridLoupePane's preview
   // (cleared on loupe off), plus a never-cleared mirror ref used only to
@@ -570,6 +572,12 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
         onClick: () => openLensEditor({ assets: lensTargets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
       });
     }
+    if (lensTargets.length) {
+      items.push({
+        label: lensTargets.length > 1 ? `Change Time (${lensTargets.length})…` : 'Change Time…',
+        onClick: () => openTimeEditor({ assets: lensTargets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+      });
+    }
     items.push(DIVIDER);
 
     // Copy/Paste
@@ -629,6 +637,7 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
     return items;
   }, [
     openLensEditor,
+    openTimeEditor,
     patchAssetLocal,
     contextMenu,
     assetByIdAll,
@@ -971,6 +980,14 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
       disabledReason: 'Select one or more photos',
       onClick: () => openLensEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError }),
     },
+    {
+      id: 'changeTime',
+      group: 'edit',
+      label: 'Change Time…',
+      disabled: !selectedAssets.some((a) => !isVideoAsset(a)),
+      disabledReason: 'Select one or more photos',
+      onClick: () => openTimeEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError }),
+    },
     ...(copyImageProcessingBarEntry ? [{ id: 'copyImageProcessing', group: 'copyPaste' as const, ...copyImageProcessingBarEntry }] : []),
     {
       id: 'pasteImageProcessing',
@@ -1140,6 +1157,7 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
             selected={selectedAssets}
             onEdit={commitEdit}
             onChangeLens={() => openLensEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError })}
+            onChangeTime={() => openTimeEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError })}
           />}
       </div>
 

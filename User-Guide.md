@@ -66,6 +66,7 @@ Connect a Flickr account if you want to upload photos straight from BrightTable.
 
 1. Cosmetic and housekeeping options: window control position (left/right), Dark or Light theme, and thumbnail cache size with a **Clear Cache** button.
 2. Change the default location for storing the configuration file for the app. Useful if you distro-hop a lot - so you can keep your settings consistent across different distros. Note there is a separate checkbox for storing the sign in credentials / keys in the same folder.
+3. **Date & Time → Home time zone** — the zone Change Time assumes the camera clock was set to when a photo has no time zone recorded. Defaults to your system's zone.
 
 ### Shortcuts tab
 
@@ -141,6 +142,7 @@ This is BrightTable's main job: sending a RAW file out to a real editor and brin
 - **Sync Metadata from Sidecar** (Edit menu, or context menu) — re-reads the on-disk sidecar file so BrightTable's view matches what's actually saved.
 - **Rotate Left/Right** (`Ctrl+[` / `Ctrl+]`).
 - **Change Lens…** — see below.
+- **Change Time…** — see below.
 - **Copy Lens / Paste Lens…** (`Ctrl+Alt+C` / `Ctrl+Alt+V`) — see below.
 
 ### Changing the lens
@@ -168,6 +170,28 @@ Where the change shows up:
 **Copy Lens / Paste Lens…** copies a lens from one photo to others. Copy Metadata doesn't include the lens because a lens change is more than a simple field copy. Right-click a photo whose lens is right and choose **Copy Lens**. Then select the other photos and choose **Paste Lens…**. This opens Change Lens already filled in with the copied lens and focal length, so you can check it and click **Apply**. The paste reproduces the source photo: its lens entry (as *Replace*) and its `Lens:` note, even when the note names a different lens. That works on photos with no lens recorded too. Only a source with a note but no lens pastes as note only. If the pasted lens is part of a coded-lens mapping, the **Write** switch appears as usual. The aperture isn't copied, because it changes from shot to shot.
 
 RawTherapee, ART and darktable only ever read lens info from the original file, never from an XMP sidecar. If the camera already recorded a lens, Immich keeps showing it too unless the original is written. The dialog warns you and offers **Write the original files for this edit**. In darktable, run *selected images → metadata → refresh EXIF* on photos it already knows about. A lens-correction module already in a photo's darktable history keeps the lens it had.
+
+### Changing the capture time
+
+For a camera clock that was wrong: left on home time while travelling, never set, drifting, or a second body out of step with the first. Select one or more photos, then choose **Change Time…** from the context menu or the **Edit ▾** menu. It's also in the viewer's Edit menu, and on the pencil button next to **Taken** in the metadata panel. If a selected photo is in a stack, the rest of the stack is listed too, so RAW+JPEG pairs and edit versions move together.
+
+The **Taken** row shows the time where the photo was taken, plus its zone (for example `1 June 2026 at 09:12 · UTC+02:00 (Europe/Paris)`), not the time on your computer's clock.
+
+The dialog asks two questions:
+
+- **Camera clock was set to** — the zone the camera's clock was on.
+- **Photos were taken in** — the zone where you actually were.
+
+If both are the same zone, the clock time is kept and that zone is attached (useful when a file has no zone recorded). If they differ, the time is converted: a camera left on Toronto time showing 03:10 in Paris becomes 09:10 Paris time. **As recorded** keeps each photo's own zone. Named zones such as `Europe/Paris` work out daylight saving for each photo's own date. Fixed `UTC±hh:mm` offsets are in the list too, including the half- and quarter-hour ones.
+
+**Clock correction** moves every photo by the same amount, so the gaps between shots never change:
+
+- **Shift by** — add or subtract days, hours, minutes and seconds.
+- **First photo was** — type the real time of the earliest ticked photo; the others follow.
+
+The table shows every photo's current and new time and zone. Untick any you want to leave alone. A ⚠ marks a time that falls on a daylight-saving change (a clock time that never happened, or happened twice). Hover over it to see which reading was used.
+
+Apply writes the new time to the XMP sidecar and to Immich. RawTherapee, ART and darktable read the capture time from the original file, not the sidecar, so tick **Also write the original files** (or turn on *Write original files* in Preferences → Lenses) for their exports to carry the new time. The first original time is remembered in the sidecar.
 
 ---
 

@@ -32,6 +32,8 @@ import { RawOverridesProvider } from './lib/rawOverrides';
 import { EditQueueProvider } from './lib/editQueue';
 import { LensConfigProvider } from './lib/lensConfig';
 import { LensEditProvider } from './lib/lensEdit';
+import { TimeConfigProvider } from './lib/timeConfig';
+import { TimeEditProvider } from './lib/timeEdit';
 import { ImportQueueProvider } from './lib/importQueue';
 import { onPreferencesRequest, type PreferencesTab } from './lib/preferencesRequest';
 import { ClipboardProvider } from './lib/clipboard';
@@ -77,6 +79,8 @@ export default function App() {
                       <EditQueueProvider>
                         <LensConfigProvider>
                         <LensEditProvider>
+                        <TimeConfigProvider>
+                        <TimeEditProvider>
                         <ImportQueueProvider>
                           <ProcessingQueueProvider>
                             <ArtQueueProvider>
@@ -90,6 +94,8 @@ export default function App() {
                             </ArtQueueProvider>
                           </ProcessingQueueProvider>
                         </ImportQueueProvider>
+                        </TimeEditProvider>
+                        </TimeConfigProvider>
                         </LensEditProvider>
                         </LensConfigProvider>
                       </EditQueueProvider>

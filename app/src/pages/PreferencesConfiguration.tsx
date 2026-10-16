@@ -23,6 +23,8 @@ import { useWindowControls } from '../lib/windowControls';
 import { useGridLoupeSettings } from '../lib/gridLoupeSettings';
 import { useThumbnailSettings } from '../lib/thumbnailSettings';
 import { useTheme } from '../lib/theme';
+import { useTimeConfig } from '../lib/timeConfig';
+import { listZones, systemTimeZone, zoneLabel } from '../lib/timeZones';
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -44,6 +46,7 @@ export default function PreferencesConfiguration() {
   const { position, setPosition } = useWindowControls();
   const { large: loupeLarge, setLarge: setLoupeLarge } = useGridLoupeSettings();
   const { themeMode, setThemeMode } = useTheme();
+  const { homeTimeZoneSetting, setHomeTimeZone } = useTimeConfig();
   const { originalAspect, setOriginalAspect, showFileName, setShowFileName } = useThumbnailSettings();
   const [settingsFolder, setSettingsFolder] = useState<string | null>(null);
   const [folderLoading, setFolderLoading] = useState(true);
@@ -188,6 +191,24 @@ export default function PreferencesConfiguration() {
         of the view.
       </div>
 
+      <div style={{ fontSize: 14, fontWeight: 700, margin: '26px 4px 12px' }}>Date &amp; Time</div>
+      <div style={panel}>
+        <Row label="Home time zone">
+          <select value={homeTimeZoneSetting} onChange={(e) => setHomeTimeZone(e.target.value)} style={selectStyle}>
+            <option value="">System — {systemTimeZone().replace(/_/g, ' ')}</option>
+            {listZones().map((z) => (
+              <option key={z} value={z}>
+                {zoneLabel(z, Date.now())}
+              </option>
+            ))}
+          </select>
+        </Row>
+      </div>
+      <div style={helpText}>
+        Change Time assumes the camera clock was set to this zone for any photo with no time zone
+        recorded.
+      </div>
+
       <div style={{ fontSize: 14, fontWeight: 700, margin: '26px 4px 12px' }}>Config File Location</div>
       <div style={panel}>
         <Row label="Location">
@@ -322,6 +343,16 @@ function Segmented<T extends string>({
     </div>
   );
 }
+
+const selectStyle: CSSProperties = {
+  maxWidth: 300,
+  padding: '5px 8px',
+  borderRadius: 7,
+  fontSize: 12.5,
+  background: 'var(--overlay-weak)',
+  color: 'var(--text)',
+  border: '1px solid var(--border)',
+};
 
 const panel: CSSProperties = {
   background: 'var(--panel)',

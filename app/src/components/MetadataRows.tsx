@@ -25,19 +25,23 @@ import { Icon } from './Icons';
 // Metadata panel, so the two stay visually and factually consistent.
 // `onEdit` is optional - pass it to make Rating/Favorite/Tags clickable; omit
 // it for a purely read-only render. `onChangeLens` adds a pencil button to
-// the Lens row that opens Change Lens (never shown for a video).
+// the Lens row that opens Change Lens, `onChangeTime` one to the Taken row
+// that opens Change Time (neither shown for a video).
 export default function MetadataRows({
   asset,
   onEdit,
   onChangeLens,
   changeLensTitle = 'Change lens…',
+  onChangeTime,
+  changeTimeTitle = 'Change time…',
 }: {
   asset: AssetSummary;
   onEdit?: (patch: AssetMetadataPatch) => Promise<void>;
   onChangeLens?: () => void;
   changeLensTitle?: string;
+  onChangeTime?: () => void;
+  changeTimeTitle?: string;
 }) {
-  const [lensHover, setLensHover] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // `asset.tags` itself is always empty here - Immich doesn't join the tags
@@ -64,42 +68,15 @@ export default function MetadataRows({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-      <InfoRow label="Taken" value={formatTaken(asset)} />
+      {onChangeTime && asset.type !== 'VIDEO' ? (
+        <EditableRow label="Taken" value={formatTaken(asset)} onEdit={onChangeTime} title={changeTimeTitle} />
+      ) : (
+        <InfoRow label="Taken" value={formatTaken(asset)} />
+      )}
       <InfoRow label="Camera" value={formatCamera(asset)} />
       <InfoRow label="Lens Manufacturer" value={lensMake === undefined ? '…' : lensMake || '—'} />
       {onChangeLens && asset.type !== 'VIDEO' ? (
-        // Same 9px padding as InfoRow, with the button's negative margin
-        // keeping it from making this row taller than its neighbours - and
-        // the pencil sits *before* the model so the model's right edge lines
-        // up with every other row's value.
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
-          <span style={{ fontSize: 12.5, color: 'var(--text-dimmer)' }}>Lens</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-            <div
-              role="button"
-              onClick={onChangeLens}
-              onMouseEnter={() => setLensHover(true)}
-              onMouseLeave={() => setLensHover(false)}
-              title={changeLensTitle}
-              style={{
-                width: 24,
-                height: 24,
-                margin: '-4px 0',
-                flexShrink: 0,
-                borderRadius: 6,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'default',
-                color: lensHover ? 'var(--text)' : 'var(--text-dimmer)',
-                background: lensHover ? 'var(--overlay-medium)' : 'transparent',
-              }}
-            >
-              <Icon name="edit" size={13} />
-            </div>
-            <span style={{ fontSize: 12.5, textAlign: 'right' }}>{asset.lensModel || '—'}</span>
-          </div>
-        </div>
+        <EditableRow label="Lens" value={asset.lensModel || '—'} onEdit={onChangeLens} title={changeLensTitle} />
       ) : (
         <InfoRow label="Lens" value={asset.lensModel || '—'} />
       )}
@@ -218,6 +195,44 @@ function useLensMake(asset: AssetSummary): string | null | undefined {
   if (skip) return null;
   if (lensMakeCache.has(key)) return lensMakeCache.get(key)!;
   return loaded?.key === key ? loaded.make : undefined;
+}
+
+// An InfoRow with a pencil button that opens an editor. Same 9px padding as
+// InfoRow, with the button's negative margin keeping it from making this row
+// taller than its neighbours - and the pencil sits *before* the value so the
+// value's right edge lines up with every other row's.
+function EditableRow({ label, value, onEdit, title }: { label: string; value: string; onEdit: () => void; title: string }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+      <span style={{ fontSize: 12.5, color: 'var(--text-dimmer)' }}>{label}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+        <div
+          role="button"
+          onClick={onEdit}
+          onMouseEnter={() => setHover(true)}
+          onMouseLeave={() => setHover(false)}
+          title={title}
+          style={{
+            width: 24,
+            height: 24,
+            margin: '-4px 0',
+            flexShrink: 0,
+            borderRadius: 6,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'default',
+            color: hover ? 'var(--text)' : 'var(--text-dimmer)',
+            background: hover ? 'var(--overlay-medium)' : 'transparent',
+          }}
+        >
+          <Icon name="edit" size={13} />
+        </div>
+        <span style={{ fontSize: 12.5, textAlign: 'right' }}>{value}</span>
+      </div>
+    </div>
+  );
 }
 
 export function InfoRow({ label, value, last }: { label: string; value: string; last?: boolean }) {

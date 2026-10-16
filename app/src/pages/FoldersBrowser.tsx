@@ -60,6 +60,7 @@ import { useRawOverrides } from '../lib/rawOverrides';
 import { useApplications } from '../lib/applications';
 import { copyImageProcessingEntry, useAssetActions } from '../lib/useAssetActions';
 import { useLensEdit } from '../lib/lensEdit';
+import { useTimeEdit } from '../lib/timeEdit';
 import { type MenuAction } from '../lib/actionMenu';
 import { pendingStyle } from '../lib/pending';
 import { useEditQueue } from '../lib/editQueue';
@@ -216,6 +217,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     rotatingIds,
   } = useAssetActions({ onError: setEnqueueError });
   const { openLensEditor, copiedLens, canCopyLens, copyLens, pasteLens } = useLensEdit();
+  const { openTimeEditor } = useTimeEdit();
   const { shortcuts, capturing } = useShortcuts();
   const { overrideIds, setOverride } = useRawOverrides();
   // This server version doesn't populate `stack` on /search/metadata or
@@ -786,6 +788,12 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
         onClick: () => openLensEditor({ assets: lensTargets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
       });
     }
+    if (lensTargets.length) {
+      items.push({
+        label: lensTargets.length > 1 ? `Change Time (${lensTargets.length})…` : 'Change Time…',
+        onClick: () => openTimeEditor({ assets: lensTargets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+      });
+    }
     if (asset && selected.size <= 1 && isRoundTripEligible(asset)) {
       items.push({
         label: artLaunchBusy ? 'Working…' : 'Tweak Roundtrip',
@@ -876,6 +884,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
     return items;
   }, [
     openLensEditor,
+    openTimeEditor,
     patchAssetLocal,
     contextMenu,
     assetByIdAll,
@@ -1335,6 +1344,14 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       disabledReason: 'Select one or more photos',
       onClick: () => openLensEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError }),
     },
+    {
+      id: 'changeTime',
+      group: 'edit',
+      label: 'Change Time…',
+      disabled: !selectedAssets.some((a) => !isVideoAsset(a)),
+      disabledReason: 'Select one or more photos',
+      onClick: () => openTimeEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError }),
+    },
     // Copy is inherently single-source, so these two only appear when
     // exactly one photo is selected (matching the context menu's identical
     // gating) - a multi-selection only ever gets Paste.
@@ -1509,6 +1526,7 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
             selected={selectedAssets}
             onEdit={commitEdit}
             onChangeLens={() => openLensEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError })}
+            onChangeTime={() => openTimeEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError })}
           />}
       </div>
 

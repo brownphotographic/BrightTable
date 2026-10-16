@@ -51,7 +51,7 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::{mpsc, Semaphore};
 
 use crate::asset_locks::AssetLocks;
-use crate::commands::{LensEditTarget, MetadataEditTarget};
+use crate::commands::{LensEditTarget, MetadataEditTarget, TimeEditTarget};
 use crate::config::LibraryConfig;
 use crate::exiftool;
 use crate::immich::ImmichClient;
@@ -60,6 +60,7 @@ use crate::lens_catalog;
 use crate::lens_edit::{self, LensChange, ProfileKind};
 use crate::paths;
 use crate::state::AppState;
+use crate::time_edit::{self, TimeChange};
 use crate::xmp;
 
 /// Deliberately small and named - see the module doc comment above for why.
@@ -94,6 +95,9 @@ pub struct EditJob {
     /// Set for a Change Lens job - the lens being applied (or noted), for
     /// the ActivityPanel's label.
     pub lens_model: Option<String>,
+    /// Set for a Change Time job - the new capture time (ISO with offset),
+    /// for the ActivityPanel's label.
+    pub taken: Option<String>,
     pub status: JobStatus,
     pub created_at_ms: u64,
     pub finished_at_ms: Option<u64>,
@@ -117,6 +121,7 @@ pub(crate) struct QueuedWork {
     is_favorite: Option<bool>,
     description: Option<String>,
     lens: Option<LensWork>,
+    time: Option<TimeWork>,
     cfg: LibraryConfig,
 }
 
@@ -136,6 +141,17 @@ pub(crate) struct LensWork {
     exiftool_path: String,
     keep_original_backup: bool,
     update_raw_profiles: bool,
+}
+
+/// A Change Time job's per-target inputs - the finished new time (all zone
+/// math is the frontend's) plus what the file carried before.
+pub(crate) struct TimeWork {
+    change: TimeChange,
+    /// The capture time Immich currently has (ISO with offset when known) -
+    /// remembered in the sidecar before the first Change Time.
+    current: Option<String>,
+    exiftool_path: String,
+    keep_original_backup: bool,
 }
 
 pub struct EditQueue {
@@ -203,6 +219,7 @@ impl EditQueue {
                 is_favorite,
                 description: description.map(str::to_string),
                 lens_model: None,
+                taken: None,
                 status: JobStatus::Pending,
                 created_at_ms: now_ms(),
                 finished_at_ms: None,
@@ -222,6 +239,7 @@ impl EditQueue {
                 is_favorite,
                 description: description.map(str::to_string),
                 lens: None,
+                time: None,
                 cfg: cfg.clone(),
             });
             ids.push(job_id);
@@ -257,6 +275,7 @@ impl EditQueue {
                 is_favorite: None,
                 description: None,
                 lens_model: Some(if change.apply_lens { change.lens.model.clone() } else { change.note_model().to_string() }),
+                taken: None,
                 status: JobStatus::Pending,
                 created_at_ms: now_ms(),
                 finished_at_ms: None,
@@ -282,6 +301,48 @@ impl EditQueue {
                     keep_original_backup,
                     update_raw_profiles,
                 }),
+                time: None,
+                cfg: cfg.clone(),
+            });
+            ids.push(job_id);
+        }
+        ids
+    }
+
+    /// Change Time counterpart to `enqueue` - one job per target, each with
+    /// its own new time (photos keep their spacing, so no two are the same).
+    pub fn enqueue_time(&self, cfg: &LibraryConfig, targets: &[TimeEditTarget], write_original: bool, exiftool_path: &str, keep_original_backup: bool) -> Vec<u64> {
+        let mut ids = Vec::with_capacity(targets.len());
+        let mut board = self.board.lock().unwrap();
+        for target in targets {
+            let job_id = self.next_id.fetch_add(1, Ordering::Relaxed);
+            let local_path = target.original_path.as_deref().and_then(|p| paths::resolve_local_path(p, cfg));
+            let change = TimeChange { local: target.local.clone(), offset: target.offset.clone(), zone_name: target.zone_name.clone(), write_original };
+
+            board.push_back(EditJob {
+                job_id,
+                asset_id: target.id.clone(),
+                rating: None,
+                is_favorite: None,
+                description: None,
+                lens_model: None,
+                taken: Some(change.iso()),
+                status: JobStatus::Pending,
+                created_at_ms: now_ms(),
+                finished_at_ms: None,
+                error: None,
+                immich_warning: None,
+            });
+
+            let _ = self.tx.send(QueuedWork {
+                job_id,
+                asset_id: target.id.clone(),
+                local_path,
+                rating: None,
+                is_favorite: None,
+                description: None,
+                lens: None,
+                time: Some(TimeWork { change, current: target.current.clone(), exiftool_path: exiftool_path.to_string(), keep_original_backup }),
                 cfg: cfg.clone(),
             });
             ids.push(job_id);
@@ -519,6 +580,73 @@ async fn run_lens_job(
     (JobStatus::Done, None, warning)
 }
 
+/// One Change Time job, in dependency order:
+/// 1. the original (only when asked) - first, so a failed RAW write leaves
+///    nothing half-applied;
+/// 2. the XMP sidecar - authoritative, same as every other edit here;
+/// 3. Immich's `dateTimeOriginal` PUT - a warning on failure (the sidecar
+///    still carries it to Immich's next metadata refresh).
+async fn run_time_job(io_guard: &Arc<IoGuard>, client: Option<&ImmichClient>, asset_id: &str, local_path: Option<PathBuf>, work: TimeWork) -> (JobStatus, Option<String>, Option<String>) {
+    let Some(local) = local_path else {
+        return (
+            JobStatus::Failed,
+            Some("No local path for this asset - Change Time needs file access to its folder (Preferences → Library).".into()),
+            None,
+        );
+    };
+    let change = work.change.clone();
+    if let Err(e) = change.validate() {
+        return (JobStatus::Failed, Some(e), None);
+    }
+    let mut warnings: Vec<String> = Vec::new();
+
+    if change.write_original {
+        if work.exiftool_path.trim().is_empty() {
+            return (JobStatus::Failed, Some("Writing the original needs exiftool - set its path in Preferences → Applications.".into()), None);
+        }
+        let args = time_edit::original_write_args(&change, work.keep_original_backup, &local);
+        if let Err(e) = exiftool::run_exiftool(&work.exiftool_path, &args).await {
+            return (JobStatus::Failed, Some(format!("Couldn't write the time to the original: {e}")), None);
+        }
+        match exiftool::run_exiftool_capture_stdout(&work.exiftool_path, &time_edit::readback_args(&local)).await {
+            Ok(out) => warnings.extend(time_edit::readback_warning(&out, &change)),
+            Err(e) => warnings.push(format!("Couldn't verify the original after writing: {e}")),
+        }
+    }
+
+    let sidecar_change = change.clone();
+    let current = work.current.clone();
+    let sidecar = io_guard::guarded_spawn_blocking(io_guard, move || -> Result<(), String> {
+        let write_path = paths::xmp_write_path(&local);
+        let existing = std::fs::read_to_string(&write_path).unwrap_or_default();
+        let mut props = time_edit::sidecar_props(&sidecar_change);
+        if xmp::read_simple_property(&existing, "brighttable", "OriginalDateTimeOriginal").is_none() {
+            props.extend(current.as_deref().and_then(time_edit::original_time_prop));
+        }
+        xmp::patch_properties(&write_path, &props, None)
+    });
+    match sidecar {
+        Some(handle) => {
+            if let Err(e) = handle.await.map_err(|e| e.to_string()).and_then(|r| r) {
+                return (JobStatus::Failed, Some(e), None);
+            }
+        }
+        None => return (JobStatus::Failed, Some("Skipped: system is about to suspend, try again after it wakes".into()), None),
+    }
+
+    match client {
+        Some(client) => {
+            if let Err(e) = client.update_asset(asset_id, None, None, None, Some(&change.iso())).await {
+                warnings.push(e);
+            }
+        }
+        None => warnings.push("Couldn't reach Immich - it will pick up the new time on its next metadata refresh.".into()),
+    }
+
+    let warning = (!warnings.is_empty()).then(|| warnings.join("\n"));
+    (JobStatus::Done, None, warning)
+}
+
 /// The drain worker - spawned once from `lib.rs`'s `.setup()`. Pulls queued
 /// work and spawns each job onto its own task, gated by a shared
 /// `Semaphore(MAX_CONCURRENT_JOBS)` so at most that many writes run at once
@@ -552,6 +680,13 @@ pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedWork>) {
             if let Some(lens) = work.lens {
                 let client_result = ImmichClient::from_config(&work.cfg, http, &auto_resolution).await;
                 let (status, error, warning) = run_lens_job(&io_guard, client_result.as_ref().ok(), &work.asset_id, work.local_path, lens).await;
+                queue.finish(work.job_id, status, error, warning);
+                return;
+            }
+
+            if let Some(time) = work.time {
+                let client_result = ImmichClient::from_config(&work.cfg, http, &auto_resolution).await;
+                let (status, error, warning) = run_time_job(&io_guard, client_result.as_ref().ok(), &work.asset_id, work.local_path, time).await;
                 queue.finish(work.job_id, status, error, warning);
                 return;
             }
@@ -666,6 +801,7 @@ mod tests {
             is_favorite: None,
             description: None,
             lens_model: None,
+            taken: None,
             status,
             created_at_ms: 0,
             finished_at_ms: None,
@@ -803,6 +939,51 @@ mod tests {
         std::fs::write(&raw, b"x").unwrap();
         let guard = crate::io_guard::IoGuard::new(crate::io_guard::DEFAULT_MAX_CONCURRENT_METADATA_SCANS);
         let (status, error, _) = run_lens_job(&guard, None, "a", Some(raw), lens_work(true, false, true)).await;
+        assert_eq!(status, JobStatus::Failed);
+        assert!(error.unwrap().contains("exiftool"));
+        assert!(!dir.join("L1.DNG.xmp").exists(), "nothing half-applied");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn time_work(local: &str, current: &str, write_original: bool) -> TimeWork {
+        TimeWork {
+            change: TimeChange { local: local.into(), offset: "+02:00".into(), zone_name: Some("Europe/Paris".into()), write_original },
+            current: Some(current.into()),
+            exiftool_path: String::new(),
+            keep_original_backup: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn time_job_writes_sidecar_and_remembers_the_first_original_time() {
+        let dir = lens_tmp_dir("time");
+        let raw = dir.join("L1.DNG");
+        std::fs::write(&raw, b"x").unwrap();
+        let guard = crate::io_guard::IoGuard::new(crate::io_guard::DEFAULT_MAX_CONCURRENT_METADATA_SCANS);
+        let (status, error, warning) = run_time_job(&guard, None, "a", Some(raw.clone()), time_work("2026-06-01T09:12:00", "2026-06-01T03:10:00-04:00", false)).await;
+        assert_eq!(status, JobStatus::Done, "{error:?}");
+        assert!(warning.unwrap().contains("Couldn't reach Immich"));
+        let sidecar = std::fs::read_to_string(dir.join("L1.DNG.xmp")).unwrap();
+        assert_eq!(xmp::read_simple_property(&sidecar, "exif", "DateTimeOriginal").as_deref(), Some("2026-06-01T09:12:00+02:00"));
+        assert_eq!(xmp::read_simple_property(&sidecar, "brighttable", "TimeZone").as_deref(), Some("Europe/Paris"));
+
+        let (status, ..) = run_time_job(&guard, None, "a", Some(raw), time_work("2026-06-01T09:15:00", "2026-06-01T09:12:00+02:00", false)).await;
+        assert_eq!(status, JobStatus::Done);
+        let sidecar = std::fs::read_to_string(dir.join("L1.DNG.xmp")).unwrap();
+        assert_eq!(xmp::read_simple_property(&sidecar, "exif", "DateTimeOriginal").as_deref(), Some("2026-06-01T09:15:00+02:00"));
+        assert_eq!(xmp::read_simple_property(&sidecar, "brighttable", "OriginalDateTimeOriginal").as_deref(), Some("2026-06-01T03:10:00-04:00"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn time_job_rejects_bad_input_and_missing_exiftool_before_writing() {
+        let dir = lens_tmp_dir("time-bad");
+        let raw = dir.join("L1.DNG");
+        std::fs::write(&raw, b"x").unwrap();
+        let guard = crate::io_guard::IoGuard::new(crate::io_guard::DEFAULT_MAX_CONCURRENT_METADATA_SCANS);
+        let (status, ..) = run_time_job(&guard, None, "a", Some(raw.clone()), time_work("June 1st", "", false)).await;
+        assert_eq!(status, JobStatus::Failed);
+        let (status, error, _) = run_time_job(&guard, None, "a", Some(raw), time_work("2026-06-01T09:12:00", "", true)).await;
         assert_eq!(status, JobStatus::Failed);
         assert!(error.unwrap().contains("exiftool"));
         assert!(!dir.join("L1.DNG.xmp").exists(), "nothing half-applied");

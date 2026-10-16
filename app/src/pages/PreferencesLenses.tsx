@@ -73,7 +73,7 @@ export default function PreferencesLenses() {
 
       <SectionTitle>Writing lens changes</SectionTitle>
       <div style={panel}>
-        <Row label="Write original files" sub="Rewrites LensModel/LensMake/focal length inside the RAW/JPEG itself via exiftool. Needed for darktable, and for Immich when the camera already recorded a (wrong) lens.">
+        <Row label="Write original files" sub="Rewrites LensModel/LensMake/focal length inside the RAW/JPEG itself via exiftool. Needed for darktable, and for Immich when the camera already recorded a (wrong) lens. Change Time uses this too, rewriting the capture date and offset.">
           <Switch checked={lensConfig.writeOriginals} onChange={(v) => save({ ...lensConfig, writeOriginals: v })} />
         </Row>
         <Divider />

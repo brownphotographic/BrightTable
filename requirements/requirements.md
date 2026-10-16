@@ -225,6 +225,27 @@
   Exiv2 0.28 (what it reads with); **not yet confirmed in darktable's own GUI, nor
   against the real Immich server** (§7.39 open items).
 
+### 1.5b Capture time (Change Time)
+> For a camera clock that was wrong (left on home time while travelling, never set, drifted,
+> or two bodies out of step), and for photos with no time zone recorded. Implementation log:
+> §7.41.
+- ✅ **Taken row shows the photo's own local time and zone** (Immich `localDateTime` +
+  `exifInfo.timeZone`), not the instant on this computer's clock.
+- ✅ **Change Time…** — single and bulk (context menu, SelectionBar Edit ▾, Viewer Edit menu,
+  pencil on the Taken row) on all six browser pages.
+- ✅ **Two-zone model** — *Camera clock was set to* + *Photos were taken in*; same zone =
+  attach, different = convert; *As recorded* keeps each photo's zone. IANA zones (DST per
+  photo's date) plus fixed `UTC±hh:mm` offsets (−12:00…+14:00, part-hour ones included).
+- ✅ **Clock correction keeps spacing** — *Shift by* ± d/h/m/s, or *First photo was* (anchor
+  on the earliest ticked photo).
+- ✅ **Preview table** — thumbnail, tick box, current and new time + zone, ⚠ on DST gap/overlap.
+- ✅ **Stacks move together** — members of a selected stack are listed and ticked.
+- ✅ **Home time zone** — Preferences → Configuration → Date & Time.
+- ✅ **Writes** — XMP sidecar (`exif:DateTimeOriginal`, `xmp:CreateDate`,
+  `photoshop:DateCreated`, `brighttable:TimeZone`, first `brighttable:OriginalDateTimeOriginal`),
+  Immich `PUT /assets dateTimeOriginal`, optional original via exiftool (follows Preferences →
+  Lenses' write-originals/backup settings).
+
 ### 1.6 Versioning & round-trip
 > The prototype's "Create Version" concept (version lineage, auto-stacked renditions, a
 > whole dialog) remains **deliberately out of scope** — the prototype itself simplified this
@@ -3321,3 +3342,24 @@
   Coded lens — Summicron-M 1:2/50 is highlighted under "Selected". The note shows Coded
   (Summicron) by default; flipping it to Mapped gives Apply → entry Summicron + note
   "Planar T* 2/50 ZM". Paste keeps the copied Planar note.
+
+### 7.41 Change Time: capture time and time zone editing (October 2026)
+- **Design.** Two-zone model (camera clock zone + taken-in zone) plus a spacing-preserving
+  clock correction (shift or first-photo anchor), in preference to an "hour offset / time
+  zone" toggle with a DST switch. A single absolute date picker would collapse a bulk
+  selection to one timestamp. A manual DST toggle gets sets that span a DST change wrong.
+- **All zone math is in the frontend** (`lib/timeZones.ts`: `offsetAt` via `Intl`,
+  `wallToInstant` with gap/overlap flags, `computeNewTimes`), so the preview is exactly what's
+  written. Each target arrives at `change_asset_time` as a finished `local` + `offset`.
+- **Backend** mirrors Change Lens: `time_edit.rs` (pure, unit-tested: sidecar props, exiftool
+  argv, readback) and `edit_queue.rs`'s `run_time_job` (original → sidecar → Immich PUT; a
+  failed PUT is only a warning). Same read-only / batch-cap / exiftool gates as Change Lens.
+- **Immich fields** now passed through to `AssetSummary`: `localDateTime`,
+  `exifInfo.dateTimeOriginal` and `exifInfo.timeZone`.
+- ✅ `cargo test` (new `time_edit` and `edit_queue` time-job tests); `npm run build`; zone math
+  checked headless in Node (convert, attach, anchor, DST gap/overlap, DST-crossing shift,
+  +05:45).
+- ⏳ **Still to check live:** what Immich's `localDateTime` holds for a file with no offset;
+  that the PUT with an offset sets `exifInfo.timeZone`; that Immich's own sidecar write (when
+  its library is writable) doesn't disagree with ours; that ART/RawTherapee exports carry
+  the new time when originals are written.

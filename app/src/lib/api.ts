@@ -223,6 +223,9 @@ export interface AppConfig {
   // Caption under each grid thumbnail with its file name (extension dropped).
   thumbnailShowFileName: boolean;
   lens: LensConfig;
+  // Preferences → Configuration → Date & Time - the IANA zone Change Time
+  // assumes the camera clock was on when a photo records none. '' = system.
+  homeTimeZone: string;
 }
 
 export interface ConnectionStatus {
@@ -284,6 +287,15 @@ export interface AssetSummary {
   // real local file for RAW-editor sidecar read/write. Absent for Trash view
   // assets, which is fine since sidecar sync/copy-paste don't apply there.
   originalPath: string | null;
+  // The photo's own wall-clock time, encoded by Immich as if it were UTC
+  // ('2026-06-01T09:12:00.000Z' = 09:12 where it was taken). Absent on Trash
+  // assets and from older backends.
+  localDateTime?: string | null;
+  // The moment it was taken (ISO, UTC) - Immich's parse of DateTimeOriginal.
+  dateTimeOriginal?: string | null;
+  // The zone Immich resolved - an IANA name or 'UTC+2' / 'UTC+05:30'; null
+  // when none was recorded.
+  timeZone?: string | null;
   // Client-only annotation, overlaid from RawOverridesProvider wherever an
   // AssetSummary is displayed (see lib/rawOverrides.tsx) - Immich itself has
   // no concept of this, so it's absent (not just false) on any AssetSummary
@@ -405,6 +417,8 @@ export interface EditJob {
   description: string | null;
   // Set for a Change Lens job - the lens applied (or noted).
   lensModel: string | null;
+  // Set for a Change Time job - the new capture time (ISO with offset).
+  taken: string | null;
   status: EditJobStatus;
   createdAtMs: number;
   finishedAtMs: number | null;
@@ -548,6 +562,35 @@ export function readLensMake(originalPath: string, lensModel: string | null): Pr
 
 export function changeAssetLens(targets: LensEditTarget[], request: LensEditRequest): Promise<number[]> {
   return invoke('change_asset_lens', { targets, request });
+}
+
+// One Change Time target, its new time already worked out (lib/timeZones.ts).
+export interface TimeEditTarget {
+  id: string;
+  originalPath: string | null;
+  // New wall-clock time where it was taken, 'YYYY-MM-DDTHH:MM:SS'.
+  local: string;
+  // New UTC offset, '+02:00'.
+  offset: string;
+  // The IANA zone picked, when one was (not a fixed offset).
+  zoneName: string | null;
+  // The capture time Immich has now (ISO with offset), remembered in the
+  // sidecar before the first change.
+  current: string | null;
+}
+
+export interface TimeEditRequest {
+  // This edit only, on top of Preferences → Lenses' "write originals".
+  writeOriginalOnce: boolean;
+}
+
+// Same EditQueue/job-id contract as changeAssetLens.
+export function changeAssetTime(targets: TimeEditTarget[], request: TimeEditRequest): Promise<number[]> {
+  return invoke('change_asset_time', { targets, request });
+}
+
+export function saveHomeTimeZone(zone: string): Promise<AppConfig> {
+  return invoke('save_home_time_zone', { zone });
 }
 
 // Best-effort scan of installed native/Flatpak/Snap apps for the app picker -

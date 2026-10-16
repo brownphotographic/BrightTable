@@ -37,6 +37,7 @@ import {
 import { useStacking } from '../lib/useStacking';
 import { copyImageProcessingEntry, useAssetActions } from '../lib/useAssetActions';
 import { useLensEdit } from '../lib/lensEdit';
+import { useTimeEdit } from '../lib/timeEdit';
 import { type MenuAction } from '../lib/actionMenu';
 import { isRawAsset, isVideoAsset, matchesFilters, type Filters } from '../lib/filters';
 import { resolveVisibleStackAssets } from '../lib/stacks';
@@ -221,6 +222,7 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
     rotatingIds,
   } = useAssetActions({ onError: setEnqueueError });
   const { openLensEditor, copiedLens, canCopyLens, copyLens, pasteLens } = useLensEdit();
+  const { openTimeEditor } = useTimeEdit();
   const { shortcuts, capturing } = useShortcuts();
 
   const refreshPeopleList = useCallback(() => {
@@ -555,6 +557,12 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
         onClick: () => openLensEditor({ assets: lensTargets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
       });
     }
+    if (lensTargets.length) {
+      items.push({
+        label: lensTargets.length > 1 ? `Change Time (${lensTargets.length})…` : 'Change Time…',
+        onClick: () => openTimeEditor({ assets: lensTargets, applyPatch: patchAssetLocal, onError: setEnqueueError }),
+      });
+    }
     items.push(DIVIDER);
 
     // Copy/Paste
@@ -614,6 +622,7 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
     return items;
   }, [
     openLensEditor,
+    openTimeEditor,
     patchAssetLocal,
     contextMenu,
     assetByIdAll,
@@ -901,6 +910,14 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
       disabledReason: 'Select one or more photos',
       onClick: () => openLensEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError }),
     },
+    {
+      id: 'changeTime',
+      group: 'edit',
+      label: 'Change Time…',
+      disabled: !selectedAssets.some((a) => !isVideoAsset(a)),
+      disabledReason: 'Select one or more photos',
+      onClick: () => openTimeEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError }),
+    },
     ...(copyImageProcessingBarEntry ? [{ id: 'copyImageProcessing', group: 'copyPaste' as const, ...copyImageProcessingBarEntry }] : []),
     {
       id: 'pasteImageProcessing',
@@ -1059,6 +1076,7 @@ const PeopleBrowser = forwardRef<PeopleBrowserHandle, {
             selected={selectedAssets}
             onEdit={commitEdit}
             onChangeLens={() => openLensEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError })}
+            onChangeTime={() => openTimeEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError })}
           />}
       </div>
 
