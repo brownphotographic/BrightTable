@@ -8,16 +8,14 @@
 # binary + the existing Flatpak .desktop/icon/metainfo files, which describe
 # the app identically regardless of packaging format.
 #
-# NOTE: BrightTable's git tags aren't consistently named (mix of "1.0.3",
-# "v1.0.4", "v1.2" as of this writing) - the tag for a given release does
-# NOT always match pkgver exactly, and a release with patch version 0 may
-# be tagged as the shortened "x.y" rather than "x.y.0". Rather than hand-
-# maintaining that mapping per release, probe GitHub for whichever tag
-# form actually exists. GitHub's archive extracts to "BrightTable-<tag>"
-# with a leading "v" stripped if the tag starts with "vN" (e.g. tag "v1.2"
-# -> "BrightTable-1.2"), which _srcdir mirrors.
+# TEMPLATE - pkgver and sha256sums below are placeholders. Don't edit them by
+# hand: .github/workflows/arch-pkgbuild.yml fills both in from the release tag
+# each time a GitHub release is published, and attaches the finished PKGBUILD
+# (plus .SRCINFO) to that release. Release tags must be "vX.Y.Z" - source=
+# below fetches tag "v$pkgver", and GitHub's archive strips the leading "v"
+# from the extracted directory name.
 pkgname=brighttable
-pkgver=1.3.1
+pkgver=0
 pkgrel=1
 pkgdesc="Connect an Immich library to external RAW editors"
 arch=('x86_64')
@@ -26,23 +24,10 @@ license=('GPL-3.0-or-later')
 depends=('webkit2gtk-4.1' 'gtk3' 'libayatana-appindicator' 'librsvg' 'openssl' 'hicolor-icon-theme' 'desktop-file-utils')
 makedepends=('rust' 'cargo' 'nodejs' 'npm' 'pkgconf' 'xdotool' 'file')
 
-_short=${pkgver%.0}
-_tag=
-for _cand in "$pkgver" "v$pkgver" "$_short" "v$_short"; do
-  if curl -fsSL --head -o /dev/null \
-      "https://github.com/brownphotographic/BrightTable/archive/refs/tags/$_cand.tar.gz"; then
-    _tag=$_cand
-    break
-  fi
-done
-if [[ -z $_tag ]]; then
-  error "brighttable: no git tag matches pkgver=$pkgver (tried $pkgver, v$pkgver, $_short, v$_short) - check the release tag and pkgver"
-  return 1
-fi
-_srcdir=BrightTable-${_tag#v}
+_srcdir=BrightTable-$pkgver
 
-source=("$pkgname-$pkgver.tar.gz::https://github.com/brownphotographic/BrightTable/archive/refs/tags/$_tag.tar.gz")
-sha256sums=('cca803b5ba496f4089838ab9f8b28097002cb5d7d4fcdbf9431ffa8442596751')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/brownphotographic/BrightTable/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
 
 build() {
   cd "$srcdir/$_srcdir/app"

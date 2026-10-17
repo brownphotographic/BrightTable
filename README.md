@@ -134,14 +134,15 @@ flatpak run io.github.brownphotographic.BrightTable
 
 ### Alternative: Arch Linux
 
-Not on the AUR yet — this repo ships a `PKGBUILD` you build locally instead. It compiles the app from
-source on your machine (same recipe as the Flatpak build, just installed natively via `pacman` rather than
-into a sandbox) and installs it like any other Arch package: tracked by `pacman`, cleanly removable, no
-container.
+Not on the AUR yet. Each [GitHub release](https://github.com/brownphotographic/BrightTable/releases) has a
+`PKGBUILD` attached instead. It compiles the app from source on your machine (same recipe as the Flatpak
+build, just installed natively via `pacman` rather than into a sandbox) and installs it like any other Arch
+package: tracked by `pacman`, cleanly removable, no container. (The Flatpak above works on Arch too, if
+you'd rather not build from source.)
+
+Download the `PKGBUILD` from the latest release into an empty folder, then:
 
 ```bash
-git clone https://github.com/brownphotographic/BrightTable.git
-cd BrightTable/packaging/arch
 makepkg -si
 ```
 
@@ -154,10 +155,6 @@ brighttable
 
 Since this is a native build rather than a Flatpak, there's no sandbox — no Flatseal step, no
 `--filesystem=` grants needed. It reads whatever files your user account can already access.
-
-> This PKGBUILD tracks tagged releases (`pkgver` is bumped automatically alongside the app version — see
-> `app/scripts/bump-version.mjs`). It is not yet published to the AUR, so `pacman`/`yay` won't find it by
-> package name; you have to clone this repo and build it yourself as shown above.
 
 ### Configuring and using the app
 Once launched, go to the Preferences menu (Edit >> Preferences) to configure the app. Visit the user guide for more information on configuring and using the app. [User Guide](User-Guide.md) 
@@ -223,31 +220,25 @@ Then, from `app/`:
   [COMPATIBILITY.md](COMPATIBILITY.md) by hand afterwards — that part isn't automated.
 - Output lands at `app/src-tauri/target/release/bundle/flatpak/BrightTable_<version>_x86_64.flatpak`.
 
-#### Publishing a release (required for the Arch package to work)
+#### Publishing a release
 
-The Flatpak build above needs none of this - it compiles straight from your working tree, tag or no
-tag. `packaging/arch/PKGBUILD` is different: its `source=` downloads a tarball from a **published GitHub
-tag**, never your local checkout. A version only becomes `makepkg -si`-installable once a tag exists
-that points at a commit which actually contains the bump.
+The Flatpak build above needs no tag - it compiles straight from your working tree. Publishing a GitHub
+release is what produces the Arch package: `.github/workflows/arch-pkgbuild.yml` runs on every published
+release, fills the version and the release tarball's sha256 into the `packaging/arch/PKGBUILD` template,
+and attaches the finished `PKGBUILD` (plus `.SRCINFO`) to the release. Nothing to commit afterwards.
 
-The gotcha: `git tag` snapshots whatever the last *commit* was, not your working directory or whatever
-`npm run build:flatpak` just wrote to disk. Tag before committing and the tag silently points at the
-*previous* release's commit instead - e.g. a "1.2.1" tag whose downloaded source is still 1.2.0. So the
-order has to be commit-then-tag, never the reverse:
+Release tags **must** be `vX.Y.Z` matching `Cargo.toml` - the workflow fails otherwise. And commit before
+tagging: a tag snapshots the last *commit*, not your working directory, so tagging first silently points
+the release at the previous version's source.
 
 ```bash
 # 1. Bump (npm run build:flatpak) and build/test the Flatpak - no tag needed yet.
-# 2. Commit the bump once you're happy with it.
+# 2. Commit and push the bump.
 git add -u && git commit -m "X.Y.Z"
 git push origin main
 
-# 3. Only now tag the commit that actually has the bump.
-git tag X.Y.Z          # match Cargo.toml exactly - see PKGBUILD's own tag-naming note above
-git push origin X.Y.Z
-
-# 4. The real checksum only resolves once that tag is live on GitHub.
-cd packaging/arch && updpkgsums
-git commit -am "X.Y.Z: real sha256sum" && git push origin main
+# 3. Create the release (this creates the tag too).
+gh release create vX.Y.Z --target main --generate-notes
 ```
 
 Also update [COMPATIBILITY.md](COMPATIBILITY.md) by hand - that part isn't automated.
