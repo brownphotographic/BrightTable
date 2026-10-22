@@ -212,6 +212,9 @@ export interface AppConfig {
   sharing: SharingConfig;
   windowControlsPosition: WindowControlsPosition;
   themeMode: ThemeMode;
+  // Interface size (webview zoom factor) - null until the user first changes
+  // it, meaning 100%. See lib/uiScale.tsx.
+  uiScale: number | null;
   // Grid loupe circle size - Preferences → Configuration → Window. `false`
   // (Small) keeps the original 33/67 grid/pane split; `true` (Large) shrinks
   // the grid down to a thin strip so the pane (and its circle) fills most of
@@ -486,6 +489,10 @@ export function saveWindowControlsPosition(position: WindowControlsPosition): Pr
 
 export function saveThemeMode(mode: ThemeMode): Promise<AppConfig> {
   return invoke('save_theme_mode', { mode });
+}
+
+export function saveUiScale(scale: number): Promise<AppConfig> {
+  return invoke('save_ui_scale', { scale });
 }
 
 export function saveGridLoupeLarge(large: boolean): Promise<AppConfig> {

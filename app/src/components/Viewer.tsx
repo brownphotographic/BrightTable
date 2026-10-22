@@ -58,6 +58,7 @@ import { TAG_ASSIGN_DISABLED_REASON } from '../lib/featureFlags';
 import { copyImageProcessingEntry } from '../lib/useAssetActions';
 import { useLensEdit } from '../lib/lensEdit';
 import { useTimeEdit } from '../lib/timeEdit';
+import { effectiveDpr } from '../lib/uiScale';
 
 const MIN_ZOOM = 25;
 const MAX_ZOOM = 400;
@@ -817,7 +818,7 @@ const Viewer = forwardRef<ViewerHandle, {
   // explicit zoom/loupe action.
   let fitExceedsPreview = false;
   if (loaded && stageSize && natW && natH) {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = effectiveDpr();
     const { w, h } = containRect(stageSize.w, stageSize.h, natW, natH);
     fitExceedsPreview = w * dpr > natW + 1 || h * dpr > natH + 1;
   }
@@ -891,7 +892,7 @@ const Viewer = forwardRef<ViewerHandle, {
     // (so 100% is then 1:1 preview pixels). Long edge rather than width so
     // an EXIF-rotated photo's pre-rotation width/height can't swap axes.
     const origLong = Math.max(shown.exifImageWidth ?? 0, shown.exifImageHeight ?? 0) || Math.max(natW, natH);
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = effectiveDpr();
     const magnification = ((origLong / dpr) * (loupeZoom / 100)) / Math.max(w, h);
     if (cx >= 0 && cy >= 0 && cx <= w && cy <= h) {
       loupeStyle = {

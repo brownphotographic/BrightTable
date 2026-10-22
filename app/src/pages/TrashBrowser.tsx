@@ -15,10 +15,11 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { useCallback, useEffect, useState, type CSSProperties } from 'react';
+import { useCallback, useContext, useEffect, useState, type CSSProperties } from 'react';
 import { retryOnVaultReady } from '../lib/vaultReadyRetry';
 import { deleteAssets, emptyTrash, getTrashedAssets, restoreAssets, type AssetSummary } from '../lib/api';
 import AssetThumbImage from '../components/AssetThumb';
+import { ThumbRenditionContext } from '../lib/thumbnailSettings';
 import ConfirmDialog from '../components/ConfirmDialog';
 
 // No multi-select here (unlike the main grid) - trash items are acted on one
@@ -172,6 +173,8 @@ function TrashTile({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const rendition = useContext(ThumbRenditionContext);
+
   async function handleRestoreClick(e: React.MouseEvent) {
     e.stopPropagation();
     setBusy(true);
@@ -197,7 +200,7 @@ function TrashTile({
         boxShadow: '0 0 0 1px var(--border)',
       }}
     >
-      <AssetThumbImage asset={asset} />
+      <AssetThumbImage asset={asset} size={rendition} />
       {hovered && !error && (
         <div
           style={{

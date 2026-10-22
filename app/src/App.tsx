@@ -23,7 +23,8 @@ import { isTypingTarget, matchesShortcut, ShortcutsProvider, useShortcuts } from
 import { SmartStackSettingsProvider } from './lib/smartStackSettings';
 import { WindowControlsProvider } from './lib/windowControls';
 import { GridLoupeSettingsProvider, useGridLoupeSettings } from './lib/gridLoupeSettings';
-import { ThumbnailSettingsProvider } from './lib/thumbnailSettings';
+import { THUMB_MAX, THUMB_MIN, ThumbRenditionContext, ThumbnailSettingsProvider, stepThumbSize, thumbRenditionFor } from './lib/thumbnailSettings';
+import { UiScaleProvider, effectiveDpr, nextUiScale, useUiScale } from './lib/uiScale';
 import { useSyncWindowFrameMaximized } from './lib/windowFrame';
 import { isImageFullscreen, setImageFullscreen, useSyncImageFullscreen } from './lib/fullscreen';
 import { ThemeProvider } from './lib/theme';
@@ -63,11 +64,12 @@ import { usePersistedState } from './lib/persistedState';
 
 const LEFT_TABS: readonly unknown[] = ['photos', 'albums', 'people', 'tags', 'folders', 'trash'] satisfies LeftTab[];
 const isLeftTab = (v: unknown): v is LeftTab => LEFT_TABS.includes(v);
-const isThumbSize = (v: unknown): v is number => typeof v === 'number' && v >= 100 && v <= 320;
+const isThumbSize = (v: unknown): v is number => typeof v === 'number' && v >= THUMB_MIN && v <= THUMB_MAX;
 
 export default function App() {
   return (
     <ThemeProvider>
+      <UiScaleProvider>
       <ShortcutsProvider>
         <WindowControlsProvider>
           <GridLoupeSettingsProvider>
@@ -107,6 +109,7 @@ export default function App() {
           </GridLoupeSettingsProvider>
         </WindowControlsProvider>
       </ShortcutsProvider>
+      </UiScaleProvider>
     </ThemeProvider>
   );
 }
@@ -195,6 +198,13 @@ function AppShell() {
   // Remembered across launches via the webview's localStorage (a per-machine
   // UI convenience, deliberately not part of the synced config).
   const [thumbSize, setThumbSize] = usePersistedState('thumbSize', 168, isThumbSize);
+  const { uiScale, setUiScale } = useUiScale();
+  // Tiles are at least thumbSize wide (the grids stretch columns to fill),
+  // so this picks the sharper rendition a touch conservatively. Recomputed
+  // on every render, which covers uiScale/thumbSize changes.
+  const gridRendition = thumbRenditionFor(thumbSize * effectiveDpr());
+  // SearchResultsBrowser's grid is fixed at 168px.
+  const searchRendition = thumbRenditionFor(168 * effectiveDpr());
   // Shared by both PhotosBrowser and FoldersBrowser - bumping it forces
   // whichever is currently mounted to fully remount (clearing its
   // assetCache/unsyncedMetadata/etc.), since neither view otherwise has any
@@ -278,7 +288,24 @@ function AppShell() {
   // open, or while the Shortcuts pane is capturing a new binding.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (isTypingTarget(e) || prefsOpen || capturing) return;
+      if (isTypingTarget(e) || capturing) return;
+      // Interface size works everywhere, Preferences included, so its own
+      // setting can be judged while it's being changed. With Shift held, `=`
+      // reports as `+` and `-` as `_`.
+      if (matchesShortcut(e, 'Ctrl+Shift++')) {
+        e.preventDefault();
+        setUiScale(nextUiScale(uiScale, 1));
+        return;
+      } else if (matchesShortcut(e, 'Ctrl+Shift+_')) {
+        e.preventDefault();
+        setUiScale(nextUiScale(uiScale, -1));
+        return;
+      } else if (matchesShortcut(e, 'Ctrl+0')) {
+        e.preventDefault();
+        setUiScale(1);
+        return;
+      }
+      if (prefsOpen) return;
       if (matchesShortcut(e, shortcuts.refreshTimeline)) {
         e.preventDefault();
         refreshTimeline();
@@ -295,15 +322,15 @@ function AppShell() {
         setPrefsOpen(true);
       } else if (showThumbSize && (matchesShortcut(e, 'Ctrl++') || matchesShortcut(e, 'Ctrl+='))) {
         e.preventDefault();
-        setThumbSize((n) => Math.min(320, n + 24));
+        setThumbSize((n) => stepThumbSize(n, 1));
       } else if (showThumbSize && matchesShortcut(e, 'Ctrl+-')) {
         e.preventDefault();
-        setThumbSize((n) => Math.max(100, n - 24));
+        setThumbSize((n) => stepThumbSize(n, -1));
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [prefsOpen, shortcuts, capturing, showThumbSize, leftTab, activeSearch]);
+  }, [prefsOpen, shortcuts, capturing, showThumbSize, leftTab, activeSearch, uiScale, setUiScale]);
 
   // Esc always leaves image fullscreen first, ahead of whatever Esc/deselect
   // would otherwise do (close the Viewer, cancel a dialog) - registered in
@@ -455,6 +482,7 @@ function AppShell() {
           showLoupe={showLoupe}
         />
 
+        <ThumbRenditionContext.Provider value={gridRendition}>
         <div style={{ flex: 1, display: 'flex', minHeight: 0, background: 'var(--panel-2)', position: 'relative' }}>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--canvas)', position: 'relative' }}>
             {/* Photos and Folders stay mounted (just hidden) once visited, rather
@@ -468,14 +496,16 @@ function AppShell() {
                 one. */}
             {activeSearch && (
               <div style={{ display: 'flex', flex: 1, flexDirection: 'column', minHeight: 0 }}>
-                <SearchResultsBrowser
-                  key={activeSearch}
-                  ref={searchRef}
-                  query={activeSearch}
-                  metaOpen={metaOpen}
-                  onClose={clearSearch}
-                  active
-                />
+                <ThumbRenditionContext.Provider value={searchRendition}>
+                  <SearchResultsBrowser
+                    key={activeSearch}
+                    ref={searchRef}
+                    query={activeSearch}
+                    metaOpen={metaOpen}
+                    onClose={clearSearch}
+                    active
+                  />
+                </ThumbRenditionContext.Provider>
               </div>
             )}
             <div style={{ display: !activeSearch && leftTab === 'photos' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
@@ -557,6 +587,7 @@ function AppShell() {
             {!activeSearch && leftTab === 'trash' && <TrashBrowser onCount={setTrashCount} thumbSize={thumbSize} />}
           </div>
         </div>
+        </ThumbRenditionContext.Provider>
 
         {prefsOpen && (
           <PreferencesOverlay

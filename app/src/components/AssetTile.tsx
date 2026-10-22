@@ -15,12 +15,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { memo, useState } from 'react';
+import { memo, useContext, useState } from 'react';
 import AssetThumbImage from './AssetThumb';
 import { RejectIcon, Star } from './MetadataRows';
 import type { AssetSummary, UnsyncedMetadata } from '../lib/api';
 import { isRawAsset } from '../lib/filters';
-import { FILE_NAME_CAPTION_HEIGHT, useThumbnailSettings } from '../lib/thumbnailSettings';
+import { FILE_NAME_CAPTION_HEIGHT, ThumbRenditionContext, useThumbnailSettings } from '../lib/thumbnailSettings';
 
 export type ClickMods = { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean };
 
@@ -131,6 +131,7 @@ const AssetTile = memo(function AssetTile({
   // not raced against whatever this component's last render was doing.
   const [hovered, setHovered] = useState(false);
   const { showFileName } = useThumbnailSettings();
+  const rendition = useContext(ThumbRenditionContext);
 
   const handleClick = (e: React.MouseEvent) => {
     const plain = !e.shiftKey && !e.ctrlKey && !e.metaKey;
@@ -203,7 +204,7 @@ const AssetTile = memo(function AssetTile({
         touchAction: 'manipulation',
       }}
     >
-      <AssetThumbImage asset={asset} />
+      <AssetThumbImage asset={asset} size={rendition} />
 
       {hovered && !loupeMode && (
         // A single, reliable click to open - doesn't depend on double-click/

@@ -23,6 +23,8 @@ import Switch from './Switch';
 import ExifFilters from './ExifFilters';
 import NavTabs, { type LeftTab } from './NavTabs';
 import { Icon } from './Icons';
+import { THUMB_MAX, THUMB_MIN, stepThumbSize } from '../lib/thumbnailSettings';
+import { nextUiScale, useUiScale } from '../lib/uiScale';
 
 type MenuKey = 'file' | 'edit' | 'view' | 'help' | 'filter' | null;
 
@@ -137,6 +139,7 @@ export default function MenuBar({
 }) {
   const [open, setOpen] = useState<MenuKey>(null);
   const { shortcuts } = useShortcuts();
+  const { uiScale, setUiScale } = useUiScale();
 
   const toggle = (key: MenuKey) => setOpen((cur) => (cur === key ? null : key));
   const hoverTo = (key: MenuKey) => {
@@ -356,7 +359,7 @@ export default function MenuBar({
           shortcut="Ctrl++"
           onClick={() => {
             close();
-            onThumbSizeChange(Math.min(320, thumbSize + 24));
+            onThumbSizeChange(stepThumbSize(thumbSize, 1));
           }}
         />
         <MenuItem
@@ -364,7 +367,32 @@ export default function MenuBar({
           shortcut="Ctrl+-"
           onClick={() => {
             close();
-            onThumbSizeChange(Math.max(100, thumbSize - 24));
+            onThumbSizeChange(stepThumbSize(thumbSize, -1));
+          }}
+        />
+        <Divider />
+        <MenuItem
+          label="Larger Interface"
+          shortcut="Ctrl+Shift++"
+          onClick={() => {
+            close();
+            setUiScale(nextUiScale(uiScale, 1));
+          }}
+        />
+        <MenuItem
+          label="Smaller Interface"
+          shortcut="Ctrl+Shift+-"
+          onClick={() => {
+            close();
+            setUiScale(nextUiScale(uiScale, -1));
+          }}
+        />
+        <MenuItem
+          label={`Reset Interface Size (${Math.round(uiScale * 100)}%)`}
+          shortcut="Ctrl+0"
+          onClick={() => {
+            close();
+            setUiScale(1);
           }}
         />
         <Divider />
@@ -611,12 +639,12 @@ export default function MenuBar({
           </div>
           <input
             type="range"
-            min={100}
-            max={320}
+            min={THUMB_MIN}
+            max={THUMB_MAX}
             step={4}
             value={thumbSize}
             onChange={(e) => onThumbSizeChange(Number(e.target.value))}
-            style={{ width: 104 }}
+            style={{ width: 140 }}
           />
         </div>
       )}

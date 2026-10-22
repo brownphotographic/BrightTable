@@ -24,6 +24,31 @@ import { onConfigReloaded } from './configEvents';
 // (which has to know tile heights before they render) can account for it.
 export const FILE_NAME_CAPTION_HEIGHT = 20;
 
+// Grid thumbnail size range (CSS px, before the interface zoom). Zoom In/Out
+// steps multiplicatively so each step feels the same at either end of it.
+export const THUMB_MIN = 100;
+export const THUMB_MAX = 640;
+
+export function stepThumbSize(cur: number, dir: 1 | -1): number {
+  const next = Math.round((dir > 0 ? cur * 1.15 : cur / 1.15) / 4) * 4;
+  return Math.min(THUMB_MAX, Math.max(THUMB_MIN, next));
+}
+
+// Immich's `thumbnail` rendition is ~250px on its long edge - past that (in
+// real device pixels) a tile looks soft, so grids ask for `preview` instead.
+// Immich sizes `thumbnail` by its short edge, so a 3:2 tile stays sharp up
+// to ~375 device px wide; 400 leaves a little slack before swapping.
+export function thumbRenditionFor(tileWidthDevicePx: number): ThumbRendition {
+  return tileWidthDevicePx > 400 ? 'preview' : 'thumbnail';
+}
+
+export type ThumbRendition = 'thumbnail' | 'preview';
+
+// Which rendition grid tiles (AssetTile, TrashBrowser) should load - set by
+// App.tsx from the grid's thumbSize and the effective device pixel ratio.
+// Defaults to `thumbnail` so anything rendered outside a provider is unchanged.
+export const ThumbRenditionContext = createContext<ThumbRendition>('thumbnail');
+
 interface ThumbnailSettings {
   originalAspect: boolean;
   showFileName: boolean;

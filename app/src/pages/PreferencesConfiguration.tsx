@@ -23,6 +23,7 @@ import { useWindowControls } from '../lib/windowControls';
 import { useGridLoupeSettings } from '../lib/gridLoupeSettings';
 import { useThumbnailSettings } from '../lib/thumbnailSettings';
 import { useTheme } from '../lib/theme';
+import { UI_SCALES, nextUiScale, useUiScale } from '../lib/uiScale';
 import { useTimeConfig } from '../lib/timeConfig';
 import { listZones, systemTimeZone, zoneLabel } from '../lib/timeZones';
 
@@ -46,6 +47,7 @@ export default function PreferencesConfiguration() {
   const { position, setPosition } = useWindowControls();
   const { large: loupeLarge, setLarge: setLoupeLarge } = useGridLoupeSettings();
   const { themeMode, setThemeMode } = useTheme();
+  const { uiScale, setUiScale } = useUiScale();
   const { homeTimeZoneSetting, setHomeTimeZone } = useTimeConfig();
   const { originalAspect, setOriginalAspect, showFileName, setShowFileName } = useThumbnailSettings();
   const [settingsFolder, setSettingsFolder] = useState<string | null>(null);
@@ -132,6 +134,10 @@ export default function PreferencesConfiguration() {
           />
         </Row>
         <Divider />
+        <Row label="Interface Size">
+          <ScaleStepper value={uiScale} onChange={setUiScale} />
+        </Row>
+        <Divider />
         <Row label="Thumbnails">
           <Segmented
             value={originalAspect ? 'original' : 'crop'}
@@ -155,7 +161,8 @@ export default function PreferencesConfiguration() {
         </Row>
       </div>
       <div style={helpText}>
-        Crop to Fill fills each grid thumbnail edge to edge; Original Aspect shows the whole
+        Interface Size scales all text, icons and spacing together; click the percentage
+        to reset (also View menu, or Ctrl+Shift++ / Ctrl+Shift+- / Ctrl+0). Crop to Fill fills each grid thumbnail edge to edge; Original Aspect shows the whole
         image, letterboxed inside the thumbnail. File Names adds each photo's name under its
         thumbnail.
       </div>
@@ -340,6 +347,51 @@ function Segmented<T extends string>({
           {o.label}
         </div>
       ))}
+    </div>
+  );
+}
+
+// − 100% + in the same chip style as Segmented, walking UI_SCALES' fixed
+// steps; the percentage itself resets to 100% when clicked.
+function ScaleStepper({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const atMin = value <= UI_SCALES[0];
+  const atMax = value >= UI_SCALES[UI_SCALES.length - 1];
+  const chip = (disabled: boolean): CSSProperties => ({
+    width: 28,
+    padding: '5px 0',
+    borderRadius: 7,
+    fontSize: 13,
+    lineHeight: '15px',
+    textAlign: 'center',
+    cursor: 'default',
+    background: 'var(--overlay-weak)',
+    color: disabled ? 'var(--text-faint)' : 'var(--text-dim)',
+  });
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div title="Smaller" onClick={() => !atMin && onChange(nextUiScale(value, -1))} style={chip(atMin)}>
+        −
+      </div>
+      <div
+        title={value === 1 ? undefined : 'Reset to 100%'}
+        onClick={() => onChange(1)}
+        style={{
+          minWidth: 52,
+          padding: '5px 8px',
+          borderRadius: 7,
+          fontSize: 12.5,
+          textAlign: 'center',
+          cursor: 'default',
+          fontVariantNumeric: 'tabular-nums',
+          background: value === 1 ? 'var(--overlay-weak)' : 'var(--accent)',
+          color: value === 1 ? 'var(--text-dim)' : '#fff',
+        }}
+      >
+        {Math.round(value * 100)}%
+      </div>
+      <div title="Larger" onClick={() => !atMax && onChange(nextUiScale(value, 1))} style={chip(atMax)}>
+        +
+      </div>
     </div>
   );
 }

@@ -244,6 +244,12 @@ pub struct AppConfig {
     pub window_controls_position: WindowControlsPosition,
     #[serde(default)]
     pub theme_mode: ThemeMode,
+    /// Interface size - Preferences → Configuration → Appearance (and View →
+    /// Larger/Smaller Interface). A webview zoom factor applied to the whole
+    /// UI so text, icons and spacing all scale together. `None` = 100%; the
+    /// frontend clamps whatever is stored to its supported range.
+    #[serde(default)]
+    pub ui_scale: Option<f64>,
     /// Grid loupe circle size - Preferences → Configuration → Window. `false`
     /// (Small) keeps the original 33/67 grid/pane split; `true` (Large)
     /// shrinks the grid down to a thin strip so the pane (and its circle)

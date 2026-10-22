@@ -15,6 +15,7 @@
     "core:window:allow-is-maximized",
     "core:window:allow-set-fullscreen",
     "core:window:allow-is-fullscreen",
+    "core:webview:allow-set-webview-zoom",
     "dialog:default",
     "opener:default",
     "opener:allow-open-url"

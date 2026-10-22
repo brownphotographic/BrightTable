@@ -152,6 +152,25 @@ pub async fn save_theme_mode(
 }
 
 #[tauri::command]
+pub async fn save_ui_scale(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    scale: f64,
+) -> Result<AppConfig, String> {
+    let snapshot = {
+        let mut guard = state.config.lock().unwrap();
+        guard.ui_scale = Some(scale);
+        guard.clone()
+    };
+    let vault = state.secret_vault.clone();
+    let to_save = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save(&app, &to_save, vault.read().unwrap().as_ref()))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(snapshot)
+}
+
+#[tauri::command]
 pub async fn save_grid_loupe_large(
     app: AppHandle,
     state: State<'_, AppState>,
