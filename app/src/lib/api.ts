@@ -769,6 +769,13 @@ export function regenerateAssetThumbnail(assetId: string): Promise<void> {
   return invoke('regenerate_asset_thumbnail', { assetId });
 }
 
+// Asks Immich to re-read these assets' metadata from their files on disk
+// (Immich's own "Refresh metadata"), see commands::refresh_asset_metadata.
+// Resolves once the job is queued, not once Immich has finished it.
+export function refreshAssetMetadata(assetIds: string[]): Promise<void> {
+  return invoke('refresh_asset_metadata', { assetIds });
+}
+
 // Rotates an asset's EXIF Orientation tag one 90° step in place - the
 // Viewer's Rotate Left/Right buttons. Resolves `originalPath` to a local
 // mount itself (same "Originals on Disk" mapping every other local write

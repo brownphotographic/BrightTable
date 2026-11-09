@@ -66,33 +66,64 @@ pub fn base_name<'a>(file_name: &'a str, file_extension: &str) -> &'a str {
     }
 }
 
+/// Prefix for the hidden in-progress file a round-trip export is written to
+/// before being renamed into place - see `next_export_path`.
+const PARTIAL_PREFIX: &str = ".brighttable-partial-";
+
+/// The hidden sibling an export is actually written to while it's in
+/// progress: `"{dir}/.brighttable-partial-{name}"`. It keeps the real
+/// extension on purpose: `ART-cli` swaps out whatever extension `-o` is given
+/// for its own (confirmed live, `x.jpg.tmp` became `x.jpg.jpg`), and exiftool
+/// picks the format from the extension, so the name has to stay `*.jpg`. The
+/// leading dot is what keeps Immich's library scan away from it.
+pub fn partial_path(export_path: &Path) -> PathBuf {
+    let name = export_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    export_path.with_file_name(format!("{PARTIAL_PREFIX}{name}"))
+}
+
+/// Drops the claim `next_export_path` made for `export_path` (its hidden
+/// `partial_path` file), for a caller whose export failed or was cancelled.
+/// Never touches `export_path` itself, which only exists once an export has
+/// fully finished.
+pub fn release_claim(export_path: impl AsRef<Path>) {
+    let _ = std::fs::remove_file(partial_path(export_path.as_ref()));
+}
+
+/// Moves a finished export from its hidden `partial_path` to `export_path`
+/// in a single rename (same directory, so atomic), so Immich only ever sees
+/// the complete file with its metadata already written.
+pub fn publish_partial(export_path: &Path) -> io::Result<()> {
+    std::fs::rename(partial_path(export_path), export_path)
+}
+
 /// Builds `"{dir}/{base}_{core}-{n}.{ext}"`, scanning disk for the first free
-/// `n` starting at 1 and atomically *claiming* it (`create_new`, not just an
-/// existence check) - always numbered, never a bare filename, so
-/// round-tripping the same original twice never silently overwrites the
-/// first export.
+/// `n` starting at 1 and atomically *claiming* it - always numbered, never a
+/// bare filename, so round-tripping the same original twice never silently
+/// overwrites the first export.
 ///
-/// The atomic claim matters: `ART-cli` itself doesn't run until well after
-/// this returns (for Variant 2, every target in a batch is resolved up front,
-/// before any export starts; even for Variant 1 the export can take minutes -
-/// see `art::ART_CLI_RUN_TIMEOUT`'s doc comment), so a plain `.exists()`
-/// check leaves a wide window where two round trips resolved around the same
-/// time - most commonly two assets in one batch that share a source
-/// directory/filename - could both compute the *same* "first free" number and
-/// then have two `ART-cli` processes write that same path concurrently,
-/// corrupting whichever file lands there. Claiming the name here (as an empty
-/// file) the instant it's chosen closes that window - `ART-cli` is always run
-/// with `-Y` (overwrite without prompt, see `art::build_art_cli_args`), so
-/// writing into an already-claimed empty file is expected, not a conflict.
-/// Callers that end up not writing anything to a claimed path (a later error,
-/// a timeout) are expected to remove the leftover empty file themselves - see
-/// `art_queue.rs`'s worker and `commands::launch_raw_cli_round_trip`'s cleanup on
-/// their own error paths.
+/// The claim is the hidden `partial_path` sibling, created with `create_new`,
+/// not the real filename. The converter writes into that hidden file and
+/// `publish_partial` renames it into place only once the export and its
+/// metadata are complete. Claiming the real name with an empty placeholder
+/// (the original design) left a 0-byte JPEG in the library for the whole
+/// export, which Immich could index as a metadata-less asset. A number counts
+/// as taken if either the real file or another export's claim exists.
+///
+/// The atomic claim matters: the converter doesn't run until well after this
+/// returns (for Variant 2, every target in a batch is resolved up front), so a
+/// plain `.exists()` check would let two round trips resolved around the same
+/// time pick the *same* number and write the same path concurrently. Callers
+/// that end up not producing an export (a later error, a timeout) must call
+/// `release_claim`.
 pub fn next_export_path(dir: &Path, base: &str, core: &str, ext: &str) -> io::Result<PathBuf> {
     let mut n: u32 = 1;
     loop {
         let candidate = dir.join(format!("{base}_{core}-{n}.{ext}"));
-        match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+        if candidate.exists() {
+            n += 1;
+            continue;
+        }
+        match OpenOptions::new().write(true).create_new(true).open(partial_path(&candidate)) {
             Ok(_) => return Ok(candidate),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
             Err(e) => return Err(e),
@@ -183,9 +214,32 @@ mod tests {
         let dir = tmp_dir("claims");
         let first = next_export_path(&dir, "IMG_1", "converted", "jpg").unwrap();
         assert_eq!(first, dir.join("IMG_1_converted-1.jpg"));
-        assert!(first.exists());
+        // Claimed via the hidden partial file, never an empty placeholder
+        // at the real name that Immich could index.
+        assert!(!first.exists());
+        assert!(dir.join(".brighttable-partial-IMG_1_converted-1.jpg").exists());
         let second = next_export_path(&dir, "IMG_1", "converted", "jpg").unwrap();
         assert_eq!(second, dir.join("IMG_1_converted-2.jpg"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_partial_moves_the_finished_export_into_place() {
+        let dir = tmp_dir("publish");
+        let path = next_export_path(&dir, "IMG_1", "converted", "jpg").unwrap();
+        std::fs::write(partial_path(&path), b"jpeg").unwrap();
+        publish_partial(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"jpeg");
+        assert!(!partial_path(&path).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn release_claim_frees_the_number_for_the_next_export() {
+        let dir = tmp_dir("release");
+        let path = next_export_path(&dir, "IMG_1", "converted", "jpg").unwrap();
+        release_claim(&path);
+        assert_eq!(next_export_path(&dir, "IMG_1", "converted", "jpg").unwrap(), path);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

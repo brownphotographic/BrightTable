@@ -35,6 +35,7 @@ import {
   type EditJob,
   type RoundTripFileDetected,
   type TimeBucketInfo,
+  refreshAssetMetadata,
 } from '../lib/api';
 import { useStacking } from '../lib/useStacking';
 import Viewer, { type ViewerHandle } from '../components/Viewer';
@@ -73,7 +74,7 @@ import { useEditJobReconciliation } from '../lib/useEditJobReconciliation';
 import { useArtQueue } from '../lib/artQueue';
 import { useArtJobReconciliation } from '../lib/useArtJobReconciliation';
 import { useBucketMemo } from '../lib/bucketMemo';
-import { ingestRoundTripExport, subscribeLateRoundTripOutcome, type RoundTripIngestOutcome } from '../lib/roundTrip';
+import { ingestRoundTripExport, subscribeLateRoundTripOutcome, subscribeRoundTripMetadataRefreshed, type RoundTripIngestOutcome } from '../lib/roundTrip';
 import { useNoSidecarChoice } from '../lib/useNoSidecarChoice';
 
 // Snapshots whichever AssetSummary fields a patch is about to touch, so a
@@ -616,6 +617,10 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
   // asset would only show up (still unstacked-looking, until the next full
   // reload) via a manual Refresh Timeline.
   useEffect(() => subscribeLateRoundTripOutcome(applyRoundTripOutcome), [applyRoundTripOutcome]);
+  // Swaps in a round-trip export's real camera/lens/exposure/date once
+  // Immich has actually read them from the file - see roundTrip.ts's
+  // refreshIngestedMetadata for why the first snapshot is blank.
+  useEffect(() => subscribeRoundTripMetadataRefreshed(patchAssetLocal), [patchAssetLocal]);
 
   // Grid deletes always move to trash (permanent=false) - "Delete Forever"
   // only exists from within the Trash view. Immich trashes a stack as one
@@ -1753,6 +1758,14 @@ const PhotosBrowser = forwardRef<PhotosBrowserHandle, {
       disabled: !selectedAssets.some((a) => !isVideoAsset(a)),
       disabledReason: 'Select one or more photos',
       onClick: () => openTimeEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError }),
+    },
+    {
+      id: 'refreshMetadata',
+      group: 'edit',
+      label: 'Refresh Metadata',
+      disabled: selectedAssets.length === 0,
+      disabledReason: 'Select one or more photos',
+      onClick: () => refreshAssetMetadata(selectedAssets.map((a) => a.id)).catch((e) => setEnqueueError(`Couldn't refresh metadata: ${String(e)}`)),
     },
     // Copy is inherently single-source, so these two only appear when
     // exactly one photo is selected (matching the context menu's identical

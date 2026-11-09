@@ -48,6 +48,8 @@ use crate::art;
 use crate::cli_process::{self, SidecarCliMode};
 use crate::config::RawConverterKind;
 use crate::darktable;
+use crate::exiftool;
+use crate::export_naming;
 use crate::paths;
 use crate::rawtherapee;
 use crate::state::AppState;
@@ -371,18 +373,25 @@ pub(crate) fn mode_for_sidecar(has_sidecar: bool) -> SidecarCliMode {
     if has_sidecar { SidecarCliMode::DefaultThenSidecarOverride } else { SidecarCliMode::DefaultOnly }
 }
 
-/// Dispatches one round-trip export to the right converter module - the one
-/// place both `run` (Variant 2's worker, below) and `commands.rs`'s Variant 1
-/// handlers pick between `art`/`rawtherapee`/`darktable` so the three can't
-/// drift into different behavior for the same `RawConverterKind`. DarkTable's
-/// mode mapping differs from the other two: `darktable-cli` has no `-d -S`-
-/// style "apply defaults, then layer a sidecar over them" flag, so both
-/// `ApplySidecar` and `DefaultThenSidecarOverride` just mean "pass the
-/// resolved xmp path" here - only `DefaultOnly` omits it. The xmp path itself
-/// is resolved fresh here (via `paths::find_darktable_history_sidecar`)
-/// rather than threaded through as a parameter, since ART/RawTherapee's CLI
-/// grammar has no equivalent argument to carry it in - see `darktable.rs`'s
-/// own module doc for why darktable's argv needs this at all.
+/// Runs one round-trip export end to end. `export_path` is the final,
+/// user-visible filename `export_naming::next_export_path` reserved, but the
+/// converter never writes there directly:
+///
+/// 1. The converter writes into the hidden `export_naming::partial_path`
+///    sibling, which is also the name claim.
+/// 2. The RAW's metadata is filled in with exiftool (if `exiftool_path` is
+///    configured), via `exiftool::build_round_trip_metadata_args`, so every
+///    export gets the same full metadata whichever converter path ran. Before
+///    this, only exports that crashed into ART's Mode=0 fallback got a full
+///    copy; a normal run kept just ART's `ExifKeys` subset.
+/// 3. The finished file is renamed into place in one step.
+///
+/// Immich only ever sees the complete file. Confirmed live: a Tweak export
+/// whose metadata only landed in a second in-place rewrite showed up in
+/// Immich with no camera, lens, exposure or capture date. A failed exiftool
+/// step is logged rather than failing the export: a JPEG with less metadata
+/// is still better than no JPEG. On any error the caller releases the claim
+/// with `export_naming::release_claim`.
 pub(crate) async fn run_round_trip_cli<F>(
     tool: RawConverterKind,
     cli_path: &str,
@@ -396,15 +405,59 @@ pub(crate) async fn run_round_trip_cli<F>(
 where
     F: FnMut(u8) + Send,
 {
+    let partial = export_naming::partial_path(export_path);
+    run_converter_cli(tool, cli_path, raw_path, &partial, mode, on_progress, cancel).await?;
+
+    if exiftool_path.trim().is_empty() {
+        log::warn!("round trip: no exiftool configured, {} keeps only the converter's own metadata", export_path.display());
+    } else if let Err(e) = exiftool::run_exiftool(exiftool_path, &exiftool::build_round_trip_metadata_args(raw_path, &partial)).await {
+        log::warn!("round trip: exiftool couldn't fill in metadata for {}: {e}", export_path.display());
+    }
+
+    let export_for_rename = export_path.to_path_buf();
+    tokio::task::spawn_blocking(move || export_naming::publish_partial(&export_for_rename))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("Couldn't move the finished export into place at {}: {e}", export_path.display()))
+}
+
+/// Dispatches the converter run itself to the right module - the one place
+/// `run_round_trip_cli` picks between `art`/`rawtherapee`/`darktable` so the
+/// three can't drift into different behavior for the same
+/// `RawConverterKind`. DarkTable's mode mapping differs from the other two:
+/// `darktable-cli` has no `-d -S`-style "apply defaults, then layer a sidecar
+/// over them" flag, so both `ApplySidecar` and `DefaultThenSidecarOverride`
+/// just mean "pass the resolved xmp path" here - only `DefaultOnly` omits it.
+/// The xmp path itself is resolved fresh here (via
+/// `paths::find_darktable_history_sidecar`) rather than threaded through as a
+/// parameter, since ART/RawTherapee's CLI grammar has no equivalent argument
+/// to carry it in - see `darktable.rs`'s own module doc for why darktable's
+/// argv needs this at all.
+///
+/// ART's own Mode=0 crash fallback gets an empty `exiftool_path`, since
+/// `run_round_trip_cli` always runs its own (gap-filling,
+/// orientation-safe) metadata copy afterwards anyway.
+async fn run_converter_cli<F>(
+    tool: RawConverterKind,
+    cli_path: &str,
+    raw_path: &std::path::Path,
+    output_path: &std::path::Path,
+    mode: SidecarCliMode,
+    on_progress: F,
+    cancel: watch::Receiver<bool>,
+) -> Result<(), String>
+where
+    F: FnMut(u8) + Send,
+{
     match tool {
-        RawConverterKind::Art => art::run_art_cli_with_metadata_fallback(cli_path, exiftool_path, raw_path, export_path, mode, on_progress, cancel).await,
-        RawConverterKind::RawTherapee => rawtherapee::run_rawtherapee_cli(cli_path, raw_path, export_path, mode, on_progress, cancel).await,
+        RawConverterKind::Art => art::run_art_cli_with_metadata_fallback(cli_path, "", raw_path, output_path, mode, on_progress, cancel).await,
+        RawConverterKind::RawTherapee => rawtherapee::run_rawtherapee_cli(cli_path, raw_path, output_path, mode, on_progress, cancel).await,
         RawConverterKind::DarkTable => {
             let xmp_path = match mode {
                 SidecarCliMode::DefaultOnly => None,
                 _ => paths::find_darktable_history_sidecar(raw_path),
             };
-            darktable::run_darktable_cli(cli_path, raw_path, export_path, xmp_path.as_deref(), on_progress, cancel).await
+            darktable::run_darktable_cli(cli_path, raw_path, output_path, xmp_path.as_deref(), on_progress, cancel).await
         }
     }
 }
@@ -432,12 +485,9 @@ pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedArtWork>)
             }
             queue.set_status(work.job_id, ArtJobStatus::Running);
 
-            // Fetched fresh here (rather than threaded through `QueuedArtWork`
-            // like `cli_path` is) since it's only ever needed on ART's rare
-            // Exiv2-crash fallback path inside `run_art_cli_with_metadata_fallback`
-            // - not worth widening `enqueue`'s signature (and every call site/test
-            // that builds a `QueuedArtWork` tuple) for a value the common case
-            // never touches.
+            // Fetched fresh here rather than threaded through `QueuedArtWork`
+            // like `cli_path` is, so it always reflects current Preferences.
+            // `run_round_trip_cli` uses it for its post-export metadata fill.
             let exiftool_path = app_for_job.state::<AppState>().config.lock().unwrap().applications.exiftool_path.clone();
             let progress_queue = queue.clone();
             let job_id = work.job_id;
@@ -467,15 +517,12 @@ pub async fn run(app: AppHandle, mut rx: mpsc::UnboundedReceiver<QueuedArtWork>)
                     queue.finish(work.job_id, ArtJobStatus::Done, export_file_name, None);
                 }
                 Err(e) => {
-                    // Release the filename this job claimed (see
-                    // export_naming::next_export_path's atomic `create_new`)
-                    // so a failed export doesn't leave an empty placeholder
-                    // for Immich to later pick up as a new, broken asset -
-                    // safe even on the timeout path above, since a
-                    // still-running `ART-cli` process just recreates the file
-                    // (`-Y`, overwrite without prompt) when it eventually
-                    // finishes.
-                    let _ = std::fs::remove_file(&work.export_path);
+                    // Release the hidden claim this job made (see
+                    // export_naming::next_export_path) so its number is free
+                    // again. On the timeout path a still-running converter may
+                    // recreate the hidden file later; it's a dotfile, so
+                    // Immich ignores it either way.
+                    export_naming::release_claim(&work.export_path);
                     queue.finish(work.job_id, ArtJobStatus::Failed, None, Some(e));
                 }
             }

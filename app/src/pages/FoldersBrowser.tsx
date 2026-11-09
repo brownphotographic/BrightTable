@@ -33,6 +33,7 @@ import {
   type AssetMetadataPatch,
   type AssetSummary,
   type EditJob,
+  refreshAssetMetadata,
 } from '../lib/api';
 import { useStacking } from '../lib/useStacking';
 import { buildFolderTree, collectAssetPaths, findFolderNode, type FolderNode } from '../lib/folderTree';
@@ -68,7 +69,7 @@ import { useEditJobReconciliation } from '../lib/useEditJobReconciliation';
 import { useArtQueue } from '../lib/artQueue';
 import { useArtJobReconciliation } from '../lib/useArtJobReconciliation';
 import { useBucketMemo } from '../lib/bucketMemo';
-import { ingestRoundTripExport, subscribeLateRoundTripOutcome, type RoundTripIngestOutcome } from '../lib/roundTrip';
+import { ingestRoundTripExport, subscribeLateRoundTripOutcome, subscribeRoundTripMetadataRefreshed, type RoundTripIngestOutcome } from '../lib/roundTrip';
 import { useNoSidecarChoice } from '../lib/useNoSidecarChoice';
 import { FILE_NAME_CAPTION_HEIGHT, useThumbnailSettings } from '../lib/thumbnailSettings';
 import { centerAssetInContainerSoon } from '../lib/scrollCenter';
@@ -444,6 +445,10 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
   // subscription and roundTrip.ts's retryIngestInBackground for the full
   // explanation.
   useEffect(() => subscribeLateRoundTripOutcome(applyRoundTripOutcome), [applyRoundTripOutcome]);
+  // Swaps in a round-trip export's real camera/lens/exposure/date once
+  // Immich has actually read them from the file - see roundTrip.ts's
+  // refreshIngestedMetadata for why the first snapshot is blank.
+  useEffect(() => subscribeRoundTripMetadataRefreshed(patchAssetLocal), [patchAssetLocal]);
 
   // Optimistic - see PhotosBrowser.tsx's identical commitEdit for the full
   // explanation.
@@ -1351,6 +1356,14 @@ const FoldersBrowser = forwardRef<FoldersBrowserHandle, {
       disabled: !selectedAssets.some((a) => !isVideoAsset(a)),
       disabledReason: 'Select one or more photos',
       onClick: () => openTimeEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError }),
+    },
+    {
+      id: 'refreshMetadata',
+      group: 'edit',
+      label: 'Refresh Metadata',
+      disabled: selectedAssets.length === 0,
+      disabledReason: 'Select one or more photos',
+      onClick: () => refreshAssetMetadata(selectedAssets.map((a) => a.id)).catch((e) => setEnqueueError(`Couldn't refresh metadata: ${String(e)}`)),
     },
     // Copy is inherently single-source, so these two only appear when
     // exactly one photo is selected (matching the context menu's identical

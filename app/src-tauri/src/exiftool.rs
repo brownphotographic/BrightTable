@@ -78,10 +78,17 @@ pub fn build_exiftool_args(policy: MetadataPolicy, source: Option<&Path>, target
     let target = target.to_string_lossy().to_string();
     match (policy, source) {
         (MetadataPolicy::Keep, None) => None,
+        // `-Orientation#=1` in both copy-from-source cases: the target is
+        // always a re-rendered image whose pixels are already upright
+        // (Immich's auto-oriented preview, or a RAW converter's output), so
+        // copying the source's own Orientation (e.g. 6 for a portrait shot)
+        // would make viewers rotate it a second time. Confirmed live: plain
+        // `-TagsFromFile src -all:all` carried "Rotate 90 CW" across.
         (MetadataPolicy::Keep, Some(src)) => Some(vec![
             "-TagsFromFile".to_string(),
             src.to_string_lossy().to_string(),
             "-all:all".to_string(),
+            "-Orientation#=1".to_string(),
             "-overwrite_original".to_string(),
             target,
         ]),
@@ -90,12 +97,48 @@ pub fn build_exiftool_args(policy: MetadataPolicy, source: Option<&Path>, target
             src.to_string_lossy().to_string(),
             "-all:all".to_string(),
             "--gps:all".to_string(),
+            "-Orientation#=1".to_string(),
             "-overwrite_original".to_string(),
             target,
         ]),
         (MetadataPolicy::RemoveGps, None) => Some(vec!["-gps:all=".to_string(), "-overwrite_original".to_string(), target]),
         (MetadataPolicy::StripAll, _) => Some(vec!["-all=".to_string(), "-overwrite_original".to_string(), target]),
     }
+}
+
+/// argv that fills in a round-trip export's metadata from its RAW original
+/// without overriding anything the converter deliberately wrote:
+///
+/// - `-TagsFromFile <raw> -all:all` copies everything from the RAW, then
+///   `-TagsFromFile @ -all:all` copies the export's own tags back over the
+///   top, so the converter's own values win (a lens name typed into ART's
+///   Exif tool, `Software`, and so on) and the RAW only fills in gaps.
+/// - `-api FilterW=...` drops empty values before writing, so an empty tag
+///   the converter wrote doesn't block the RAW's real value. ART writes
+///   `LensModel` as `""` when its sidecar's `[Exif] Lens=` is blank, which
+///   left every manual-lens export with no lens. Confirmed live that the
+///   reading-side `Filter` option doesn't do this.
+/// - `-Orientation#=1`: the converters have already rotated the pixels, so
+///   the RAW's own Orientation (e.g. 6 for a portrait shot) must never be
+///   copied over, or the export would be rotated twice.
+///
+/// Without this, a normal ART export carries only the `ExifKeys` list from
+/// its profile's `[MetaData]` section (86 tags against the RAW's ~150 for a
+/// Leica M10-R).
+pub fn build_round_trip_metadata_args(raw_path: &Path, target: &Path) -> Vec<String> {
+    vec![
+        "-api".to_string(),
+        "FilterW=$_ = undef unless length".to_string(),
+        "-TagsFromFile".to_string(),
+        raw_path.to_string_lossy().to_string(),
+        "-all:all".to_string(),
+        "-TagsFromFile".to_string(),
+        "@".to_string(),
+        "-all:all".to_string(),
+        "-Orientation#=1".to_string(),
+        "-overwrite_original".to_string(),
+        target.to_string_lossy().to_string(),
+    ]
 }
 
 /// Spawns `exiftool` and waits for it to complete under `EXIFTOOL_RUN_TIMEOUT`
@@ -159,6 +202,27 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    fn build_round_trip_metadata_args_lets_the_export_win_and_pins_orientation() {
+        let args = build_round_trip_metadata_args(Path::new("/raw/x.DNG"), Path::new("/out/.p-x.jpg"));
+        assert_eq!(
+            args,
+            vec![
+                "-api",
+                "FilterW=$_ = undef unless length",
+                "-TagsFromFile",
+                "/raw/x.DNG",
+                "-all:all",
+                "-TagsFromFile",
+                "@",
+                "-all:all",
+                "-Orientation#=1",
+                "-overwrite_original",
+                "/out/.p-x.jpg",
+            ]
+        );
+    }
+
+    #[test]
     fn build_exiftool_args_keep_without_source_is_a_no_op() {
         assert_eq!(build_exiftool_args(MetadataPolicy::Keep, None, Path::new("/out/x.jpg")), None);
     }
@@ -172,6 +236,7 @@ mod tests {
                 "-TagsFromFile".to_string(),
                 "/raw/x.DNG".to_string(),
                 "-all:all".to_string(),
+                "-Orientation#=1".to_string(),
                 "-overwrite_original".to_string(),
                 "/out/x.jpg".to_string(),
             ])
@@ -188,6 +253,7 @@ mod tests {
                 "/raw/x.DNG".to_string(),
                 "-all:all".to_string(),
                 "--gps:all".to_string(),
+                "-Orientation#=1".to_string(),
                 "-overwrite_original".to_string(),
                 "/out/x.jpg".to_string(),
             ])

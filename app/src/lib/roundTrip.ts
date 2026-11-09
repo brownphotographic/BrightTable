@@ -18,17 +18,20 @@
 import {
   createStack,
   deleteStack,
+  getAsset,
   getFolderAssets,
   listStacks,
   regenerateAssetThumbnail,
   scanImmichLibrary,
   setAssetCaptureDate,
+  refreshAssetMetadata,
   updateAssetMetadata,
   type AssetMetadataPatch,
   type AssetStackInfo,
   type AssetSummary,
   type StackInfo,
 } from './api';
+import { refreshAssetImage } from './imageVersion';
 
 // regenerate_asset_thumbnail is a single fire-and-forget POST that only
 // *enqueues* Immich's own thumbnailGeneration job - a transient failure of
@@ -220,6 +223,79 @@ function retryIngestInBackground(original: AssetSummary, newFileName: string, fo
     .catch(() => {});
 }
 
+// How long refreshIngestedMetadata waits for Immich to finish reading a new
+// export's metadata and generating its thumbnail before giving up.
+const METADATA_POLL_ATTEMPTS = 20;
+const METADATA_POLL_INTERVAL_MS = 3000; // ~1 minute total
+
+// The camera/exposure/date/size fields Immich fills in from the file itself -
+// what refreshIngestedMetadata copies onto the local asset. Leaves out
+// rating/favorite/description (finishIngest's own optimistic patch, whose
+// write may not have reached Immich yet) and stack/tags (owned elsewhere).
+const FILE_METADATA_FIELDS = [
+  'fileCreatedAt',
+  'localDateTime',
+  'dateTimeOriginal',
+  'timeZone',
+  'make',
+  'model',
+  'lensMake',
+  'lensModel',
+  'fNumber',
+  'focalLength',
+  'iso',
+  'exposureTime',
+  'exifImageWidth',
+  'exifImageHeight',
+  'fileSizeInByte',
+  'city',
+  'country',
+  'thumbHash',
+] as const satisfies readonly (keyof AssetSummary)[];
+
+const metadataRefreshedListeners = new Set<(assetId: string, patch: Partial<AssetSummary>) => void>();
+
+// Lets a page patch its cached copy of a round-trip export once Immich has
+// actually read the export's metadata (see refreshIngestedMetadata). Pages
+// pass their own patchAssetLocal.
+export function subscribeRoundTripMetadataRefreshed(listener: (assetId: string, patch: Partial<AssetSummary>) => void): () => void {
+  metadataRefreshedListeners.add(listener);
+  return () => {
+    metadataRefreshedListeners.delete(listener);
+  };
+}
+
+// A new export is found (pollForNewAsset) as soon as Immich's scan creates
+// the asset, which is usually *before* Immich's own jobs have read the file's
+// metadata or generated its thumbnail - so the snapshot every page caches has
+// no camera, lens, exposure or capture date ("Taken" is just the file's own
+// timestamp), and a grid tile that rendered straight away got a failed
+// thumbnail request and stayed blank. Confirmed live for both. This asks
+// Immich to (re-)read the file, then polls the asset: once its metadata shows
+// up those fields go to every subscribed page, and once it has a thumbHash
+// (thumbnail generated) the tile is told to reload its image.
+async function refreshIngestedMetadata(assetId: string): Promise<void> {
+  await refreshAssetMetadata([assetId]).catch(() => {});
+  let metadataDone = false;
+  let thumbnailDone = false;
+  for (let i = 0; i < METADATA_POLL_ATTEMPTS && !(metadataDone && thumbnailDone); i++) {
+    await new Promise((resolve) => setTimeout(resolve, METADATA_POLL_INTERVAL_MS));
+    const asset = await getAsset(assetId).catch(() => null);
+    if (!asset) continue;
+    if (!metadataDone && asset.make != null) {
+      metadataDone = true;
+      const patch: Partial<AssetSummary> = {};
+      for (const key of FILE_METADATA_FIELDS) (patch as Record<string, unknown>)[key] = asset[key];
+      for (const listener of metadataRefreshedListeners) listener(assetId, patch);
+    }
+    if (!thumbnailDone && asset.thumbHash) {
+      thumbnailDone = true;
+      for (const listener of metadataRefreshedListeners) listener(assetId, { thumbHash: asset.thumbHash });
+      refreshAssetImage(assetId);
+    }
+  }
+}
+
 const lateOutcomeListeners = new Set<(outcome: RoundTripIngestOutcome) => void>();
 
 // Lets a page apply a round-trip outcome that lands well after the
@@ -254,6 +330,8 @@ async function finishIngest(original: AssetSummary, foundAsset: AssetSummary): P
   // outcome shouldn't block on it), but retried a few times internally now -
   // see regenerateThumbnailWithRetry's own doc comment.
   void regenerateThumbnailWithRetry(found.id);
+  // Not awaited - see refreshIngestedMetadata.
+  void refreshIngestedMetadata(found.id);
 
   // Look up `original`'s current server-side stack membership via list_stacks
   // rather than trusting `original.stack` (a caller snapshot) or any inline

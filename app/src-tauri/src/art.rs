@@ -333,6 +333,31 @@ fn build_art_cli_args_for_default_with_metadata_patch(profile_path: &Path, expor
 /// sidecar file for `run_art_cli_with_metadata_fallback` to find and patch.
 const MINIMAL_METADATA_OFF_PROFILE: &str = "[MetaData]\nMode=0\n";
 
+/// Deletes a 0-byte `.xmp` sidecar next to `raw_path` (both `IMG.DNG.xmp`
+/// and `IMG.xmp` naming), since `ART-cli` aborts on one. With XMP sync set to
+/// read/write, ART reads the RAW's XMP sidecar for the output rating
+/// (`Exiv2Metadata::getXmpSidecar` from `setOutputRating`), and Exiv2 throws
+/// "Failed to read input data" on an empty file. Confirmed live: ART's own
+/// GUI leaves exactly such a file behind when its metadata save fails
+/// ("ERROR saving metadata ... .xmp: Failed to read input data"), which then
+/// crashed every Tweak RAW Roundtrip export of that photo. An empty file
+/// holds nothing, so removing it loses no data. Anything with content is left
+/// alone.
+async fn remove_empty_xmp_sidecars(raw_path: &Path) {
+    let mut appended = raw_path.as_os_str().to_owned();
+    appended.push(".xmp");
+    for candidate in [std::path::PathBuf::from(appended), raw_path.with_extension("xmp")] {
+        if let Ok(meta) = tokio::fs::metadata(&candidate).await {
+            if meta.is_file() && meta.len() == 0 {
+                match tokio::fs::remove_file(&candidate).await {
+                    Ok(()) => log::info!("removed empty XMP sidecar {} (it crashes ART-cli)", candidate.display()),
+                    Err(e) => log::warn!("couldn't remove empty XMP sidecar {}: {e}", candidate.display()),
+                }
+            }
+        }
+    }
+}
+
 /// Runs `ART-cli` for a sidecar-driven mode (`ApplySidecar`/
 /// `DefaultThenSidecarOverride`), with a fallback for the Exiv2 crash: if it
 /// crashes, this rebuilds a temp copy of the *actual* sidecar (via
@@ -385,6 +410,7 @@ pub async fn run_art_cli_with_metadata_fallback<F>(
 where
     F: FnMut(u8) + Send,
 {
+    remove_empty_xmp_sidecars(raw_path).await;
     let args = build_art_cli_args(mode, export_path, raw_path);
     let result = run_art_cli_with_progress(art_cli_path, &args, &mut on_progress, cancel.clone()).await;
     let Err(crash_err) = &result else { return result };
@@ -974,6 +1000,19 @@ mod tests {
         let used_profile = fs::read_to_string(&profile_copy).unwrap();
         assert_eq!(used_profile, MINIMAL_METADATA_OFF_PROFILE);
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn remove_empty_xmp_sidecars_deletes_only_empty_ones() {
+        let dir = tmp_dir("empty-xmp");
+        let raw = dir.join("IMG_1.DNG");
+        fs::write(&raw, b"raw").unwrap();
+        fs::write(dir.join("IMG_1.DNG.xmp"), b"").unwrap();
+        fs::write(dir.join("IMG_1.xmp"), b"<x:xmpmeta/>").unwrap();
+        remove_empty_xmp_sidecars(&raw).await;
+        assert!(!dir.join("IMG_1.DNG.xmp").exists());
+        assert!(dir.join("IMG_1.xmp").exists());
         let _ = fs::remove_dir_all(&dir);
     }
 

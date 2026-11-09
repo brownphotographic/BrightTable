@@ -316,6 +316,7 @@ pub fn run() {
             commands::clear_completed_stack_jobs,
             commands::set_asset_capture_date,
             commands::regenerate_asset_thumbnail,
+            commands::refresh_asset_metadata,
             commands::rotate_asset,
             commands::evict_thumb_cache_for_asset,
             commands::delete_stack,

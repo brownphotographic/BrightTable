@@ -469,7 +469,15 @@ impl ImmichClient {
     /// as non-fatal - it only affects how soon Immich's own view reflects an
     /// edit that has already durably landed on disk either way.
     pub async fn refresh_metadata(&self, id: &str) -> Result<(), String> {
-        let body = serde_json::json!({ "assetIds": [id], "name": "refresh-metadata" });
+        self.refresh_metadata_many(&[id.to_string()]).await
+    }
+
+    /// `refresh_metadata` for several assets in one request - the
+    /// "Refresh Metadata" selection action and round-trip ingestion
+    /// (`roundTrip.ts`'s `finishIngest`). Only queues Immich's own job, so a
+    /// success here means "queued", not "already re-read".
+    pub async fn refresh_metadata_many(&self, ids: &[String]) -> Result<(), String> {
+        let body = serde_json::json!({ "assetIds": ids, "name": "refresh-metadata" });
         let resp = self
             .http
             .post(self.url("/assets/jobs"))

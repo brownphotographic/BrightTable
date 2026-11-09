@@ -37,6 +37,7 @@ import {
   type AssetSummary,
   type EditJob,
   type MetadataEditTarget,
+  refreshAssetMetadata,
 } from '../lib/api';
 import { useStacking } from '../lib/useStacking';
 import { copyImageProcessingEntry, useAssetActions } from '../lib/useAssetActions';
@@ -987,6 +988,14 @@ const AlbumsBrowser = forwardRef<AlbumsBrowserHandle, {
       disabled: !selectedAssets.some((a) => !isVideoAsset(a)),
       disabledReason: 'Select one or more photos',
       onClick: () => openTimeEditor({ assets: selectedAssets.filter((a) => !isVideoAsset(a)), applyPatch: patchAssetLocal, onError: setEnqueueError }),
+    },
+    {
+      id: 'refreshMetadata',
+      group: 'edit',
+      label: 'Refresh Metadata',
+      disabled: selectedAssets.length === 0,
+      disabledReason: 'Select one or more photos',
+      onClick: () => refreshAssetMetadata(selectedAssets.map((a) => a.id)).catch((e) => setEnqueueError(`Couldn't refresh metadata: ${String(e)}`)),
     },
     ...(copyImageProcessingBarEntry ? [{ id: 'copyImageProcessing', group: 'copyPaste' as const, ...copyImageProcessingBarEntry }] : []),
     {

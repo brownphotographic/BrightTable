@@ -35,6 +35,21 @@ export default function AssetThumbImage({
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const imgVersion = useImageVersion(asset.id);
+  // A failed load used to stick until the ⟳ badge was clicked by hand - so a
+  // round-trip export whose tile rendered before Immich had generated its
+  // thumbnail stayed blank for good. Clears the failure whenever there's
+  // reason to think the server has something new: a bumped image version
+  // (refreshAssetImage, e.g. from roundTrip.ts once the thumbnail exists) or
+  // a newly-arrived thumbHash (Immich sets it when thumbnail generation
+  // finishes). State derived during render, not in an effect, so the retry
+  // happens in the same pass.
+  const retryKey = `${imgVersion}:${asset.thumbHash ?? ''}`;
+  const [lastRetryKey, setLastRetryKey] = useState(retryKey);
+  if (retryKey !== lastRetryKey) {
+    setLastRetryKey(retryKey);
+    setFailed(false);
+    setLoaded(false);
+  }
   // Set by the Viewer's rotate action once the exiftool write is confirmed
   // (markRotatePending) - Immich's own thumbnail regen job it also kicks off
   // has no completion signal BrightTable can observe, so rather than guess with

@@ -1034,7 +1034,7 @@ pub async fn launch_raw_cli_round_trip(
         // see `art_queue.rs::run`'s identical check for Variant 2.
         let cancel_rx = queue_for_job.cancel_receiver(job_id).unwrap_or_else(|| tokio::sync::watch::channel(false).1);
         if *cancel_rx.borrow() {
-            let _ = std::fs::remove_file(&export_path);
+            export_naming::release_claim(&export_path);
             queue_for_job.finish(job_id, ArtJobStatus::Failed, None, Some(cli_process::CANCELLED_BY_USER.to_string()));
             return;
         }
@@ -1061,7 +1061,7 @@ pub async fn launch_raw_cli_round_trip(
         match result {
             Ok(()) => queue_progress_to_done(&queue_for_job, job_id, &export_path),
             Err(e) => {
-                let _ = std::fs::remove_file(&export_path);
+                export_naming::release_claim(&export_path);
                 queue_for_job.finish(job_id, ArtJobStatus::Failed, None, Some(e));
             }
         }
@@ -1108,7 +1108,7 @@ pub fn finish_raw_cli_round_trip_with_default_profile(
         let _permit = art_queue.acquire_permit().await;
         let cancel_rx = art_queue.cancel_receiver(job_id).unwrap_or_else(|| tokio::sync::watch::channel(false).1);
         if *cancel_rx.borrow() {
-            let _ = std::fs::remove_file(&export_path);
+            export_naming::release_claim(&export_path);
             art_queue.finish(job_id, ArtJobStatus::Failed, None, Some(cli_process::CANCELLED_BY_USER.to_string()));
             return;
         }
@@ -1146,7 +1146,7 @@ pub fn finish_raw_cli_round_trip_with_default_profile(
                 queue_progress_to_done(&art_queue, job_id, &export_path);
             }
             Err(e) => {
-                let _ = std::fs::remove_file(&export_path);
+                export_naming::release_claim(&export_path);
                 art_queue.finish(job_id, ArtJobStatus::Failed, None, Some(e));
             }
         }
@@ -1169,7 +1169,7 @@ fn queue_progress_to_done(art_queue: &ArtQueue, job_id: u64, export_path: &std::
 /// clear "cancelled" message rather than leaving it `Pending` forever.
 #[tauri::command]
 pub fn cancel_raw_cli_round_trip(state: State<AppState>, job_id: u64, export_path: String) {
-    let _ = std::fs::remove_file(&export_path);
+    export_naming::release_claim(&export_path);
     state.art_queue.finish(job_id, ArtJobStatus::Failed, None, Some("Cancelled — no edits were saved for this photo".to_string()));
 }
 
@@ -1266,7 +1266,7 @@ pub async fn batch_raw_cli_round_trip(state: State<'_, AppState>, targets: Vec<A
             // don't leave empty placeholder files in the library for Immich
             // to later pick up as new (blank) assets.
             for (_, _, export_path, _) in &resolved {
-                let _ = std::fs::remove_file(export_path);
+                export_naming::release_claim(export_path);
             }
             return Err(e);
         }
@@ -1474,6 +1474,22 @@ pub async fn regenerate_asset_thumbnail(state: State<'_, AppState>, asset_id: St
     let cfg = state.library_config();
     let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
     client.regenerate_thumbnail(&asset_id).await
+}
+
+/// Asks Immich to re-read the metadata of the given assets from their files
+/// on disk - the same as Immich's own "Refresh metadata" menu item. Used by
+/// the selection bar's "Refresh Metadata" action and automatically for every
+/// round-trip export once it's ingested (`roundTrip.ts`'s `finishIngest`), so
+/// an export Immich indexed before its metadata was complete corrects itself.
+/// Not gated on read-only mode: it changes nothing on disk.
+#[tauri::command]
+pub async fn refresh_asset_metadata(state: State<'_, AppState>, asset_ids: Vec<String>) -> Result<(), String> {
+    if asset_ids.is_empty() {
+        return Ok(());
+    }
+    let cfg = state.library_config();
+    let client = ImmichClient::from_config(&cfg, state.http.clone(), &state.auto_resolution).await?;
+    client.refresh_metadata_many(&asset_ids).await
 }
 
 /// The Viewer's Rotate Left/Right action. A deliberate, narrow exception to
