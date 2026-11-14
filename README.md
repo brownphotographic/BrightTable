@@ -13,6 +13,28 @@ _above:Auto-stacking images: stacking is performed locally, but synced with Immi
 
 ![BrightTable Explainer - Detail](assets/BrightTable-Explainer-2.png)
 
+<!-- START doctoc -->
+**Contents**
+
+- [Summary of features](#summary-of-features)
+- [Why, and what does it do?](#why-and-what-does-it-do)
+  - [Inspiration](#inspiration)
+  - [How it works](#how-it-works)
+  - [Warning](#warning)
+- [System Requirements](#system-requirements)
+- [Setup](#setup)
+  - [Quickstart](#quickstart)
+  - [Detailed Instructions](#detailed-instructions)
+  - [Alternative: Arch Linux](#alternative-arch-linux)
+  - [Configuring and using the app](#configuring-and-using-the-app)
+- [Developers](#developers)
+  - [Prerequisites](#prerequisites)
+  - [Dev mode (hot-reloading frontend + native window)](#dev-mode-hot-reloading-frontend--native-window)
+  - [Building a Flatpak](#building-a-flatpak)
+- [Contributing](#contributing)
+- [Troubleshooting](#troubleshooting)
+<!-- END doctoc -->
+
 ## Summary of features
 
 - 🔗 Sits on top of #Immich as the DAM backend.
@@ -322,6 +344,20 @@ Worth reading before you build, since it grants real permissions on your behalf:
 live during the `flatpak-builder` build, rather than vendoring every dependency offline the way a Flathub
 submission would require. Fine for building your own copy; would need real dependency vendoring
 (`flatpak-cargo-generator`/`flatpak-node-generator`) before this could ever go on Flathub.
+
+## Contributing
+
+Contributions are welcome! Please read these guidelines before opening a pull request.
+
+1. **LLM-generated code is welcome** — but you own what you submit. Read it, understand it, and run it locally before opening a PR.
+2. **Test, test, test — against a sandbox Immich.** Never test against your real library. Anything that writes to Immich must be verified on throwaway data first.
+3. **Test the round trip.** If you touch editing, verify open → edit → close in at least one RAW editor (ART, RawTherapee, or darktable).
+4. **Keep PRs small and explained.** One change per PR. Describe what it solves and how you tested it, and include screenshots or a GIF for UI changes.
+5. **Open an issue first for big changes.** New features, UI changes, or new dependencies should start as a discussion.
+6. **You own what you ship.** If your change introduces a bug, expect it to be assigned to you to fix. If it isn't addressed in a reasonable time, the change may be reverted.
+7. **No stealing or plagiarism.** Only submit work you have the right to contribute. Credit any third-party code or assets and add them to [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
+8. **The maintainer has final say.** I reserve the right to reject contributions that don't fit the project's aesthetic, degrade the user experience, or take it in a direction I don't want — even if the code is good.
+9. **Be decent.** Treat everyone with respect. I reserve the right to ban contributors for abuse, harassment, bad-faith behaviour, or repeatedly ignoring these guidelines.
 
 ## Troubleshooting:
 

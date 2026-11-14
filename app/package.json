@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "bump-version": "node scripts/bump-version.mjs",
     "gen-third-party-licenses": "node scripts/gen-third-party-licenses.mjs",
-    "build:flatpak": "npm run bump-version && npm run gen-third-party-licenses && npm run build:flatpak:only",
+    "gen-readme-toc": "node scripts/gen-readme-toc.mjs",
+    "build:flatpak": "npm run bump-version && npm run gen-third-party-licenses && npm run gen-readme-toc && npm run build:flatpak:only",
     "build:flatpak:only": "node scripts/build-flatpak.mjs",
     "build:full": "npm run build:flatpak"
   },
