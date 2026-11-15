@@ -20,6 +20,7 @@ import { thumbnailSrc, type AssetSummary } from '../lib/api';
 import { decodeThumbHash } from '../lib/thumbhash';
 import { refreshAssetImage, useImageVersion, useRotatePending } from '../lib/imageVersion';
 import { useThumbnailSettings } from '../lib/thumbnailSettings';
+import { thumbnailLoaded, watchMissingThumbnail } from '../lib/thumbnailWatch';
 
 // Shared image layer (thumbhash blur placeholder -> real thumbnail, with a
 // retry-on-failure state) used by both the main grid and the viewer's
@@ -39,7 +40,7 @@ export default function AssetThumbImage({
   // round-trip export whose tile rendered before Immich had generated its
   // thumbnail stayed blank for good. Clears the failure whenever there's
   // reason to think the server has something new: a bumped image version
-  // (refreshAssetImage, e.g. from roundTrip.ts once the thumbnail exists) or
+  // (thumbnailWatch.ts once the thumbnail exists, or refreshAssetImage) or
   // a newly-arrived thumbHash (Immich sets it when thumbnail generation
   // finishes). State derived during render, not in an effect, so the retry
   // happens in the same pass.
@@ -135,8 +136,16 @@ export default function AssetThumbImage({
           src={thumbnailSrc(asset.id, size, imgVersion)}
           alt=""
           loading="lazy"
-          onLoad={() => setLoaded(true)}
-          onError={() => setFailed(true)}
+          onLoad={() => {
+            setLoaded(true);
+            thumbnailLoaded(asset.id);
+          }}
+          onError={() => {
+            setFailed(true);
+            // Polls Immich until the thumbnail exists, then bumps imgVersion
+            // so this tile retries on its own (see thumbnailWatch.ts).
+            watchMissingThumbnail(asset.id);
+          }}
           style={{
             position: 'absolute',
             inset: 0,

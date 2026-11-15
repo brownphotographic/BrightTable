@@ -54,6 +54,7 @@ import { useNoSidecarChoice } from '../lib/useNoSidecarChoice';
 import { useProcessingQueue } from '../lib/processingQueue';
 import { useProcessingJobReconciliation } from '../lib/useProcessingJobReconciliation';
 import { bumpImageVersion, getImageVersion, useImageVersion } from '../lib/imageVersion';
+import { watchMissingThumbnail } from '../lib/thumbnailWatch';
 import { TAG_ASSIGN_DISABLED_REASON } from '../lib/featureFlags';
 import { copyImageProcessingEntry } from '../lib/useAssetActions';
 import { useLensEdit } from '../lib/lensEdit';
@@ -1352,6 +1353,10 @@ const Viewer = forwardRef<ViewerHandle, {
                     src={previewSrc}
                     alt=""
                     onLoad={() => setLoadedId(shown.id)}
+                    // Preview not generated yet (fresh import / round-trip
+                    // export) - thumbnailWatch bumps imgVersion once Immich
+                    // has it, which changes previewSrc and reloads this.
+                    onError={() => watchMissingThumbnail(shown.id)}
                     style={{
                       position: 'absolute',
                       inset: 0,

@@ -31,7 +31,6 @@ import {
   type AssetSummary,
   type StackInfo,
 } from './api';
-import { refreshAssetImage } from './imageVersion';
 
 // regenerate_asset_thumbnail is a single fire-and-forget POST that only
 // *enqueues* Immich's own thumbnailGeneration job - a transient failure of
@@ -224,7 +223,7 @@ function retryIngestInBackground(original: AssetSummary, newFileName: string, fo
 }
 
 // How long refreshIngestedMetadata waits for Immich to finish reading a new
-// export's metadata and generating its thumbnail before giving up.
+// export's metadata before giving up.
 const METADATA_POLL_ATTEMPTS = 20;
 const METADATA_POLL_INTERVAL_MS = 3000; // ~1 minute total
 
@@ -271,28 +270,20 @@ export function subscribeRoundTripMetadataRefreshed(listener: (assetId: string, 
 // no camera, lens, exposure or capture date ("Taken" is just the file's own
 // timestamp), and a grid tile that rendered straight away got a failed
 // thumbnail request and stayed blank. Confirmed live for both. This asks
-// Immich to (re-)read the file, then polls the asset: once its metadata shows
-// up those fields go to every subscribed page, and once it has a thumbHash
-// (thumbnail generated) the tile is told to reload its image.
+// Immich to (re-)read the file, then polls the asset until its metadata shows
+// up and sends those fields to every subscribed page. The blank tile is
+// handled separately and without a time limit: its failed load registers it
+// with thumbnailWatch.ts, which reloads it once the thumbnail exists.
 async function refreshIngestedMetadata(assetId: string): Promise<void> {
   await refreshAssetMetadata([assetId]).catch(() => {});
-  let metadataDone = false;
-  let thumbnailDone = false;
-  for (let i = 0; i < METADATA_POLL_ATTEMPTS && !(metadataDone && thumbnailDone); i++) {
+  for (let i = 0; i < METADATA_POLL_ATTEMPTS; i++) {
     await new Promise((resolve) => setTimeout(resolve, METADATA_POLL_INTERVAL_MS));
     const asset = await getAsset(assetId).catch(() => null);
-    if (!asset) continue;
-    if (!metadataDone && asset.make != null) {
-      metadataDone = true;
-      const patch: Partial<AssetSummary> = {};
-      for (const key of FILE_METADATA_FIELDS) (patch as Record<string, unknown>)[key] = asset[key];
-      for (const listener of metadataRefreshedListeners) listener(assetId, patch);
-    }
-    if (!thumbnailDone && asset.thumbHash) {
-      thumbnailDone = true;
-      for (const listener of metadataRefreshedListeners) listener(assetId, { thumbHash: asset.thumbHash });
-      refreshAssetImage(assetId);
-    }
+    if (!asset || asset.make == null) continue;
+    const patch: Partial<AssetSummary> = {};
+    for (const key of FILE_METADATA_FIELDS) (patch as Record<string, unknown>)[key] = asset[key];
+    for (const listener of metadataRefreshedListeners) listener(assetId, patch);
+    return;
   }
 }
 
